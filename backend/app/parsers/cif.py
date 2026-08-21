@@ -54,7 +54,11 @@ def _looks_atom_site_header(line: str) -> bool:
 
 
 def parse_cif(text: str, source_file: str = "") -> CifData:
-    """解析 CIF 得到元素/计数 + 晶胞（手写实现，不依赖 pymatgen）。"""
+    """解析 CIF 得到元素/计数 + 晶胞（手写实现，仅供诊断元数据）。
+
+    本函数不保留原子分数坐标，不得作为生成 POSCAR/结构的依据；
+    CIF -> 真实 Structure/POSCAR 的转换见 services.cif_converter。
+    """
     data = CifData(source_file=source_file)
     lines = text.splitlines()
     i = 0

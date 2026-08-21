@@ -1,23 +1,23 @@
 """P0 structure API (design 6.3): POST /structure/analyze.
 
 Parses an uploaded POSCAR or CIF, derives a structure summary, and (for
-CIF) produces a normalized POSCAR. Results are persisted in the shared
-FileStore so the workflow module can resolve a ``structure_id`` back into a
-BE-A ``StructureContext``.
+CIF) produces a normalized POSCAR via pymatgen, preserving the real atomic
+fractional coordinates. Results are persisted in the shared FileStore so
+the workflow module can resolve a ``structure_id`` back into a BE-A
+``StructureContext``.
 """
 from __future__ import annotations
 
-import math
 from typing import Any, Dict, List
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict
 
 from ...core.errors import ValidationError
-from ...parsers.cif import parse_cif
 from ...parsers.poscar import parse_poscar
 from ...schemas.api import ApiEnvelope
 from ...schemas.structure import StructureSummary, build_structure_summary
+from ...services.cif_converter import convert_cif_to_poscar
 from .deps import file_store, get_request_id
 
 router = APIRouter()
@@ -31,60 +31,8 @@ class AnalyzeRequest(BaseModel):
     standardize: bool = False
 
 
-def _lattice_vectors(a: float, b: float, c: float,
-                     alpha: float, beta: float, gamma: float) -> List[List[float]]:
-    """Convert cell lengths and angles into the standard lattice vectors."""
-    ar, br, gr = (math.radians(x) for x in (alpha, beta, gamma))
-    ax = a
-    bx = b * math.cos(gr)
-    by = b * math.sin(gr)
-    cx = c * math.cos(br)
-    cy = c * (math.cos(ar) - math.cos(br) * math.cos(gr)) / math.sin(gr)
-    cz2 = c * c - cx * cx - cy * cy
-    cz = math.sqrt(max(0.0, cz2))
-    return [[ax, 0.0, 0.0], [bx, by, 0.0], [cx, cy, cz]]
-
-
-def _poscar_from_cif(cif) -> str:
-    """Deterministic normalized POSCAR derived from a parsed CIF.
-
-    The hand-written CIF parser does not retain fractional coordinates, so
-    sites are laid out deterministically; the result is a structurally valid
-    POSCAR for preview and downstream workflow generation.
-    """
-    if not cif.elements or not cif.counts:
-        raise ValidationError(
-            "STRUCTURE_UNPARSEABLE",
-            "CIF atom-site loop could not be parsed (elements/counts missing)",
-        )
-    vecs = _lattice_vectors(
-        float(cif.lattice_a or 1.0),
-        float(cif.lattice_b or 1.0),
-        float(cif.lattice_c or 1.0),
-        float(cif.angle_alpha or 90.0),
-        float(cif.angle_beta or 90.0),
-        float(cif.angle_gamma or 90.0),
-    )
-    lines: List[str] = [
-        "generated from CIF: " + (cif.source_file or ""),
-        "1.0",
-    ]
-    for v in vecs:
-        lines.append("  ".join(f"{x:.10f}" for x in v))
-    lines.append(" ".join(cif.elements))
-    lines.append(" ".join(str(x) for x in cif.counts))
-    lines.append("Direct")
-    total = sum(cif.counts)
-    for i in range(total):
-        lines.append(
-            f"  {((i + 0.5) / max(1, total)):.8f}"
-            f"  {(((i * 3) + 0.5) / max(1, total)) % 1.0:.8f}"
-            f"  {(((i * 7) + 0.5) / max(1, total)) % 1.0:.8f}"
-        )
-    return "\n".join(lines) + "\n"
-
-
-def _summary_json(summary: StructureSummary, source_format: str) -> Dict[str, Any]:
+def _summary_json(summary: StructureSummary, source_format: str,
+                  standardized: bool = False) -> Dict[str, Any]:
     """Build the API response summary object (frontend ``StructureSummary``)."""
     warnings: List[Dict[str, Any]] = []
     if summary.transition_metals:
@@ -110,7 +58,7 @@ def _summary_json(summary: StructureSummary, source_format: str) -> Dict[str, An
         ),
         "source_format": source_format,
         "source_sha256": summary.source_sha256,
-        "standardized": False,
+        "standardized": standardized,
         "warnings": warnings,
     }
 
@@ -134,10 +82,17 @@ async def analyze(
     source_format = "cif" if is_cif else "poscar"
 
     if is_cif:
-        cif = parse_cif(text, source_file=record.name)
-        poscar_text = _poscar_from_cif(cif)
+        # pymatgen 对称性展开 + 真实分数坐标；失败时 fail closed，不落盘任何产物。
+        conversion = convert_cif_to_poscar(
+            text,
+            source_file=record.name,
+            standardize=req.standardize,
+            symmetry_tolerance=req.symmetry_tolerance,
+        )
+        poscar_text = conversion.poscar_text
         normalized_name = "POSCAR"
     else:
+        conversion = None
         poscar_text = text
         normalized_name = None
 
@@ -173,7 +128,10 @@ async def analyze(
 
     return ApiEnvelope(request_id=x_request_id, data={
         "structure_id": struct_rec.structure_id,
-        "summary": _summary_json(summary, source_format),
+        "summary": _summary_json(
+            summary, source_format,
+            standardized=conversion.standardized if conversion else False,
+        ),
         "normalized_poscar_file_id": normalized_file_id,
         "file_id": record.file_id,
     })
