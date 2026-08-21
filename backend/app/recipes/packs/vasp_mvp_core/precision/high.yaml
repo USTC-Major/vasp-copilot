@@ -1,0 +1,34 @@
+schema_version: "1.0"
+recipe_id: precision.high
+version: 1.0.0
+kind: precision
+recipe_status: published
+display_name: 高精度
+description: 高精度档位；更严的收敛阈值并启用 ADDGRID。
+scope:
+  tasks: [relax, static, dos, band]
+  electronic_types: [metal, semiconductor, unknown]
+  vasp_versions: ["5.x", "6.x"]
+parameters:
+  EDIFF: 0.000001
+  NELM: 200
+  ADDGRID: true
+derived_parameters: []
+requires: []
+conflicts: []
+confirmations: []
+warnings:
+  - code: HIGH_PRECISION_COST
+    severity: info
+    message: 高精度档位计算成本显著增加，请结合资源确认。
+allowed_overrides:
+  EDIFF: {type: number, exclusive_minimum: 0}
+provenance:
+  source_type: project_curated
+  source_note: MVP 教学配方
+  reviewed_by: be-a-domain-review
+  reviewed_at: "2026-08-10"
+tests:
+  test_status: passed
+  case_count: 4
+  last_tested_at: "2026-08-10"

@@ -1,0 +1,185 @@
+{
+  "schema_version": "1.0",
+  "diagnosis_id": "",
+  "diagnosis_status": "succeeded",
+  "summary": "发现 1 个高严重度问题（IONIC_REACHED_NSW），另有 0 个中等问题，请优先处理后再提交计算。",
+  "detected_run": {
+    "root": "vd_demo_r71v9vr9",
+    "run_type": null,
+    "files": [
+      {
+        "name": "INCAR",
+        "kind": "incar",
+        "size": 143,
+        "path": "INCAR"
+      },
+      {
+        "name": "KPOINTS",
+        "kind": "kpoints",
+        "size": 34,
+        "path": "KPOINTS"
+      },
+      {
+        "name": "OSZICAR",
+        "kind": "oszicar",
+        "size": 361,
+        "path": "OSZICAR"
+      },
+      {
+        "name": "OUTCAR",
+        "kind": "outcar",
+        "size": 1096,
+        "path": "OUTCAR"
+      },
+      {
+        "name": "POSCAR",
+        "kind": "poscar",
+        "size": 99,
+        "path": "POSCAR"
+      }
+    ],
+    "missing_recommended": [],
+    "candidate_job_logs": []
+  },
+  "issues": [
+    {
+      "issue_id": "IONIC_REACHED_NSW-0001",
+      "rule_id": "IONIC_REACHED_NSW",
+      "severity": "high",
+      "category": "ionic",
+      "title": "离子步数达到 NSW",
+      "summary": "离子步数已达 NSW=5 且无收敛标志，几何优化疑似未收敛。",
+      "evidence": [
+        {
+          "file": "OSZICAR",
+          "line": null,
+          "message": "ionic steps >= NSW=5",
+          "data_ref": "oszicar.last_step",
+          "excerpt": null
+        }
+      ],
+      "recommendations": [
+        {
+          "action": "set_parameter",
+          "target": "INCAR",
+          "parameter": "NSW",
+          "new_value": null,
+          "rationale": "延长 NSW 前先检查力趋势与 SCF 收敛",
+          "requires_user_confirmation": true
+        }
+      ],
+      "auto_fixable": true,
+      "confidence": 0.8,
+      "blocking": true,
+      "possible_causes": [
+        "几何未收敛",
+        "SCF 不稳定"
+      ],
+      "data_ref": null,
+      "related_issue_ids": [],
+      "root_cause_candidate": null
+    }
+  ],
+  "plots": {
+    "scf": {
+      "x_label": "电子步",
+      "y_label": "能量 (eV)",
+      "series": [
+        {
+          "ionic_step": 1,
+          "electronic_step": 1,
+          "energy_ev": -100.05
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 2,
+          "energy_ev": -100.1
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 3,
+          "energy_ev": -100.15
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 4,
+          "energy_ev": -100.2
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 5,
+          "energy_ev": -100.25
+        }
+      ]
+    },
+    "magnetization": {
+      "x_label": "原子索引",
+      "y_label": "磁矩 (μB)",
+      "series": []
+    }
+  },
+  "recommended_fixes": [
+    {
+      "fix_id": "FIX-IONIC_REACHED_NSW-0001",
+      "issue_ids": [
+        "IONIC_REACHED_NSW-0001"
+      ],
+      "target_file": "INCAR",
+      "strategy": "parameter_patch",
+      "fix_status": "unavailable",
+      "safe_to_generate": false,
+      "requires_user_confirmation": true,
+      "changes": [],
+      "diff": null,
+      "generated_file_id": null,
+      "warnings": [
+        "IONIC_REACHED_NSW: 参数 NSW 缺少具体新值，无法自动修复，需人工给定",
+        "没有可通过白名单自动修复的参数变更"
+      ]
+    }
+  ],
+  "missing_evidence": [],
+  "next_step": {
+    "allowed": false,
+    "reason": "存在 1 个 Critical/High 问题未解决或未确认修复（IONIC_REACHED_NSW-0001）",
+    "suggested_task": null
+  },
+  "report": {
+    "report_id": "RPT-729C8197",
+    "diagnosis_id": "",
+    "format": "markdown",
+    "language": "zh",
+    "title": "VASP-Doctor 诊断报告",
+    "generated_at": "2026-08-09T14:41:27.177797+00:00",
+    "size_bytes": 2128,
+    "sha256": "e515892184f4505fff86824c166a986bf9c4b08026573f7c80902b9cf856406a",
+    "sections": [
+      "summary",
+      "input_overview",
+      "issues",
+      "fixes",
+      "missing_evidence",
+      "disclaimer"
+    ],
+    "download_url": null,
+    "generator_version": "0.1.0"
+  },
+  "llm_explanation": null,
+  "provenance": {
+    "parser_version": "0.1.0",
+    "rule_set_version": "0.1.0",
+    "recipe_pack_version": null,
+    "composition_sha256": null,
+    "vasp_version": "6.3.2",
+    "vasp_binary_hint": "(parallel)",
+    "calculation_mode": {
+      "is_spin_polarized": false,
+      "is_dftu": false,
+      "is_soc": false,
+      "is_noncollinear": false,
+      "magnetization_analysis_mode": "unavailable"
+    },
+    "llm_used": false,
+    "mode": "rule_based"
+  }
+}

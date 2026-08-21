@@ -1,0 +1,10 @@
+SYSTEM = Si static (demo)
+ISTART = 0
+ICHARG = 2
+ENCUT  = 400
+EDIFF  = 1E-5
+NELM   = 60
+ISMEAR = 0
+SIGMA  = 0.05
+ISYM   = 2
+NSW   = 5

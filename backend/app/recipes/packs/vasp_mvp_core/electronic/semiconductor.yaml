@@ -1,0 +1,31 @@
+schema_version: "1.0"
+recipe_id: electronic.semiconductor
+version: 1.0.0
+kind: electronic_type
+recipe_status: published
+display_name: 半导体/绝缘体体系
+description: 半导体/绝缘体体系的展宽初始设置（Gaussian 展宽）。
+scope:
+  tasks: [relax, static]
+  electronic_types: [semiconductor]
+  vasp_versions: ["5.x", "6.x"]
+parameters:
+  ISMEAR: 0
+  SIGMA: 0.05
+derived_parameters: []
+requires: []
+conflicts: []
+confirmations: []
+warnings: []
+allowed_overrides:
+  ISMEAR: {type: integer, minimum: -5, maximum: 2}
+  SIGMA: {type: number, exclusive_minimum: 0, maximum: 2.0}
+provenance:
+  source_type: project_curated
+  source_note: MVP 教学配方
+  reviewed_by: be-a-domain-review
+  reviewed_at: "2026-08-10"
+tests:
+  test_status: passed
+  case_count: 4
+  last_tested_at: "2026-08-10"

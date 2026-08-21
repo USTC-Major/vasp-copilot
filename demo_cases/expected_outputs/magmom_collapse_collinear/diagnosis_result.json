@@ -1,0 +1,202 @@
+{
+  "schema_version": "1.0",
+  "diagnosis_id": "",
+  "diagnosis_status": "succeeded",
+  "summary": "发现 1 个问题（均为中/低严重度），运行基本正常。",
+  "detected_run": {
+    "root": "vd_demo_1xg_m7p4",
+    "run_type": null,
+    "files": [
+      {
+        "name": "INCAR",
+        "kind": "incar",
+        "size": 160,
+        "path": "INCAR"
+      },
+      {
+        "name": "KPOINTS",
+        "kind": "kpoints",
+        "size": 34,
+        "path": "KPOINTS"
+      },
+      {
+        "name": "OSZICAR",
+        "kind": "oszicar",
+        "size": 408,
+        "path": "OSZICAR"
+      },
+      {
+        "name": "OUTCAR",
+        "kind": "outcar",
+        "size": 1176,
+        "path": "OUTCAR"
+      },
+      {
+        "name": "POSCAR",
+        "kind": "poscar",
+        "size": 110,
+        "path": "POSCAR"
+      }
+    ],
+    "missing_recommended": [],
+    "candidate_job_logs": []
+  },
+  "issues": [
+    {
+      "issue_id": "LOCAL_MOMENT_COLLAPSE-0001",
+      "rule_id": "LOCAL_MOMENT_COLLAPSE",
+      "severity": "medium",
+      "category": "magnetic",
+      "title": "局域磁矩塌缩（提示）",
+      "summary": "有 2 个原子初始磁矩较大而最终接近零，疑似磁矩塌缩。需核实预期磁态。",
+      "evidence": [
+        {
+          "file": "OUTCAR",
+          "line": null,
+          "message": "最终局域磁矩趋于零",
+          "data_ref": "outcar.final_magnetization",
+          "excerpt": null
+        }
+      ],
+      "recommendations": [
+        {
+          "action": "review",
+          "target": "user",
+          "parameter": null,
+          "new_value": null,
+          "rationale": "核实磁态、结构、U/泛函与初始化",
+          "requires_user_confirmation": true
+        }
+      ],
+      "auto_fixable": false,
+      "confidence": 0.6,
+      "blocking": false,
+      "possible_causes": [
+        "磁态变化",
+        "结构/泛函/U 问题"
+      ],
+      "data_ref": null,
+      "related_issue_ids": [],
+      "root_cause_candidate": null
+    }
+  ],
+  "plots": {
+    "scf": {
+      "x_label": "电子步",
+      "y_label": "能量 (eV)",
+      "series": [
+        {
+          "ionic_step": 1,
+          "electronic_step": 1,
+          "energy_ev": -50.05
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 2,
+          "energy_ev": -50.1
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 3,
+          "energy_ev": -50.15
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 4,
+          "energy_ev": -50.2
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 5,
+          "energy_ev": -50.25
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 6,
+          "energy_ev": -50.3
+        }
+      ]
+    },
+    "magnetization": {
+      "x_label": "原子索引",
+      "y_label": "磁矩 (μB)",
+      "series": [
+        {
+          "atom_index": 1,
+          "s": 0.0,
+          "p": 0.0,
+          "d": 0.04,
+          "tot": 0.04
+        },
+        {
+          "atom_index": 2,
+          "s": 0.0,
+          "p": 0.0,
+          "d": 0.04,
+          "tot": 0.04
+        }
+      ]
+    }
+  },
+  "recommended_fixes": [
+    {
+      "fix_id": "FIX-12A2493B",
+      "issue_ids": [],
+      "target_file": "INCAR",
+      "strategy": "parameter_patch",
+      "fix_status": "unavailable",
+      "safe_to_generate": false,
+      "requires_user_confirmation": true,
+      "changes": [],
+      "diff": null,
+      "generated_file_id": null,
+      "warnings": [
+        "没有可通过白名单自动修复的参数变更"
+      ]
+    }
+  ],
+  "missing_evidence": [],
+  "next_step": {
+    "allowed": true,
+    "reason": "无 Critical/High 问题，可进入后续 static/DOS/band 流程",
+    "suggested_task": "static"
+  },
+  "report": {
+    "report_id": "RPT-195C9852",
+    "diagnosis_id": "",
+    "format": "markdown",
+    "language": "zh",
+    "title": "VASP-Doctor 诊断报告",
+    "generated_at": "2026-08-09T14:41:26.962823+00:00",
+    "size_bytes": 1994,
+    "sha256": "0deb89613ba9c06b35b1cb350184936981476b9af8789f23eac9752762da2e3b",
+    "sections": [
+      "summary",
+      "input_overview",
+      "issues",
+      "fixes",
+      "missing_evidence",
+      "disclaimer"
+    ],
+    "download_url": null,
+    "generator_version": "0.1.0"
+  },
+  "llm_explanation": null,
+  "provenance": {
+    "parser_version": "0.1.0",
+    "rule_set_version": "0.1.0",
+    "recipe_pack_version": null,
+    "composition_sha256": null,
+    "vasp_version": "6.3.2",
+    "vasp_binary_hint": "(parallel)",
+    "calculation_mode": {
+      "is_spin_polarized": true,
+      "is_dftu": false,
+      "is_soc": false,
+      "is_noncollinear": false,
+      "magnetization_analysis_mode": "collinear"
+    },
+    "llm_used": false,
+    "mode": "rule_based"
+  }
+}

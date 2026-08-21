@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+.mypy_cache/
+.ruff_cache/
+
+# 本地环境（含密钥）
+.env
+.env.local
+
+# 运行时数据与临时目录（上传解压、会话、测试临时、pip 缓存）
+data/
+backend/tests/.tmp/
+.tmp/
+.pip-cache/
+
+# Frontend
+node_modules/
+dist/
+frontend/node_modules/
+frontend/dist/
+
+# Local editor / operating-system files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Runtime logs (demo case logs already tracked before this rule remain available)
+*.local.log

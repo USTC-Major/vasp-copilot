@@ -1,0 +1,22 @@
+[
+  {
+    "rule_id": "SCF_REACHED_NELM",
+    "severity": "high",
+    "blocking": true,
+    "auto_fixable": true,
+    "confidence": 0.85,
+    "evidence_files": [
+      "OSZICAR"
+    ]
+  },
+  {
+    "rule_id": "OUTCAR_TRUNCATED",
+    "severity": "medium",
+    "blocking": false,
+    "auto_fixable": false,
+    "confidence": 0.85,
+    "evidence_files": [
+      "OUTCAR"
+    ]
+  }
+]

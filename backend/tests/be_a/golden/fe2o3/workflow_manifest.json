@@ -1,0 +1,91 @@
+{
+  "bundle_sha256": "46b3b753e697270be9adc53051cb17b6c9f26cc27e47b46d0c64dd6e0a88c1cd",
+  "created_at": "2026-08-10T00:00:00Z",
+  "files": [
+    {
+      "path": "01_relax/INCAR",
+      "sha256": "4ce9ceb32e553169b84a21dcb04c55be261f1a13501013b5d0a75e68f924d3e2",
+      "size_bytes": 307
+    },
+    {
+      "path": "01_relax/KPOINTS",
+      "sha256": "320dcbe1e8c36d603caff2d38b53675a902099e8098ba5a4534b41bfa235f8c2",
+      "size_bytes": 72
+    },
+    {
+      "path": "01_relax/POSCAR",
+      "sha256": "97fd3eb52215eb5d9c221579ab61fbf34f494eb0dd0354a2d2be865be308b972",
+      "size_bytes": 132
+    },
+    {
+      "path": "01_relax/submit.sh",
+      "sha256": "cbd299822cb6ef888e84b226bd81ce893ab28fcc945e864b64f01a0691efb9ae",
+      "size_bytes": 298
+    },
+    {
+      "path": "02_static/INCAR",
+      "sha256": "0936953b220cec290cfd89f99a14a2836af8f17f565d9921fed0ce433399e016",
+      "size_bytes": 276
+    },
+    {
+      "path": "02_static/KPOINTS",
+      "sha256": "54d18b14e318ed6d310f4baafc282e1a29b832f6713645f1a83ce36b7ea30b8f",
+      "size_bytes": 73
+    },
+    {
+      "path": "02_static/POSCAR",
+      "sha256": "97fd3eb52215eb5d9c221579ab61fbf34f494eb0dd0354a2d2be865be308b972",
+      "size_bytes": 132
+    },
+    {
+      "path": "02_static/submit.sh",
+      "sha256": "2d07bd3bb01ce97e93f7c4234a1d94f935dff55cbf1e598c6aee52deab4fa9d6",
+      "size_bytes": 299
+    },
+    {
+      "path": "03_dos/INCAR",
+      "sha256": "1853f404210d6cc8f9c0f9952171c7aa869d761ff78858eb063f393921966416",
+      "size_bytes": 313
+    },
+    {
+      "path": "03_dos/KPOINTS",
+      "sha256": "ca90b18e0ed40e40553b8a27e026649fb1896d35db4e85ffbe81ac2626ee68a2",
+      "size_bytes": 70
+    },
+    {
+      "path": "03_dos/POSCAR",
+      "sha256": "97fd3eb52215eb5d9c221579ab61fbf34f494eb0dd0354a2d2be865be308b972",
+      "size_bytes": 132
+    },
+    {
+      "path": "03_dos/submit.sh",
+      "sha256": "1857658f30f6a00bb7622361f7224786cdcefbb7da367cd7650785e1b95dd020",
+      "size_bytes": 296
+    },
+    {
+      "path": "INPUT_CHECK_REPORT.md",
+      "sha256": "0fff3b0a27eb611dd48d3d054c4715ffecfe665175307df61420fa91581b7a6f",
+      "size_bytes": 9125
+    },
+    {
+      "path": "POTCAR_REQUIRED.md",
+      "sha256": "918d505e642c6508f04d1c12bfeef3a4ad7ff73122cf6149357afbc18ab37d58",
+      "size_bytes": 957
+    },
+    {
+      "path": "README_run_order.md",
+      "sha256": "75d3c3fd0f15b2dfd7addf8b7bb960a76c280a47f17d802673cc8eb5d8d7e407",
+      "size_bytes": 2267
+    },
+    {
+      "path": "workflow_plan.json",
+      "sha256": "d545f501c2b4887ac0c382d17f44e6983237c5644b08c3d1f6a41b872a2f8634",
+      "size_bytes": 16384
+    }
+  ],
+  "generator_version": "0.1.0",
+  "recipe_pack_sha256": "2aab9931ff8ca9c0756b708c63fa9c484bd37c3db2bba3e6149aab6ae3a10461",
+  "recipe_pack_version": "1.0.0",
+  "revision": 1,
+  "workflow_id": "wf_fe2o3"
+}

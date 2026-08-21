@@ -1,0 +1,24 @@
+ vasp.6.3.2 (build Mar 2025) (parallel)
+ running on   1 total cores
+ POSCAR: Si2      (demo)
+     maximum precision for lattice parameters
+
+   LATTYP: Found a simple cubic cell.
+   ALAT       =     5.4300000
+
+   number of electron      12
+
+   LOOP+:  electronic self-consistency
+     1  DAV:  0.100E+00  0.100E+00 -0.100E+00      -100.05000000
+     1 F=      -100.05000000 E0=      -100.05000000 d E =-5.00000000e-02
+     2  DAV:  0.100E+00  0.100E+00 -0.100E+00      -100.10000000
+     2 F=      -100.10000000 E0=      -100.10000000 d E =-5.00000000e-02
+     3  DAV:  0.100E+00  0.100E+00 -0.100E+00      -100.15000000
+     3 F=      -100.15000000 E0=      -100.15000000 d E =-5.00000000e-02
+     4  DAV:  0.100E+00  0.100E+00 -0.100E+00      -100.20000000
+     4 F=      -100.20000000 E0=      -100.20000000 d E =-5.00000000e-02
+     5  DAV:  0.100E+00  0.100E+00 -0.100E+00      -100.25000000
+     5 F=      -100.25000000 E0=      -100.25000000 d E =-5.00000000e-02
+
+ General timing and accounting informations for this run:
+     Total CPU time used (sec):        1.00

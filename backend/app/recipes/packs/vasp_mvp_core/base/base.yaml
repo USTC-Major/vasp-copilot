@@ -1,0 +1,43 @@
+schema_version: "1.0"
+recipe_id: base.vasp
+version: 1.0.0
+kind: base
+recipe_status: published
+display_name: VASP 基础参数
+description: 所有 VASP 任务共享的受审查基础参数；SYSTEM 与 ENCUT 由确定性派生函数给出。
+scope:
+  tasks: [relax, static, dos, band]
+  electronic_types: [metal, semiconductor, unknown]
+  vasp_versions: ["5.x", "6.x"]
+parameters:
+  PREC: Accurate
+  LREAL: Auto
+  LWAVE: false
+  LCHARG: false
+derived_parameters:
+  - function: derive_system_label
+    parameter: SYSTEM
+    target: INCAR
+    inputs: [structure.formula, task]
+  - function: derive_encut_from_precision
+    parameter: ENCUT
+    target: INCAR
+    inputs: [precision]
+requires: []
+conflicts: []
+confirmations: []
+warnings:
+  - code: INITIAL_RECOMMENDATION_ONLY
+    severity: medium
+    message: 这是初始推荐，不是唯一正确设置。
+allowed_overrides:
+  ENCUT: {type: number, minimum: 1}
+provenance:
+  source_type: project_curated
+  source_note: MVP 教学配方
+  reviewed_by: be-a-domain-review
+  reviewed_at: "2026-08-10"
+tests:
+  test_status: passed
+  case_count: 4
+  last_tested_at: "2026-08-10"

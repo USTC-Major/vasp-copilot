@@ -1,0 +1,40 @@
+schema_version: "1.0"
+recipe_id: task.relax.standard
+version: 1.0.0
+kind: task
+recipe_status: published
+display_name: 常规结构优化
+description: 结构和晶胞优化的初始教学配方（EDIFF 由 precision 层控制）。
+scope:
+  tasks: [relax]
+  electronic_types: [metal, semiconductor, unknown]
+  vasp_versions: ["5.x", "6.x"]
+parameters:
+  IBRION: 2
+  NSW: 100
+  ISIF: 3
+  EDIFFG: -0.02
+  ALGO: Normal
+derived_parameters: []
+requires: []
+conflicts: []
+confirmations:
+  - key: EDIFFG
+    required: true
+    prompt: 确认力收敛阈值（EDIFFG<0 表示力阈值，>0 表示能量阈值）
+warnings:
+  - code: INITIAL_RECOMMENDATION_ONLY
+    severity: medium
+    message: 这是初始推荐，不是唯一正确设置。
+allowed_overrides:
+  EDIFFG: {type: number}
+  NSW: {type: integer, minimum: 0}
+provenance:
+  source_type: project_curated
+  source_note: MVP 教学配方（设计文档 10.5 节）
+  reviewed_by: be-a-domain-review
+  reviewed_at: "2026-08-10"
+tests:
+  test_status: passed
+  case_count: 4
+  last_tested_at: "2026-08-10"

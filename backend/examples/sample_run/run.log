@@ -1,0 +1,3 @@
+[2026-08-06 10:00:00] VASP job requested: sbatch run.sh
+[2026-08-06 10:00:01] Job 1234 queued
+[2026-08-06 10:05:12] Job 1234 completed

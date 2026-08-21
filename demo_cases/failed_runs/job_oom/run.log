@@ -1,0 +1,3 @@
+JOB 12345: slurmstepd: error: Detected 1 oom-kill event(s) in StepId=12345.batch
+Killed process 999999 (vasp_std) total-vm: 12800000kB
+Slurm job aborted: out of memory

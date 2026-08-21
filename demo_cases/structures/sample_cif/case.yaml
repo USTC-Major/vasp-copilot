@@ -1,0 +1,10 @@
+case_id: sample_cif
+description: "Structure sample (Fe2O3 CIF) used by Doctor for structure-side analysis; not a failed run."
+input_sha256: aa3ef8d69da46017ce4448254839b9e995d6e2de7c164e9a3f4aee0cba2ecd0c
+required_feature_flags: []
+expected_rule_ids: []
+expected_issue_count_by_severity: {}
+recommended_fix_expected: false
+unsupported_or_missing_evidence: []
+demo_phrase: "Structure input sample (CIF); pair with a failed run to show structure-side context."
+max_runtime_seconds: 0

@@ -1,0 +1,29 @@
+ vasp.6.3.2 (build Mar 2025) (parallel)
+ running on   1 total cores
+ POSCAR: Fe2      (demo)
+     maximum precision for lattice parameters
+
+   LATTYP: Found a body centered tetragonal cell.
+   ALAT       =     2.8600000
+
+   ISPIN =      2
+
+   number of electron      8
+
+   LOOP+:  electronic self-consistency
+     1 F=       -50.05000000 E0=       -50.05000000 d E =-5.00000000e-02
+     2 F=       -50.10000000 E0=       -50.10000000 d E =-5.00000000e-02
+     3 F=       -50.15000000 E0=       -50.15000000 d E =-5.00000000e-02
+     4 F=       -50.20000000 E0=       -50.20000000 d E =-5.00000000e-02
+     5 F=       -50.25000000 E0=       -50.25000000 d E =-5.00000000e-02
+     6 F=       -50.30000000 E0=       -50.30000000 d E =-5.00000000e-02
+ magnetization (x)
+ # of ion       s       p       d       tot
+ -------------------------------------------------
+    1         0.000   0.000   0.040   0.040
+    2         0.000   0.000   0.040   0.040
+ -------------------------------------------------
+ tot          0.000   0.000   0.080   0.080
+
+ General timing and accounting informations for this run:
+     Total CPU time used (sec):        1.00

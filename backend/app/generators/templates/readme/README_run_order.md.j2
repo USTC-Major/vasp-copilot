@@ -1,0 +1,36 @@
+# README — VASP 工作流运行顺序
+
+- workflow_id: `{{ workflow_id }}`
+- revision: {{ revision }}
+- 结构: {{ formula }}（{{ elements | join(' / ') }}，{{ atom_count }} atoms）
+
+> 本目录树为**生成产物**，不代表可直接提交：缺少 POTCAR 与上游运行时输出时必须先补齐。
+
+## 运行顺序
+
+{% for step in steps %}
+### {{ loop.index }}. `{{ step.directory }}/` — {{ step.task }}
+- step_id: `{{ step.step_id }}`
+- runnable: **{{ step.runnable }}**{% if step.blocked_by %}（blocked_by: {{ step.blocked_by | join(', ') }}）{% endif %}
+{% if step.depends_on %}- depends_on: {{ step.depends_on | join(', ') }}
+{% endif %}- produces: {{ step.produces | join(', ') }}
+- 运行: 进入目录后按 `submit.sh` 内的提示手动提交（生成阶段不执行任何命令）
+{% endfor %}
+
+## 文件继承（FileInheritancePlan）
+
+{% if dependencies %}| 上游 step | 源文件 | 下游 step | 目标文件 | 需上游诊断通过 |
+|---|---|---|---|---|
+{% for dep in dependencies %}| `{{ dep.from_step_id }}` | {{ dep.source_file }} | `{{ dep.to_step_id }}` | {{ dep.target_file }} | {{ dep.requires_upstream_diagnosis_pass }} |
+{% endfor %}{% else %}本工作流没有跨 step 文件依赖。
+{% endif %}
+
+## POTCAR
+
+{% if potcar_required %}**尚未准备 POTCAR**：见 `POTCAR_REQUIRED.md`，所有 step 在补齐前均不可运行。{% else %}POTCAR 已由用户准备（BE-A 不下载/分发 POTCAR）。{% endif %}
+
+## 警告与待确认
+
+{% if warnings %}{% for warning in warnings %}- [{{ warning.severity }}] {{ warning.code }}: {{ warning.message }}
+{% endfor %}{% else %}无。
+{% endif %}

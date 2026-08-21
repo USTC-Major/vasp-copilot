@@ -1,0 +1,205 @@
+{
+  "schema_version": "1.0",
+  "diagnosis_id": "",
+  "diagnosis_status": "succeeded",
+  "summary": "发现 1 个高严重度问题（JOB_OOM），另有 0 个中等问题，请优先处理后再提交计算。",
+  "detected_run": {
+    "root": "vd_demo_c20yiqi8",
+    "run_type": null,
+    "files": [
+      {
+        "name": "INCAR",
+        "kind": "incar",
+        "size": 132,
+        "path": "INCAR"
+      },
+      {
+        "name": "KPOINTS",
+        "kind": "kpoints",
+        "size": 34,
+        "path": "KPOINTS"
+      },
+      {
+        "name": "OSZICAR",
+        "kind": "oszicar",
+        "size": 538,
+        "path": "OSZICAR"
+      },
+      {
+        "name": "OUTCAR",
+        "kind": "outcar",
+        "size": 1516,
+        "path": "OUTCAR"
+      },
+      {
+        "name": "POSCAR",
+        "kind": "poscar",
+        "size": 99,
+        "path": "POSCAR"
+      },
+      {
+        "name": "run.log",
+        "kind": "other",
+        "size": 171,
+        "path": "run.log"
+      }
+    ],
+    "missing_recommended": [],
+    "candidate_job_logs": [
+      "run.log"
+    ]
+  },
+  "issues": [
+    {
+      "issue_id": "JOB_OOM-0001",
+      "rule_id": "JOB_OOM",
+      "severity": "high",
+      "category": "scheduler",
+      "title": "作业内存不足(OOM)",
+      "summary": "作业日志出现 OOM/内存超限证据。",
+      "evidence": [
+        {
+          "file": "job.log",
+          "line": 1,
+          "message": "JOB 12345: slurmstepd: error: Detected 1 oom-kill event(s) in StepId=12345.batch",
+          "data_ref": null,
+          "excerpt": null
+        }
+      ],
+      "recommendations": [
+        {
+          "action": "review",
+          "target": "submit",
+          "parameter": null,
+          "new_value": null,
+          "rationale": "减小核/内存占用、增加内存、检查 NCORE/KPAR",
+          "requires_user_confirmation": true
+        }
+      ],
+      "auto_fixable": false,
+      "confidence": 0.9,
+      "blocking": true,
+      "possible_causes": [
+        "内存配给不足",
+        "并行设置不合理"
+      ],
+      "data_ref": null,
+      "related_issue_ids": [],
+      "root_cause_candidate": null
+    }
+  ],
+  "plots": {
+    "scf": {
+      "x_label": "电子步",
+      "y_label": "能量 (eV)",
+      "series": [
+        {
+          "ionic_step": 1,
+          "electronic_step": 1,
+          "energy_ev": -100.05
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 2,
+          "energy_ev": -100.1
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 3,
+          "energy_ev": -100.15
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 4,
+          "energy_ev": -100.2
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 5,
+          "energy_ev": -100.25
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 6,
+          "energy_ev": -100.3
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 7,
+          "energy_ev": -100.35
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 8,
+          "energy_ev": -100.4
+        }
+      ]
+    },
+    "magnetization": {
+      "x_label": "原子索引",
+      "y_label": "磁矩 (μB)",
+      "series": []
+    }
+  },
+  "recommended_fixes": [
+    {
+      "fix_id": "FIX-C78884F8",
+      "issue_ids": [],
+      "target_file": "INCAR",
+      "strategy": "parameter_patch",
+      "fix_status": "unavailable",
+      "safe_to_generate": false,
+      "requires_user_confirmation": true,
+      "changes": [],
+      "diff": null,
+      "generated_file_id": null,
+      "warnings": [
+        "没有可通过白名单自动修复的参数变更"
+      ]
+    }
+  ],
+  "missing_evidence": [],
+  "next_step": {
+    "allowed": false,
+    "reason": "存在 1 个 Critical/High 问题未解决或未确认修复（JOB_OOM-0001）",
+    "suggested_task": null
+  },
+  "report": {
+    "report_id": "RPT-1089CAEE",
+    "diagnosis_id": "",
+    "format": "markdown",
+    "language": "zh",
+    "title": "VASP-Doctor 诊断报告",
+    "generated_at": "2026-08-09T14:41:27.013731+00:00",
+    "size_bytes": 2023,
+    "sha256": "dd55603c152f1766fa02d8acffb85a3b4398171a041059287dfa9d369520aefb",
+    "sections": [
+      "summary",
+      "input_overview",
+      "issues",
+      "fixes",
+      "missing_evidence",
+      "disclaimer"
+    ],
+    "download_url": null,
+    "generator_version": "0.1.0"
+  },
+  "llm_explanation": null,
+  "provenance": {
+    "parser_version": "0.1.0",
+    "rule_set_version": "0.1.0",
+    "recipe_pack_version": null,
+    "composition_sha256": null,
+    "vasp_version": "6.3.2",
+    "vasp_binary_hint": "(parallel)",
+    "calculation_mode": {
+      "is_spin_polarized": false,
+      "is_dftu": false,
+      "is_soc": false,
+      "is_noncollinear": false,
+      "magnetization_analysis_mode": "unavailable"
+    },
+    "llm_used": false,
+    "mode": "rule_based"
+  }
+}

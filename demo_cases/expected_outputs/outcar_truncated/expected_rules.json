@@ -1,0 +1,12 @@
+[
+  {
+    "rule_id": "OUTCAR_TRUNCATED",
+    "severity": "medium",
+    "blocking": false,
+    "auto_fixable": false,
+    "confidence": 0.85,
+    "evidence_files": [
+      "OUTCAR"
+    ]
+  }
+]

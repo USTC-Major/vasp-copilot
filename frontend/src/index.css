@@ -1,0 +1,151 @@
+/* ============================================================
+   VASP-Copilot / VASP-Doctor+ — Apple 风格全局样式
+   改动可回退：design_backup 目录保存了改动前副本
+   ============================================================ */
+
+:root {
+  --apple-bg: #f5f5f7;
+  --apple-surface: #ffffff;
+  --apple-text: #1d1d1f;
+  --apple-secondary: #6e6e73;
+  --apple-primary: #0071e3;
+  --apple-success: #34c759;
+  --apple-warning: #ff9f0a;
+  --apple-error: #ff3b30;
+  --apple-shadow-soft: 0 6px 20px rgba(0, 0, 0, 0.06);
+  --apple-shadow: 0 12px 32px rgba(0, 0, 0, 0.08);
+  --apple-shadow-hover: 0 24px 60px rgba(0, 0, 0, 0.12);
+  --apple-radius-lg: 20px;
+  --apple-radius: 14px;
+  --apple-radius-sm: 10px;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text',
+    'Segoe UI', Roboto, 'Helvetica Neue', 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', Arial, 'Noto Sans', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: linear-gradient(180deg, #fbfbfd 0%, var(--apple-bg) 100%);
+  color: var(--apple-text);
+}
+
+#root {
+  min-height: 100vh;
+}
+
+/* Ant Design overrides */
+.ant-layout {
+  background: transparent;
+}
+
+.ant-layout-content {
+  background: transparent;
+}
+
+/* 卡片 Apple 风格：大圆角 + 柔和投影 */
+.ant-card {
+  border-radius: var(--apple-radius-lg);
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  box-shadow: var(--apple-shadow-soft);
+  transition: box-shadow 0.3s ease, transform 0.3s ease;
+}
+
+.ant-card-hoverable:hover {
+  box-shadow: var(--apple-shadow-hover);
+  transform: translateY(-2px);
+}
+
+.ant-card .ant-card-head {
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  font-weight: 600;
+}
+
+/* 拖拽上传区 */
+.ant-upload-drag {
+  border-radius: var(--apple-radius-lg);
+  transition: border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+.ant-upload-drag:hover {
+  box-shadow: var(--apple-shadow-soft);
+}
+
+/* Steps */
+.ant-steps {
+  padding: 8px 0 24px;
+}
+
+.ant-steps .ant-steps-item-title {
+  font-weight: 500;
+}
+
+/* 滚动条 — 更细腻 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.16);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.28);
+}
+
+/* Code blocks */
+pre {
+  font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono',
+    Consolas, Monaco, 'Courier New', monospace;
+  border-radius: var(--apple-radius-sm);
+}
+
+/* React Flow */
+.react-flow__node {
+  font-size: 14px;
+}
+
+/* Page transitions — 柔和 */
+.ant-layout-content > * {
+  animation: fadeIn 0.3s ease-in;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* 模拟环境 banner — Apple 风格胶囊提示 */
+.simulated-banner {
+  background: rgba(255, 159, 10, 0.14);
+  border: 1px solid rgba(255, 159, 10, 0.4);
+  border-radius: 999px;
+  padding: 8px 16px;
+  font-size: 13px;
+  color: #c87e00;
+  text-align: center;
+  margin-bottom: 16px;
+  display: inline-block;
+}
+
+.simulated-banner::before {
+  content: '⚠ ';
+}

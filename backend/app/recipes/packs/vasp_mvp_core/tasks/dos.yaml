@@ -1,0 +1,44 @@
+schema_version: "1.0"
+recipe_id: task.dos.standard
+version: 1.0.0
+kind: task
+recipe_status: published
+display_name: 态密度计算
+description: 基于 static CHGCAR 的非自洽 DOS 计算（ICHARG=11）。
+scope:
+  tasks: [dos]
+  electronic_types: [metal, semiconductor, unknown]
+  vasp_versions: ["5.x", "6.x"]
+parameters:
+  IBRION: -1
+  NSW: 0
+  ICHARG: 11
+  LORBIT: 11
+  NEDOS: 2000
+  EMIN: -10
+  EMAX: 10
+  ISMEAR: -5
+derived_parameters: []
+requires: []
+conflicts: []
+confirmations: []
+warnings:
+  - code: INITIAL_RECOMMENDATION_ONLY
+    severity: medium
+    message: 这是初始推荐，不是唯一正确设置。
+  - code: CHGCAR_DEPENDENCY
+    severity: high
+    message: DOS 依赖 static 的 CHGCAR；文件尚未生成时 README 只写运行时复制说明，不伪造文件。
+allowed_overrides:
+  NEDOS: {type: integer, minimum: 1}
+  EMIN: {type: number}
+  EMAX: {type: number}
+provenance:
+  source_type: project_curated
+  source_note: MVP 教学配方（设计文档 10.5 节）
+  reviewed_by: be-a-domain-review
+  reviewed_at: "2026-08-10"
+tests:
+  test_status: passed
+  case_count: 4
+  last_tested_at: "2026-08-10"

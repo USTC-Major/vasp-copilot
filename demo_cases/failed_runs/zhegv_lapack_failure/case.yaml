@@ -1,0 +1,10 @@
+case_id: zhegv_lapack_failure
+description: "OUTCAR ends with ZHEGV/LAPACK diagonalization error (ZHEGV_LAPACK_FAILURE). Demonstrate core-error rule (blocking, review-only)."
+input_sha256: c649fc38a6d698d73f257cbc5a3759000dd337dc7acca92f783af363979a9ce3
+required_feature_flags: []
+expected_rule_ids: ["OUTCAR_TRUNCATED", "ZHEGV_LAPACK_FAILURE"]
+expected_issue_count_by_severity: {"critical": 0, "high": 1, "medium": 1, "low": 0, "info": 0}
+recommended_fix_expected: false
+unsupported_or_missing_evidence: []
+demo_phrase: "Upload then run diagnosis: expect ZHEGV_LAPACK_FAILURE (plus OUTCAR_TRUNCATED); report asks to review structure/precision."
+max_runtime_seconds: 30

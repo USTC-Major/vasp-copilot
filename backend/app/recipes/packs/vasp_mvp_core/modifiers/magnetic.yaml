@@ -1,0 +1,36 @@
+schema_version: "1.0"
+recipe_id: modifier.magnetic
+version: 1.0.0
+kind: modifier
+recipe_status: published
+display_name: 磁性修饰
+description: 启用自旋极化；MAGMOM 按 POSCAR 原子顺序由白名单派生函数展开，仅为初始猜测。
+scope:
+  tasks: [relax, static, dos, band]
+  electronic_types: [metal, semiconductor, unknown]
+  vasp_versions: ["5.x", "6.x"]
+parameters:
+  ISPIN: 2
+derived_parameters:
+  - function: generate_magmom_from_structure
+    parameter: MAGMOM
+    target: INCAR
+    inputs: [structure.elements, structure.counts, user.element_initial_moments]
+requires:
+  - material_assumptions.magnetic
+conflicts: []
+confirmations: []
+warnings:
+  - code: MAGMOM_INITIAL_GUESS
+    severity: medium
+    message: 初始磁矩仅为起点，请确认元素级初值；不保证是基态磁结构。
+allowed_overrides: {}
+provenance:
+  source_type: project_curated
+  source_note: MVP 教学配方
+  reviewed_by: be-a-domain-review
+  reviewed_at: "2026-08-10"
+tests:
+  test_status: passed
+  case_count: 4
+  last_tested_at: "2026-08-10"

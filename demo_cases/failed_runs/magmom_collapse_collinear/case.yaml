@@ -1,0 +1,10 @@
+case_id: magmom_collapse_collinear
+description: "Collinear spin collapse: ISPIN=2 + MAGMOM=2*2.0 but final local moments ~0.04 (LOCAL_MOMENT_COLLAPSE). Demonstrate magnetic-moment collapse notice (design 13.3)."
+input_sha256: fff178a7121d6df5f28aad9bf2aaa8221f9a8fa0fe558c2ec054f4da5a5b472a
+required_feature_flags: []
+expected_rule_ids: ["LOCAL_MOMENT_COLLAPSE"]
+expected_issue_count_by_severity: {"critical": 0, "high": 0, "medium": 1, "low": 0, "info": 0}
+recommended_fix_expected: false
+unsupported_or_missing_evidence: []
+demo_phrase: "Upload then run diagnosis: expect LOCAL_MOMENT_COLLAPSE; report asks to verify magnetic state."
+max_runtime_seconds: 30

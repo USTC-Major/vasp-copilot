@@ -1,0 +1,12 @@
+[
+  {
+    "rule_id": "IONIC_REACHED_NSW",
+    "severity": "high",
+    "blocking": true,
+    "auto_fixable": true,
+    "confidence": 0.8,
+    "evidence_files": [
+      "OSZICAR"
+    ]
+  }
+]

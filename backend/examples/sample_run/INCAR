@@ -1,0 +1,10 @@
+SYSTEM = Si demo (example)
+ENCUT = 400
+PREC = Normal
+ISMEAR = 0
+SIGMA = 0.05
+NELM = 60
+EDIFF = 1e-5
+IBRION = 2
+NSW = 50
+ISPIN = 2

@@ -1,0 +1,12 @@
+[
+  {
+    "rule_id": "JOB_OOM",
+    "severity": "high",
+    "blocking": true,
+    "auto_fixable": false,
+    "confidence": 0.9,
+    "evidence_files": [
+      "job.log"
+    ]
+  }
+]

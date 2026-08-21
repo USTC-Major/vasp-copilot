@@ -1,0 +1,135 @@
+{
+ "backend/app/agent/orchestrator.py": {
+  "cls@49": "MVP 12.1/12.5：将自然语言 / 结构化请求映射为经过校验的工具调用。\n\nLLM 路径可选；超时或输出无效时降级为确定性回退（rule_based）。仅暴露 doctor 工具，每次调用均经 Pydantic 校验并做状态检查；原始文件内容不会进入提示词。"
+ },
+ "backend/app/agent/prompts.py": {
+  "fun@29": "构造用于 LLM 工具调用解析的消息（仅结构化快照，不含原始文件）。"
+ },
+ "backend/app/agent/tools.py": {
+  "cls@18": "Agent 工具参数：run_diagnosis（MVP 12.2）。",
+  "cls@28": "Agent 工具参数：generate_fix（MVP 12.2）。",
+  "cls@38": "Agent 工具参数：generate_report（MVP 12.2）。",
+  "fun@94": "Agent 工具 schema，input_schema 内联展开（无未解析的 $ref，MVP 12.2）。",
+  "cls@105": "Agent 可消费的结构化最小会话状态（不含原始文件内容）。",
+  "cls@147": "Agent 工具门面：Agent 唯一可调用的入口（MVP 12.1/12.4）。\n\n永不暴露原始路径、POTCAR 内容或任意命令执行；工具只操作服务生成的 ID。"
+ },
+ "backend/app/api/v1/workflows.py": {
+  "mod@1": "VASP-Doctor → BE-A 工作流端点（IR-01/IR-03/IR-05）。\n\nPOST /workflows/plan       - 配方组合预览 + 待确认项\nPOST /workflows/generate   - 运行 BE-A 生成流水线并缓存产物包\nGET  /workflows/{id}       - plan/status/revision/file_tree 元数据（design 6.6）\nGET  /workflows/{id}/download - 确定性 zip 产物包\n\n请求可带可选的 ``diagnosis_id``；当未显式提供含 POSCAR 文本的 ``structure`` 时，把已存 run 的 POSCAR/CONTCAR 映射为 StructureContext（IR-05）。",
+  "cls@53": "WorkflowGenerateRequest 的宽松请求镜像。\n\n``structure`` 为可选，客户端可只依赖 ``diagnosis_id``；解析器在构建严格请求前从已存 run 填充该字段。",
+  "fun@95": "返回 POSCAR/CONTCAR 的 (文本, 来源名)，否则返回 (None, None)。",
+  "fun@108": "IR-05：把已存 doctor run 的结构映射为 BE-A StructureContext。"
+ },
+ "backend/app/core/config.py": {
+  "cls@11": "功能开关（对齐 MVP 7.23）。",
+  "cls@21": "LLM 提供方设置（MVP 5.4：超时/重试/降级，不访问二进制）。"
+ },
+ "backend/app/core/errors.py": {
+  "cls@7": "携带稳定错误码与 HTTP 状态的基类异常。"
+ },
+ "backend/app/diagnostics/analyzer.py": {
+  "fun@28": "窗口内 |dE| 的斜率（负值表示能量在衰减）。",
+  "fun@42": "从 OSZICAR 能量序列计算确定性的 SCF 指标。"
+ },
+ "backend/app/diagnostics/engine.py": {
+  "fun@16": "一组相关问题的共享根源的稳定标签。",
+  "cls@31": "确定性诊断规则的基类（MVP 11.1）。",
+  "cls@42": "用于一致地构造 Evidence/Recommendation/Issue 的辅助类。",
+  "cls@86": "在 ParsedRunData 上运行已注册规则（确定性）。",
+  "fun@38": "返回零个或多个问题。"
+ },
+ "backend/app/diagnostics/fixes.py": {
+  "fun@43": "重解析后静态（一致性）规则中的高严重度问题。",
+  "cls@55": "白名单驱动的 INCAR 修复生成器（MVP 5.4 / 第 8.3 节安全约束）。\n\n永不修改原始文件。产出 INCAR.fixed + parameter_diff.json + APPLY_MANUALLY.md。重解析修复后的 INCAR，确保未知参数可往返、且不会引入新的 HIGH 静态一致性问题。"
+ },
+ "backend/app/diagnostics/rules/files.py": {
+  "cls@75": "Doctor 无法自动校验 POTCAR 顺序（按安全策略永不回收 POTCAR 内容）。仅当顺序有意义（INCAR 存在按元素数组）且 POTCAR 存在时，发出“证据不足”提示。"
+ },
+ "backend/app/diagnostics/rules/magnetic.py": {
+  "fun@21": "按索引配对原子；仅配对初末状态都已知的原子。"
+ },
+ "backend/app/hpc/schemas.py": {
+  "fun@19": "终态结果回收的 (是否允许, 原因)（design 6.23 拒绝清单）。",
+  "cls@38": "Design 6.13：永不携带 host/user/私钥/token 等机密。",
+  "cls@56": "管理员版本化的提交配置（design 6.19/8.x：仅 argv 白名单）。"
+ },
+ "backend/app/main.py": {
+  "fun@69": "把 BE-A 模块错误映射到统一信封（IR-01）。\n\n不可重试错误映射为 409（需用户操作/确认）；可重试错误映射为 503。"
+ },
+ "backend/app/parsers/cif.py": {
+  "fun@27": "把 CIF 数据行拆分为 token，忽略尾部注释（'#'）。",
+  "fun@57": "把 CIF 解析为元素/数量 + 晶胞（手写实现，不依赖 pymatgen）。"
+ },
+ "backend/app/parsers/oszicar.py": {
+  "fun@21": "从步进行尾部提取 F=、E0=、d E=、dns=、mag= 等 token。"
+ },
+ "backend/app/parsers/vasprun.py": {
+  "mod@1": "最小化可选的 vasprun.xml 解析（MVP 3.3：vasprun.xml 可选）。",
+  "fun@30": "返回精简摘要；不安全或空内容直接不产出值。"
+ },
+ "backend/app/report/generator.py": {
+  "cls@20": "从结构化 DiagnosisResult 渲染 Markdown 诊断报告。\n\n按 MVP 5.5 可完全不依赖 LLM 运行（mode=rule_based）。下载包内含报告、修复文件与 diff JSON，绝不包含原始大文件。"
+ },
+ "backend/app/report/next_step.py": {
+  "fun@11": "MVP 5.6 下一步门控。\n\n若存在未解决或未获用户确认修复的 Critical/High 问题，则阻断继续计算（next_step.allowed=false）。在确定性 rule_based 模式下不建模用户确认步骤，因此任何 Critical/High 问题默认阻断。"
+ },
+ "backend/app/schemas/api.py": {
+  "cls@18": "携带 request_id 的统一 API 响应（MVP 6）。"
+ },
+ "backend/app/schemas/cif.py": {
+  "cls@9": "从 CIF 文件解析出的结构（design 13.4：结构格式 = POSCAR、CIF）。"
+ },
+ "backend/app/schemas/detected.py": {
+  "cls@22": "POST /api/diagnosis/upload 的结果（MVP 6.8）。"
+ },
+ "backend/app/schemas/fix.py": {
+  "cls@21": "MVP 7.7 修复建议。"
+ },
+ "backend/app/schemas/issue.py": {
+  "cls@32": "前端稳定契约（MVP 7.6）。"
+ },
+ "backend/app/schemas/mode.py": {
+  "cls@15": "MVP 7.21：自旋 / DFT+U / SOC / 非共线摘要。"
+ },
+ "backend/app/schemas/parsed.py": {
+  "cls@94": "统一解析输出（MVP 7.21）。"
+ },
+ "backend/app/schemas/report.py": {
+  "cls@9": "MVP 7.8（Markdown 报告）。"
+ },
+ "backend/app/schemas/result.py": {
+  "cls@38": "MVP 7.5：结构化的诊断输出。"
+ },
+ "backend/app/schemas/structure.py": {
+  "mod@1": "Doctor → BE-A 结构输入映射（IR-05）。\n\n把 doctor 结构摘要（来自 POSCAR/CONTCAR 的元素/数量）桥接到工作流流水线消费的 BE-A ``StructureContext``。",
+  "cls@19": "Doctor 侧结构摘要（BE-A StructureContext 的子集）。",
+  "fun@55": "把 POSCAR 缩放因子 + 3 个晶格矢量解析为 LatticeInfo。",
+  "fun@110": "从 POSCAR 派生数据构建 doctor 侧 StructureSummary。",
+  "fun@127": "IR-05：把 doctor 侧 StructureSummary 映射为 BE-A StructureContext。"
+ },
+ "backend/app/schemas/vasprun.py": {
+  "cls@9": "来自 vasprun.xml 的最小可选摘要（MVP 3.3：可选）。\n\n仅作为存在性证据 / 路线图挂点（design 路线图条目「更多解析证据」）；从不必需、也不进入诊断规则，因此诊断结果保持不变。"
+ },
+ "backend/app/security/extract.py": {
+  "cls@21": "安全归档解压的结果。",
+  "cls@28": "校验并解压 VASP 运行目录 zip，避免安全漏洞。\n\n防护：上传大小、条目数、逐条目的绝对路径或「..」、符号链接条目、zip 炸弹（解压大小/比率）、写盘时的路径穿越。内容缺少 zip 魔数头时，伪造扩展名会被拒绝。"
+ },
+ "backend/app/services/diagnosis_service.py": {
+  "fun@38": "流式 sha256 指纹；过大（>256MiB）或不可读时返回 None。",
+  "fun@208": "按 MVP 7.5 构建结构化数值序列（scf + magnetization）。",
+  "cls@254": "编排：解析 → 规则 → 修复 → 下一步 → 报告。"
+ },
+ "backend/app/services/run_store.py": {
+  "cls@17": "在 5 个端点间保存单次诊断 run 的状态。",
+  "cls@36": "MVP 用的内存存储（单进程）。基于 TTL 的清理。"
+ },
+ "backend/app/services/workflow_service.py": {
+  "mod@1": "WorkflowService（IR-03）：WorkflowGenerationPipeline 之上的服务层门面。\n\n生成的产物包保存在内存中（单进程本地演示），使下载端点可返回确定性 zip 字节；同时缓存计划阶段元数据，使 ``GET /api/v1/workflows/{workflow_id}``（design 6.6）可返回 plan/status/revision/file_tree 以支持刷新与会话恢复。",
+  "cls@45": "API 层用于 plan/generate/download 的门面（IR-01/IR-03）。",
+  "fun@55": "计划阶段预览（IR-01）；缓存计划元数据供 GET（6.6）使用。",
+  "fun@74": "运行完整生成流水线并缓存产物包供下载。",
+  "fun@86": "Design 6.6：plan/status/revision/confirmations/file_tree 元数据。"
+ },
+ "backend/tests/test_workflow_api.py": {
+  "mod@1": "Workflow API 集成测试（IR-01/IR-03/IR-05）。\n\n覆盖 /api/v1/workflows/{plan,generate,download}：从已存 doctor run 解析结构（POSCAR → StructureContext）、含待确认项的计划预览、确定性状态、zip 下载，以及把 BE-A 错误映射到统一错误信封。"
+ }
+}

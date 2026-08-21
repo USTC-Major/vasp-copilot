@@ -1,0 +1,10 @@
+case_id: ion_reached_nsw
+description: "Ionic steps reached NSW=5 without convergence (IONIC_REACHED_NSW). Demonstrate incomplete geometry-optimization detection."
+input_sha256: 6c3130a8386f714e79540524ed2ea259d052cb4f481e3bc8e813317d788968a5
+required_feature_flags: []
+expected_rule_ids: ["IONIC_REACHED_NSW"]
+expected_issue_count_by_severity: {"critical": 0, "high": 1, "medium": 0, "low": 0, "info": 0}
+recommended_fix_expected: false
+unsupported_or_missing_evidence: []
+demo_phrase: "Upload then run diagnosis: expect IONIC_REACHED_NSW; report suggests reviewing force/SCF trend and extending NSW only after checks."
+max_runtime_seconds: 30

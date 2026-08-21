@@ -1,0 +1,603 @@
+{
+  "assumptions": {
+    "electronic_type": "metal",
+    "magnetic": true,
+    "precision": "standard",
+    "soc": false
+  },
+  "confirmations": [],
+  "created_at": "2026-08-10T00:00:00Z",
+  "dftu": {
+    "enabled": true,
+    "entries": [
+      {
+        "confirmed_by_user": true,
+        "element": "Fe",
+        "j_ev": 0.0,
+        "l": 2,
+        "source_note": "用户课题组设置",
+        "u_ev": 4.0
+      }
+    ]
+  },
+  "file_inheritance_plan": {
+    "dependencies": [
+      {
+        "blocking_codes": [
+          "RUNTIME_OUTPUT_MISSING",
+          "UPSTREAM_DIAGNOSIS_BLOCKING"
+        ],
+        "dependency_id": "dep_relax_contcar",
+        "dependency_type": "runtime_file",
+        "evidence": [],
+        "from_step_id": "01_relax",
+        "required": true,
+        "requires_upstream_diagnosis_pass": true,
+        "satisfied": false,
+        "source_file": "CONTCAR",
+        "target_file": "POSCAR",
+        "to_step_id": "02_static",
+        "validation": {
+          "checks": [
+            "SOURCE_EXISTS",
+            "SOURCE_NONEMPTY",
+            "UPSTREAM_NOT_BLOCKING"
+          ],
+          "passed": false
+        }
+      },
+      {
+        "blocking_codes": [
+          "RUNTIME_OUTPUT_MISSING",
+          "UPSTREAM_DIAGNOSIS_BLOCKING"
+        ],
+        "dependency_id": "dep_static_chgcar",
+        "dependency_type": "runtime_file",
+        "evidence": [],
+        "from_step_id": "02_static",
+        "required": true,
+        "requires_upstream_diagnosis_pass": true,
+        "satisfied": false,
+        "source_file": "CHGCAR",
+        "target_file": "CHGCAR",
+        "to_step_id": "03_dos",
+        "validation": {
+          "checks": [
+            "SOURCE_EXISTS",
+            "SOURCE_NONEMPTY",
+            "UPSTREAM_NOT_BLOCKING"
+          ],
+          "passed": false
+        }
+      }
+    ],
+    "evaluated_at": null,
+    "plan_id": "fip_wf_fe2o3",
+    "revision": 1,
+    "workflow_id": "wf_fe2o3"
+  },
+  "goal": {
+    "original_text": "优化结构并做静态和 DOS",
+    "requested_tasks": [
+      "relax",
+      "static",
+      "dos"
+    ]
+  },
+  "recipe_compositions": [
+    {
+      "composition_id": "composition_01_relax",
+      "composition_sha256": "composition-8120141e98fd434fd59243784c0e843b",
+      "patch_ids": [],
+      "recipe_pack": {
+        "display_name": "VASP MVP Core Recipe Pack",
+        "pack_id": "vasp-mvp-core",
+        "schema_version": "1.0",
+        "sha256": "2aab9931ff8ca9c0756b708c63fa9c484bd37c3db2bba3e6149aab6ae3a10461",
+        "version": "1.0.0"
+      },
+      "revision": 1,
+      "selected": [
+        {
+          "layer": "base",
+          "matched_context": {
+            "task": "relax"
+          },
+          "order": 10,
+          "recipe_id": "base.vasp",
+          "selection_reason": "所有 VASP 任务共享的受审查基础参数",
+          "sha256": "67f39a5b7372996ccbb6560ec254bb200a282a266df850e57231af7e240a3542",
+          "version": "1.0.0"
+        },
+        {
+          "layer": "task",
+          "matched_context": {
+            "precision": "standard",
+            "task": "relax"
+          },
+          "order": 20,
+          "recipe_id": "task.relax.standard",
+          "selection_reason": "目标包含 relax 且精度档位由 precision 层控制",
+          "sha256": "1260e61d7844e1289a9f6a2beccf49988d90e517940de91024a32cd687cc36f7",
+          "version": "1.0.0"
+        },
+        {
+          "layer": "electronic_type",
+          "matched_context": {
+            "electronic_type": "metal"
+          },
+          "order": 30,
+          "recipe_id": "electronic.metal",
+          "selection_reason": "用户将体系电子类型标记为 metal",
+          "sha256": "93e3e4136e583a464eaf9ee6f81cb1feb23c7cff97e7ad6f6d238ac5e2b40abe",
+          "version": "1.0.0"
+        },
+        {
+          "layer": "modifier",
+          "matched_context": {
+            "dftu": true,
+            "elements": [
+              "Fe",
+              "O"
+            ]
+          },
+          "order": 40,
+          "recipe_id": "modifier.dftu",
+          "selection_reason": "用户启用 DFT+U；L/U/J 必须由用户输入并确认",
+          "sha256": "da205c85bca7b03c9a756241262169bead5fa5f9b5b83e22d34d234ae64a2dbe",
+          "version": "1.0.0"
+        },
+        {
+          "layer": "modifier",
+          "matched_context": {
+            "elements": [
+              "Fe",
+              "O"
+            ],
+            "magnetic": true
+          },
+          "order": 41,
+          "recipe_id": "modifier.magnetic",
+          "selection_reason": "用户确认磁性；MAGMOM 按 POSCAR 顺序派生",
+          "sha256": "d58bc3b4bb5b66af149f1f0a3ce4b0540bb0b6b6a0e5422a6f97fb3d5bc16ab7",
+          "version": "1.0.0"
+        },
+        {
+          "layer": "precision",
+          "matched_context": {
+            "precision": "standard"
+          },
+          "order": 50,
+          "recipe_id": "precision.standard",
+          "selection_reason": "用户选择精度档位 standard",
+          "sha256": "17bb1c42b3e329509a82ffa678b92d3382b714684650670dc071a64d297357d4",
+          "version": "1.0.0"
+        }
+      ],
+      "step_id": "01_relax"
+    },
+    {
+      "composition_id": "composition_02_static",
+      "composition_sha256": "composition-0a48ddc6cadff0293494c9f561b0be67",
+      "patch_ids": [],
+      "recipe_pack": {
+        "display_name": "VASP MVP Core Recipe Pack",
+        "pack_id": "vasp-mvp-core",
+        "schema_version": "1.0",
+        "sha256": "2aab9931ff8ca9c0756b708c63fa9c484bd37c3db2bba3e6149aab6ae3a10461",
+        "version": "1.0.0"
+      },
+      "revision": 1,
+      "selected": [
+        {
+          "layer": "base",
+          "matched_context": {
+            "task": "static"
+          },
+          "order": 10,
+          "recipe_id": "base.vasp",
+          "selection_reason": "所有 VASP 任务共享的受审查基础参数",
+          "sha256": "67f39a5b7372996ccbb6560ec254bb200a282a266df850e57231af7e240a3542",
+          "version": "1.0.0"
+        },
+        {
+          "layer": "task",
+          "matched_context": {
+            "precision": "standard",
+            "task": "static"
+          },
+          "order": 20,
+          "recipe_id": "task.static.standard",
+          "selection_reason": "目标包含 static 且精度档位由 precision 层控制",
+          "sha256": "69ca83daae5e68ae8715ee9ce4d879208380ef24af715e767fb3d4f0f15adccd",
+          "version": "1.0.0"
+        },
+        {
+          "layer": "electronic_type",
+          "matched_context": {
+            "electronic_type": "metal"
+          },
+          "order": 30,
+          "recipe_id": "electronic.metal",
+          "selection_reason": "用户将体系电子类型标记为 metal",
+          "sha256": "93e3e4136e583a464eaf9ee6f81cb1feb23c7cff97e7ad6f6d238ac5e2b40abe",
+          "version": "1.0.0"
+        },
+        {
+          "layer": "modifier",
+          "matched_context": {
+            "dftu": true,
+            "elements": [
+              "Fe",
+              "O"
+            ]
+          },
+          "order": 40,
+          "recipe_id": "modifier.dftu",
+          "selection_reason": "用户启用 DFT+U；L/U/J 必须由用户输入并确认",
+          "sha256": "da205c85bca7b03c9a756241262169bead5fa5f9b5b83e22d34d234ae64a2dbe",
+          "version": "1.0.0"
+        },
+        {
+          "layer": "modifier",
+          "matched_context": {
+            "elements": [
+              "Fe",
+              "O"
+            ],
+            "magnetic": true
+          },
+          "order": 41,
+          "recipe_id": "modifier.magnetic",
+          "selection_reason": "用户确认磁性；MAGMOM 按 POSCAR 顺序派生",
+          "sha256": "d58bc3b4bb5b66af149f1f0a3ce4b0540bb0b6b6a0e5422a6f97fb3d5bc16ab7",
+          "version": "1.0.0"
+        },
+        {
+          "layer": "precision",
+          "matched_context": {
+            "precision": "standard"
+          },
+          "order": 50,
+          "recipe_id": "precision.standard",
+          "selection_reason": "用户选择精度档位 standard",
+          "sha256": "17bb1c42b3e329509a82ffa678b92d3382b714684650670dc071a64d297357d4",
+          "version": "1.0.0"
+        }
+      ],
+      "step_id": "02_static"
+    },
+    {
+      "composition_id": "composition_03_dos",
+      "composition_sha256": "composition-190d49d9c5ccb52bbad6265aeb847430",
+      "patch_ids": [],
+      "recipe_pack": {
+        "display_name": "VASP MVP Core Recipe Pack",
+        "pack_id": "vasp-mvp-core",
+        "schema_version": "1.0",
+        "sha256": "2aab9931ff8ca9c0756b708c63fa9c484bd37c3db2bba3e6149aab6ae3a10461",
+        "version": "1.0.0"
+      },
+      "revision": 1,
+      "selected": [
+        {
+          "layer": "base",
+          "matched_context": {
+            "task": "dos"
+          },
+          "order": 10,
+          "recipe_id": "base.vasp",
+          "selection_reason": "所有 VASP 任务共享的受审查基础参数",
+          "sha256": "67f39a5b7372996ccbb6560ec254bb200a282a266df850e57231af7e240a3542",
+          "version": "1.0.0"
+        },
+        {
+          "layer": "task",
+          "matched_context": {
+            "precision": "standard",
+            "task": "dos"
+          },
+          "order": 20,
+          "recipe_id": "task.dos.standard",
+          "selection_reason": "目标包含 dos 且精度档位由 precision 层控制",
+          "sha256": "5c753495f63767f7be50697d9258a870eccb528b62f3990eddcb74bce2562e5b",
+          "version": "1.0.0"
+        },
+        {
+          "layer": "modifier",
+          "matched_context": {
+            "dftu": true,
+            "elements": [
+              "Fe",
+              "O"
+            ]
+          },
+          "order": 40,
+          "recipe_id": "modifier.dftu",
+          "selection_reason": "用户启用 DFT+U；L/U/J 必须由用户输入并确认",
+          "sha256": "da205c85bca7b03c9a756241262169bead5fa5f9b5b83e22d34d234ae64a2dbe",
+          "version": "1.0.0"
+        },
+        {
+          "layer": "modifier",
+          "matched_context": {
+            "elements": [
+              "Fe",
+              "O"
+            ],
+            "magnetic": true
+          },
+          "order": 41,
+          "recipe_id": "modifier.magnetic",
+          "selection_reason": "用户确认磁性；MAGMOM 按 POSCAR 顺序派生",
+          "sha256": "d58bc3b4bb5b66af149f1f0a3ce4b0540bb0b6b6a0e5422a6f97fb3d5bc16ab7",
+          "version": "1.0.0"
+        },
+        {
+          "layer": "precision",
+          "matched_context": {
+            "precision": "standard"
+          },
+          "order": 50,
+          "recipe_id": "precision.standard",
+          "selection_reason": "用户选择精度档位 standard",
+          "sha256": "17bb1c42b3e329509a82ffa678b92d3382b714684650670dc071a64d297357d4",
+          "version": "1.0.0"
+        }
+      ],
+      "step_id": "03_dos"
+    }
+  ],
+  "remote_execution": {
+    "auto_resubmit": false,
+    "cluster_profile_id": null,
+    "deploy_requires_confirmation": true,
+    "enabled": false,
+    "mode": "disabled",
+    "submit_requires_confirmation": true
+  },
+  "revision": 1,
+  "scheduler": {
+    "nodes": 1,
+    "scheduler_profile_id": null,
+    "scheduler_type": "slurm",
+    "tasks_per_node": 1,
+    "vasp_binary_hint": "vasp_std",
+    "walltime": "12:00:00"
+  },
+  "schema_version": "1.0",
+  "steps": [
+    {
+      "blocked_by": [
+        "POTCAR_NOT_PREPARED"
+      ],
+      "depends_on": [],
+      "directory": "01_relax",
+      "label": "relax step",
+      "parameters": {
+        "ALGO": "Normal",
+        "EDIFF": 1e-05,
+        "EDIFFG": -0.02,
+        "ENCUT": 520.0,
+        "IBRION": 2,
+        "ISIF": 3,
+        "ISMEAR": 1,
+        "ISPIN": 2,
+        "LCHARG": false,
+        "LDAU": true,
+        "LDAUJ": [
+          0.0,
+          0.0
+        ],
+        "LDAUL": [
+          2.0,
+          -1.0
+        ],
+        "LDAUTYPE": 2,
+        "LDAUU": [
+          4.0,
+          0.0
+        ],
+        "LMAXMIX": 4,
+        "LREAL": "Auto",
+        "LWAVE": false,
+        "MAGMOM": [
+          5.0,
+          5.0,
+          0.6,
+          0.6,
+          0.6
+        ],
+        "NELM": 100,
+        "NSW": 100,
+        "PREC": "Accurate",
+        "SIGMA": 0.2,
+        "SYSTEM": "Fe2O3_relax"
+      },
+      "produces": [
+        "CONTCAR",
+        "OUTCAR",
+        "OSZICAR"
+      ],
+      "requires_runtime_outputs": [],
+      "runnable": false,
+      "step_id": "01_relax",
+      "task": "relax"
+    },
+    {
+      "blocked_by": [
+        "POTCAR_NOT_PREPARED",
+        "UPSTREAM_OUTPUT_MISSING",
+        "UPSTREAM_DIAGNOSIS_NOT_PASSED"
+      ],
+      "depends_on": [
+        "01_relax"
+      ],
+      "directory": "02_static",
+      "label": "static step",
+      "parameters": {
+        "EDIFF": 1e-05,
+        "ENCUT": 520.0,
+        "IBRION": -1,
+        "ISIF": 2,
+        "ISMEAR": 1,
+        "ISPIN": 2,
+        "LCHARG": true,
+        "LDAU": true,
+        "LDAUJ": [
+          0.0,
+          0.0
+        ],
+        "LDAUL": [
+          2.0,
+          -1.0
+        ],
+        "LDAUTYPE": 2,
+        "LDAUU": [
+          4.0,
+          0.0
+        ],
+        "LMAXMIX": 4,
+        "LREAL": "Auto",
+        "LWAVE": true,
+        "MAGMOM": [
+          5.0,
+          5.0,
+          0.6,
+          0.6,
+          0.6
+        ],
+        "NELM": 100,
+        "NSW": 0,
+        "PREC": "Accurate",
+        "SIGMA": 0.2,
+        "SYSTEM": "Fe2O3_static"
+      },
+      "produces": [
+        "CHGCAR",
+        "WAVECAR",
+        "OUTCAR",
+        "OSZICAR"
+      ],
+      "requires_runtime_outputs": [
+        "01_relax/CONTCAR"
+      ],
+      "runnable": false,
+      "step_id": "02_static",
+      "task": "static"
+    },
+    {
+      "blocked_by": [
+        "POTCAR_NOT_PREPARED",
+        "UPSTREAM_OUTPUT_MISSING",
+        "UPSTREAM_DIAGNOSIS_NOT_PASSED"
+      ],
+      "depends_on": [
+        "02_static"
+      ],
+      "directory": "03_dos",
+      "label": "dos step",
+      "parameters": {
+        "EDIFF": 1e-05,
+        "EMAX": 10,
+        "EMIN": -10,
+        "ENCUT": 520.0,
+        "IBRION": -1,
+        "ICHARG": 11,
+        "ISMEAR": -5,
+        "ISPIN": 2,
+        "LCHARG": false,
+        "LDAU": true,
+        "LDAUJ": [
+          0.0,
+          0.0
+        ],
+        "LDAUL": [
+          2.0,
+          -1.0
+        ],
+        "LDAUTYPE": 2,
+        "LDAUU": [
+          4.0,
+          0.0
+        ],
+        "LMAXMIX": 4,
+        "LORBIT": 11,
+        "LREAL": "Auto",
+        "LWAVE": false,
+        "MAGMOM": [
+          5.0,
+          5.0,
+          0.6,
+          0.6,
+          0.6
+        ],
+        "NEDOS": 2000,
+        "NELM": 100,
+        "NSW": 0,
+        "PREC": "Accurate",
+        "SYSTEM": "Fe2O3_dos"
+      },
+      "produces": [
+        "DOSCAR",
+        "OUTCAR"
+      ],
+      "requires_runtime_outputs": [
+        "02_static/CHGCAR"
+      ],
+      "runnable": false,
+      "step_id": "03_dos",
+      "task": "dos"
+    }
+  ],
+  "structure": {
+    "counts": [
+      2,
+      3
+    ],
+    "elements": [
+      "Fe",
+      "O"
+    ],
+    "formula": "Fe2O3",
+    "source_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "structure_id": "str_fe2o3"
+  },
+  "template_versions": {
+    "generator": "0.1.0",
+    "recipe_pack": "1.0.0"
+  },
+  "warnings": [
+    {
+      "code": "INITIAL_RECOMMENDATION_ONLY",
+      "message": "这是初始推荐，不是唯一正确设置。",
+      "severity": "medium"
+    },
+    {
+      "code": "METAL_SMEARING_REQUIRES_CONFIRMATION",
+      "message": "金属展宽设置需用户确认，初始值仅为起点。",
+      "severity": "medium"
+    },
+    {
+      "code": "DFTU_USER_VALUE_REQUIRED",
+      "message": "U/J/L 来自用户输入，不代表系统断言其可靠；请记录来源。",
+      "severity": "high"
+    },
+    {
+      "code": "MAGMOM_INITIAL_GUESS",
+      "message": "初始磁矩仅为起点，请确认元素级初值；不保证是基态磁结构。",
+      "severity": "medium"
+    },
+    {
+      "code": "STATIC_TIGHTER_EDIFF_HINT",
+      "message": "static 建议比 relax 更严的 EDIFF；如需 1E-6 请选择 high 精度档或提交 EDIFF patch。",
+      "severity": "info"
+    },
+    {
+      "code": "CHGCAR_DEPENDENCY",
+      "message": "DOS 依赖 static 的 CHGCAR；文件尚未生成时 README 只写运行时复制说明，不伪造文件。",
+      "severity": "high"
+    }
+  ],
+  "workflow_id": "wf_fe2o3"
+}

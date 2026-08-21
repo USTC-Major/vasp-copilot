@@ -1,0 +1,10 @@
+case_id: fe2o3_poscar
+description: "Structure sample (Fe2O3, 5 atoms POSCAR) used by Doctor for structure-side analysis; not a failed run."
+input_sha256: 8ca7c992e3ed00d376371e15cb2b3327d812b2037964b957f47ebe55d4d2227a
+required_feature_flags: []
+expected_rule_ids: []
+expected_issue_count_by_severity: {}
+recommended_fix_expected: false
+unsupported_or_missing_evidence: []
+demo_phrase: "Structure input sample; pair with a failed run to show structure-side context."
+max_runtime_seconds: 0

@@ -1,0 +1,10 @@
+case_id: job_oom
+description: "Job-level OOM: run.log shows out-of-memory / killed process (JOB_OOM). Demonstrate scheduler-level failure detection."
+input_sha256: 48ed1969e8286d3a56825ab2bb21acaee6b07d673326922ecc8788cde97d5e51
+required_feature_flags: []
+expected_rule_ids: ["JOB_OOM"]
+expected_issue_count_by_severity: {"critical": 0, "high": 1, "medium": 0, "low": 0, "info": 0}
+recommended_fix_expected: false
+unsupported_or_missing_evidence: []
+demo_phrase: "Upload then run diagnosis: expect JOB_OOM; report gives memory / NCORE-KPAR tuning hints."
+max_runtime_seconds: 30

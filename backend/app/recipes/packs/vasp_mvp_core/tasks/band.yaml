@@ -1,0 +1,43 @@
+schema_version: "1.0"
+recipe_id: task.band.standard
+version: 1.0.0
+kind: task
+recipe_status: published
+display_name: 能带计算
+description: 基于 static CHGCAR 的 line-mode 能带计算；受 ENABLE_BAND_WORKFLOW 控制。
+scope:
+  tasks: [band]
+  electronic_types: [metal, semiconductor, unknown]
+  vasp_versions: ["5.x", "6.x"]
+parameters:
+  IBRION: -1
+  NSW: 0
+  ICHARG: 11
+  LORBIT: 11
+  ISMEAR: 0
+  SIGMA: 0.05
+derived_parameters: []
+requires: []
+conflicts: []
+confirmations: []
+warnings:
+  - code: INITIAL_RECOMMENDATION_ONLY
+    severity: medium
+    message: 这是初始推荐，不是唯一正确设置。
+  - code: CHGCAR_DEPENDENCY
+    severity: high
+    message: band 依赖 static 的 CHGCAR；未满足依赖的步骤不可提交。
+  - code: BAND_PATH_STANDARDIZATION
+    severity: medium
+    message: 高对称路径由结构工具生成并记录标准化方式；无法稳定生成时提示确认而不伪造路径。
+allowed_overrides:
+  SIGMA: {type: number, exclusive_minimum: 0, maximum: 2.0}
+provenance:
+  source_type: project_curated
+  source_note: MVP 教学配方（设计文档 10.5 节）
+  reviewed_by: be-a-domain-review
+  reviewed_at: "2026-08-10"
+tests:
+  test_status: passed
+  case_count: 4
+  last_tested_at: "2026-08-10"

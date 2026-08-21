@@ -1,0 +1,22 @@
+[
+  {
+    "rule_id": "ZHEGV_LAPACK_FAILURE",
+    "severity": "high",
+    "blocking": true,
+    "auto_fixable": false,
+    "confidence": 0.85,
+    "evidence_files": [
+      "OUTCAR"
+    ]
+  },
+  {
+    "rule_id": "OUTCAR_TRUNCATED",
+    "severity": "medium",
+    "blocking": false,
+    "auto_fixable": false,
+    "confidence": 0.85,
+    "evidence_files": [
+      "OUTCAR"
+    ]
+  }
+]

@@ -1,0 +1,39 @@
+schema_version: "1.0"
+recipe_id: task.static.standard
+version: 1.0.0
+kind: task
+recipe_status: published
+display_name: 静态自洽计算
+description: 基于 relax 后结构的静态计算；输出 CHGCAR/WAVECAR 供 DOS/band 继承。
+scope:
+  tasks: [static]
+  electronic_types: [metal, semiconductor, unknown]
+  vasp_versions: ["5.x", "6.x"]
+parameters:
+  IBRION: -1
+  NSW: 0
+  ISIF: 2
+  LCHARG: true
+  LWAVE: true
+derived_parameters: []
+requires: []
+conflicts: []
+confirmations: []
+warnings:
+  - code: INITIAL_RECOMMENDATION_ONLY
+    severity: medium
+    message: 这是初始推荐，不是唯一正确设置。
+  - code: STATIC_TIGHTER_EDIFF_HINT
+    severity: info
+    message: static 建议比 relax 更严的 EDIFF；如需 1E-6 请选择 high 精度档或提交 EDIFF patch。
+allowed_overrides:
+  ISIF: {type: integer, minimum: 0, maximum: 7}
+provenance:
+  source_type: project_curated
+  source_note: MVP 教学配方（设计文档 10.5 节）
+  reviewed_by: be-a-domain-review
+  reviewed_at: "2026-08-10"
+tests:
+  test_status: passed
+  case_count: 4
+  last_tested_at: "2026-08-10"

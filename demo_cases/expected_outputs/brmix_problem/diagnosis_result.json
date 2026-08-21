@@ -1,0 +1,256 @@
+{
+  "schema_version": "1.0",
+  "diagnosis_id": "",
+  "diagnosis_status": "succeeded",
+  "summary": "发现 1 个高严重度问题（BRMIX_SERIOUS_PROBLEM），另有 1 个中等问题，请优先处理后再提交计算。",
+  "detected_run": {
+    "root": "vd_demo_i_v70f15",
+    "run_type": null,
+    "files": [
+      {
+        "name": "INCAR",
+        "kind": "incar",
+        "size": 132,
+        "path": "INCAR"
+      },
+      {
+        "name": "KPOINTS",
+        "kind": "kpoints",
+        "size": 34,
+        "path": "KPOINTS"
+      },
+      {
+        "name": "OSZICAR",
+        "kind": "oszicar",
+        "size": 775,
+        "path": "OSZICAR"
+      },
+      {
+        "name": "OUTCAR",
+        "kind": "outcar",
+        "size": 2072,
+        "path": "OUTCAR"
+      },
+      {
+        "name": "POSCAR",
+        "kind": "poscar",
+        "size": 99,
+        "path": "POSCAR"
+      }
+    ],
+    "missing_recommended": [],
+    "candidate_job_logs": []
+  },
+  "issues": [
+    {
+      "issue_id": "BRMIX_SERIOUS_PROBLEM-0001",
+      "rule_id": "BRMIX_SERIOUS_PROBLEM",
+      "severity": "high",
+      "category": "core_errors",
+      "title": "BRMIX 严重问题",
+      "summary": "OUTCAR 报告 BRMIX 严重问题，可能为电荷混合失败。",
+      "evidence": [
+        {
+          "file": "OUTCAR",
+          "line": 37,
+          "message": "BRMIX: very serious problems the old and the new charge density do not agree.",
+          "data_ref": "outcar.error_lines",
+          "excerpt": null
+        }
+      ],
+      "recommendations": [
+        {
+          "action": "review",
+          "target": "user",
+          "parameter": null,
+          "new_value": null,
+          "rationale": "检查不兼容 CHGCAR、结构/电子类型、混合与初始磁态",
+          "requires_user_confirmation": true
+        }
+      ],
+      "auto_fixable": false,
+      "confidence": 0.85,
+      "blocking": true,
+      "possible_causes": [
+        "不兼容 CHGCAR",
+        "混合设置不当",
+        "初始磁态异常"
+      ],
+      "data_ref": null,
+      "related_issue_ids": [],
+      "root_cause_candidate": null
+    },
+    {
+      "issue_id": "OUTCAR_TRUNCATED-0001",
+      "rule_id": "OUTCAR_TRUNCATED",
+      "severity": "medium",
+      "category": "outcar",
+      "title": "OUTCAR 截断/未正常结束",
+      "summary": "OUTCAR 缺少正常结束标志或解析区块不完整，输出可能被截断。",
+      "evidence": [
+        {
+          "file": "OUTCAR",
+          "line": null,
+          "message": "missing normal termination flag",
+          "data_ref": "outcar.normal_termination",
+          "excerpt": null
+        }
+      ],
+      "recommendations": [
+        {
+          "action": "review",
+          "target": "manifest",
+          "parameter": null,
+          "new_value": null,
+          "rationale": "补充完整 OUTCAR/job log，检查磁盘、超时、节点异常",
+          "requires_user_confirmation": true
+        }
+      ],
+      "auto_fixable": false,
+      "confidence": 0.85,
+      "blocking": false,
+      "possible_causes": [
+        "磁盘满",
+        "超时",
+        "节点异常"
+      ],
+      "data_ref": null,
+      "related_issue_ids": [],
+      "root_cause_candidate": null
+    }
+  ],
+  "plots": {
+    "scf": {
+      "x_label": "电子步",
+      "y_label": "能量 (eV)",
+      "series": [
+        {
+          "ionic_step": 1,
+          "electronic_step": 1,
+          "energy_ev": -100.05
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 2,
+          "energy_ev": -100.1
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 3,
+          "energy_ev": -100.15
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 4,
+          "energy_ev": -100.2
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 5,
+          "energy_ev": -100.25
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 6,
+          "energy_ev": -100.3
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 7,
+          "energy_ev": -100.35
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 8,
+          "energy_ev": -100.4
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 9,
+          "energy_ev": -100.45
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 10,
+          "energy_ev": -100.5
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 11,
+          "energy_ev": -100.55
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 12,
+          "energy_ev": -100.6
+        }
+      ]
+    },
+    "magnetization": {
+      "x_label": "原子索引",
+      "y_label": "磁矩 (μB)",
+      "series": []
+    }
+  },
+  "recommended_fixes": [
+    {
+      "fix_id": "FIX-05E0F0DC",
+      "issue_ids": [],
+      "target_file": "INCAR",
+      "strategy": "parameter_patch",
+      "fix_status": "unavailable",
+      "safe_to_generate": false,
+      "requires_user_confirmation": true,
+      "changes": [],
+      "diff": null,
+      "generated_file_id": null,
+      "warnings": [
+        "没有可通过白名单自动修复的参数变更"
+      ]
+    }
+  ],
+  "missing_evidence": [],
+  "next_step": {
+    "allowed": false,
+    "reason": "存在 1 个 Critical/High 问题未解决或未确认修复（BRMIX_SERIOUS_PROBLEM-0001）",
+    "suggested_task": null
+  },
+  "report": {
+    "report_id": "RPT-6D1B8D20",
+    "diagnosis_id": "",
+    "format": "markdown",
+    "language": "zh",
+    "title": "VASP-Doctor 诊断报告",
+    "generated_at": "2026-08-09T14:41:26.822978+00:00",
+    "size_bytes": 2592,
+    "sha256": "0b6fb60513936c1173e24e7e9e5bfd19fbc4dd3dd8ce2ff106ce4dd2a5b11283",
+    "sections": [
+      "summary",
+      "input_overview",
+      "issues",
+      "fixes",
+      "missing_evidence",
+      "disclaimer"
+    ],
+    "download_url": null,
+    "generator_version": "0.1.0"
+  },
+  "llm_explanation": null,
+  "provenance": {
+    "parser_version": "0.1.0",
+    "rule_set_version": "0.1.0",
+    "recipe_pack_version": null,
+    "composition_sha256": null,
+    "vasp_version": "6.3.2",
+    "vasp_binary_hint": "(parallel)",
+    "calculation_mode": {
+      "is_spin_polarized": false,
+      "is_dftu": false,
+      "is_soc": false,
+      "is_noncollinear": false,
+      "magnetization_analysis_mode": "unavailable"
+    },
+    "llm_used": false,
+    "mode": "rule_based"
+  }
+}

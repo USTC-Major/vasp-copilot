@@ -1,0 +1,71 @@
+{
+  "bundle_sha256": "57e7f4a4ed4a8cf444e5a5ab1f59185766bcecbbeaa22bb9f7d914fe406978ba",
+  "created_at": "2026-08-10T00:00:00Z",
+  "files": [
+    {
+      "path": "01_relax/INCAR",
+      "sha256": "b37644e3994e575caa0fce7fad0388fb0f050c8d45fb5329f5c361d8de6c3373",
+      "size_bytes": 202
+    },
+    {
+      "path": "01_relax/KPOINTS",
+      "sha256": "c30c992c042c54c9595ccaf30c5cee971ac80e3c2cce1ad41ae9b9e7df7008a8",
+      "size_bytes": 79
+    },
+    {
+      "path": "01_relax/POSCAR",
+      "sha256": "239ea69d604219fee6a424cb4b003e48d3941fb718e5e1c6732a40902987c612",
+      "size_bytes": 86
+    },
+    {
+      "path": "01_relax/submit.sh",
+      "sha256": "f9e8ed059e2ad3e5f297979a9d995b60e4c02f5cbcb5a3391431c604ab02db53",
+      "size_bytes": 331
+    },
+    {
+      "path": "02_static/INCAR",
+      "sha256": "556a4b0cc0528c951e68b09ec1699c4560bfeede4ba2b42b3827a6410abb40b0",
+      "size_bytes": 171
+    },
+    {
+      "path": "02_static/KPOINTS",
+      "sha256": "a7643c739c70a61fcd283d438d8ed5a7f5f9c75c828fa66a16c2b86783004a64",
+      "size_bytes": 80
+    },
+    {
+      "path": "02_static/POSCAR",
+      "sha256": "239ea69d604219fee6a424cb4b003e48d3941fb718e5e1c6732a40902987c612",
+      "size_bytes": 86
+    },
+    {
+      "path": "02_static/submit.sh",
+      "sha256": "f9e8ed059e2ad3e5f297979a9d995b60e4c02f5cbcb5a3391431c604ab02db53",
+      "size_bytes": 331
+    },
+    {
+      "path": "INPUT_CHECK_REPORT.md",
+      "sha256": "2114ee3c98e2b654c0cc668819f39b80309bc71344125e5cce9440b637b3b63c",
+      "size_bytes": 4585
+    },
+    {
+      "path": "POTCAR_REQUIRED.md",
+      "sha256": "ff28f61452cd331bb354cd7d958e3673c616424994b60115af574d6fb8b01296",
+      "size_bytes": 957
+    },
+    {
+      "path": "README_run_order.md",
+      "sha256": "f1cfc2c1ea588885c0a987b963137aea8baebb0543bd817dbddc181cd7b8caa5",
+      "size_bytes": 1533
+    },
+    {
+      "path": "workflow_plan.json",
+      "sha256": "bf78ab434727064813a846954c71d232c016c3e5ff5e4d87d0b6589dac07c536",
+      "size_bytes": 8478
+    }
+  ],
+  "generator_version": "0.1.0",
+  "recipe_pack_sha256": "2aab9931ff8ca9c0756b708c63fa9c484bd37c3db2bba3e6149aab6ae3a10461",
+  "recipe_pack_version": "1.0.0",
+  "revision": 1,
+  "workflow_id": "wf_nacl"
+}

@@ -1,0 +1,15 @@
+ALGO = Normal
+EDIFF = 0.0001
+EDIFFG = -0.02
+ENCUT = 400
+IBRION = 2
+ISIF = 3
+ISMEAR = 0
+LCHARG = .FALSE.
+LREAL = Auto
+LWAVE = .FALSE.
+NELM = 60
+NSW = 100
+PREC = Accurate
+SIGMA = 0.05
+SYSTEM = NaCl_relax

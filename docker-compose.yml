@@ -1,0 +1,38 @@
+# VASP-Doctor 交付 Compose（13.2）
+# 后端完整可用；前端由 vasp-copilot / 前端组提供，构建产物就绪后取消 frontend 注释。
+services:
+  backend:
+    build:
+      context: ./backend
+    image: vasp-doctor:local
+    env_file:
+      - path: .env
+        required: false   # 可选：有则覆盖（LLM/阈值），缺失不影响一键 docker compose up
+    environment:
+      DATA_DIR: /data/tmp
+      TTL_SECONDS: 86400
+    ports:
+      - "8000:8000"
+    volumes:
+      - app_data:/data/app
+      - temp_data:/data/tmp
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,time;time.sleep(0);urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 10s
+      timeout: 3s
+      start_period: 8s
+      retries: 5
+    restart: unless-stopped
+
+  # frontend：前端产物就绪后取消注释；backend 健康后 frontend 才进入 ready（depends_on service_healthy）。
+  # frontend:
+  #   build: ./frontend
+  #   depends_on:
+  #     backend:
+  #       condition: service_healthy
+  #   ports:
+  #     - "5173:80"
+
+volumes:
+  app_data:   # /data/app  —— 预留 SQLite 元数据（13.2 /data/app.sqlite3）
+  temp_data:  # /data/tmp  —— TTL 临时数据：uploads / runs / reports

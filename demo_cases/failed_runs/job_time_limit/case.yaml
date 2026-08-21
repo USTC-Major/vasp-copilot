@@ -1,0 +1,10 @@
+case_id: job_time_limit
+description: "Job-level walltime limit: run.log shows DUE TO TIME LIMIT (JOB_TIME_LIMIT). Demonstrate scheduler time-limit failure detection."
+input_sha256: 3787f0dd233deea751a69b17bf08d11b01996c709ffb330f61de92df547084fe
+required_feature_flags: []
+expected_rule_ids: ["JOB_TIME_LIMIT"]
+expected_issue_count_by_severity: {"critical": 0, "high": 1, "medium": 0, "low": 0, "info": 0}
+recommended_fix_expected: false
+unsupported_or_missing_evidence: []
+demo_phrase: "Upload then run diagnosis: expect JOB_TIME_LIMIT; report asks to increase walltime or split/continue the calculation."
+max_runtime_seconds: 30

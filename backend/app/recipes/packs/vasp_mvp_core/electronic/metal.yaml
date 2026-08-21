@@ -1,0 +1,37 @@
+schema_version: "1.0"
+recipe_id: electronic.metal
+version: 1.0.0
+kind: electronic_type
+recipe_status: published
+display_name: 金属体系
+description: 金属体系的展宽初始设置；ISMEAR 选择需用户确认。
+scope:
+  tasks: [relax, static]
+  electronic_types: [metal]
+  vasp_versions: ["5.x", "6.x"]
+parameters:
+  ISMEAR: 1
+  SIGMA: 0.2
+derived_parameters: []
+requires: []
+conflicts: []
+confirmations:
+  - key: ISMEAR
+    required: true
+    prompt: 确认金属展宽方式（初始为 ISMEAR=1 Methfessel-Paxton；可选 2 或结合体系复核）
+warnings:
+  - code: METAL_SMEARING_REQUIRES_CONFIRMATION
+    severity: medium
+    message: 金属展宽设置需用户确认，初始值仅为起点。
+allowed_overrides:
+  ISMEAR: {type: integer, minimum: -5, maximum: 2}
+  SIGMA: {type: number, exclusive_minimum: 0, maximum: 2.0}
+provenance:
+  source_type: project_curated
+  source_note: MVP 教学配方
+  reviewed_by: be-a-domain-review
+  reviewed_at: "2026-08-10"
+tests:
+  test_status: passed
+  case_count: 4
+  last_tested_at: "2026-08-10"

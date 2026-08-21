@@ -1,0 +1,42 @@
+schema_version: "1.0"
+recipe_id: modifier.dftu
+version: 1.0.0
+kind: modifier
+recipe_status: published
+display_name: DFT+U 修饰
+description: 启用 LDAU；U/J/L 必须来自用户输入并确认，按 POSCAR 元素顺序派生 LDAUL/LDAUU/LDAUJ。
+scope:
+  tasks: [relax, static, dos, band]
+  electronic_types: [metal, semiconductor, unknown]
+  vasp_versions: ["5.x", "6.x"]
+parameters:
+  LDAU: true
+  LDAUTYPE: 2
+  LMAXMIX: 4
+derived_parameters:
+  - function: generate_ldau_arrays
+    parameter: LDAU_ARRAYS
+    target: INCAR
+    inputs: [structure.elements, dftu.entries]
+requires:
+  - material_assumptions.dftu
+conflicts: []
+confirmations:
+  - key: dftu.entries
+    required: true
+    prompt: 确认每种元素的 L/U/J 值；任一 U 值未确认时禁止生成 DFT+U INCAR。
+warnings:
+  - code: DFTU_USER_VALUE_REQUIRED
+    severity: high
+    message: U/J/L 来自用户输入，不代表系统断言其可靠；请记录来源。
+allowed_overrides:
+  LMAXMIX: {type: integer, minimum: 2, maximum: 6}
+provenance:
+  source_type: project_curated
+  source_note: MVP 教学配方
+  reviewed_by: be-a-domain-review
+  reviewed_at: "2026-08-10"
+tests:
+  test_status: passed
+  case_count: 4
+  last_tested_at: "2026-08-10"

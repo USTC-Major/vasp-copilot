@@ -1,0 +1,93 @@
+# VASP-Doctor 诊断报告
+
+> 生成方式：{% if result.provenance.mode.value == 'rule_plus_llm' %}规则诊断 + 大模型解释（rule_plus_llm）{% else %}确定性规则诊断（rule_based，未使用大模型）{% endif %}。本报告由结构化诊断结果自动生成。
+
+## 一、总体结论（summary）
+
+{{ result.summary }}
+
+- 诊断状态：`{{ result.diagnosis_status.value }}`
+- 问题总数：`{{ issues|length }}`
+- 严重级别分布：Critical `{{ severity_counts['critical'] }}` / High `{{ severity_counts['high'] }}` / Medium `{{ severity_counts['medium'] }}` / Low `{{ severity_counts['low'] }}` / Info `{{ severity_counts['info'] }}`
+- 下一步是否允许：**{{ result.next_step.allowed }}**（{{ result.next_step.reason }}）
+{% if result.next_step.suggested_task %}- 建议任务：{{ result.next_step.suggested_task }}{% endif %}
+
+## 二、输入概览（input_overview）
+
+{% if result.detected_run %}
+- 根目录：`{{ result.detected_run.root }}`
+- 运行类型：{{ result.detected_run.run_type or '未知' }}
+- 识别到文件：{{ result.detected_run.files|length }} 个
+- 缺失建议文件：{{ result.detected_run.missing_recommended|join(', ') or '无' }}
+{% endif %}
+{% if result.provenance %}
+- VASP 版本：{{ result.provenance.vasp_version or '未知' }}
+- 计算模式（自旋/DFT+U/SOC/非共线）：{{ result.provenance.calculation_mode.is_spin_polarized }} / {{ result.provenance.calculation_mode.is_dftu }} / {{ result.provenance.calculation_mode.is_soc }} / {{ result.provenance.calculation_mode.is_noncollinear }}
+{% endif %}
+
+## 三、诊断问题（issues）
+
+{% for i in issues %}
+### {{ loop.index }}. {{ i.severity.value|upper }} — {{ i.title }}
+- 规则：`{{ i.rule_id }}`（issue_id：`{{ i.issue_id }}`）；类别：{{ i.category }}；置信度：{{ i.confidence }}
+- 摘要：{{ i.summary }}
+{% if i.related_issue_ids %}- 同源关联：{{ i.related_issue_ids|join(', ') }}（root_cause_candidate={{ i.root_cause_candidate }}）{% endif %}
+{% if i.possible_causes %}- 可能原因：{{ i.possible_causes|join('；') }}{% endif %}
+- 证据：
+{% for e in i.evidence %}
+  - `{{ e.file }}`{% if e.line %}（第 {{ e.line }} 行）{% endif %}{% if e.message %}：{{ e.message }}{% endif %}
+{% endfor %}
+{% if i.recommendations %}
+- 建议：
+{% for r in i.recommendations %}
+  - `[{{ r.action }}]` {{ r.target }}{% if r.parameter %} `{{ r.parameter }}`{% endif %}{% if r.new_value %} → `{{ r.new_value }}`{% endif %}{% if r.rationale %}。{{ r.rationale }}{% endif %}
+{% endfor %}
+{% endif %}
+{% else %}
+- 未检测到问题。
+{% endfor %}
+
+## 四、修复建议（fixes）
+
+{% for fx in result.recommended_fixes %}
+### {{ loop.index }}. {{ fx.fix_id }}
+- 目标文件：`{{ fx.target_file }}`；策略：{{ fx.strategy }}
+- 状态：{{ fx.fix_status.value }}；是否可直接生成：{{ fx.safe_to_generate }}；是否需要用户确认：{{ fx.requires_user_confirmation }}
+- 关联问题：{{ fx.issue_ids|join(', ') or '无' }}
+{% if fx.changes %}
+| 参数 | 操作 | 旧值 | 新值 |
+|------|------|------|------|
+{% for c in fx.changes %}
+| `{{ c.parameter or '-' }}` | {{ c.operation }} | {{ c.old_value or '-' }} | {{ c.new_value or '-' }} |
+{% endfor %}
+{% endif %}
+{% if fx.diff %}
+- diff：
+```
+{{ fx.diff }}
+```
+{% endif %}
+{% if fx.warnings %}- 警告：{{ fx.warnings|join('；') }}{% endif %}
+{% else %}
+- 无可自动生成的白名单修复。
+{% endfor %}
+
+## 五、缺失证据（missing_evidence）
+
+{% for m in result.missing_evidence %}
+- {{ m }}
+{% else %}
+- 无（证据齐全）。
+{% endfor %}
+
+## 六、LLM 解释（llm_explanation）
+
+{% if result.llm_explanation %}
+{{ result.llm_explanation }}
+{% else %}
+- （本次未启用大模型解释，仅确定性规则诊断。）
+{% endif %}
+
+## 七、免责声明（disclaimer）
+
+本报告由 VASP-Doctor 依据确定性规则自动生成，仅供排错参考。所有涉及科研阈值、DFT+U、磁矩或资源参数的修改，请人工核验后再提交计算。

@@ -1,0 +1,30 @@
+schema_version: "1.0"
+recipe_id: electronic.unknown
+version: 1.0.0
+kind: electronic_type
+recipe_status: published
+display_name: 电子类型未知
+description: 体系电子类型未确认时的保守占位；不写入展宽参数，由任务层给出保守起点。
+scope:
+  tasks: [relax, static]
+  electronic_types: [unknown]
+  vasp_versions: ["5.x", "6.x"]
+parameters: {}
+derived_parameters: []
+requires: []
+conflicts: []
+confirmations: []
+warnings:
+  - code: ELECTRONIC_TYPE_UNRESOLVED
+    severity: medium
+    message: 电子类型未知；展宽设置使用任务层保守起点，建议确认后选择 metal/semiconductor。
+allowed_overrides: {}
+provenance:
+  source_type: project_curated
+  source_note: MVP 教学配方
+  reviewed_by: be-a-domain-review
+  reviewed_at: "2026-08-10"
+tests:
+  test_status: passed
+  case_count: 4
+  last_tested_at: "2026-08-10"

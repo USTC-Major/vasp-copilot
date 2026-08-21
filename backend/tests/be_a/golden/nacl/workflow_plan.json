@@ -1,0 +1,305 @@
+{
+  "assumptions": {
+    "electronic_type": "semiconductor",
+    "magnetic": false,
+    "precision": "quick",
+    "soc": false
+  },
+  "confirmations": [],
+  "created_at": "2026-08-10T00:00:00Z",
+  "dftu": {
+    "enabled": false,
+    "entries": []
+  },
+  "file_inheritance_plan": {
+    "dependencies": [
+      {
+        "blocking_codes": [
+          "RUNTIME_OUTPUT_MISSING",
+          "UPSTREAM_DIAGNOSIS_BLOCKING"
+        ],
+        "dependency_id": "dep_relax_contcar",
+        "dependency_type": "runtime_file",
+        "evidence": [],
+        "from_step_id": "01_relax",
+        "required": true,
+        "requires_upstream_diagnosis_pass": true,
+        "satisfied": false,
+        "source_file": "CONTCAR",
+        "target_file": "POSCAR",
+        "to_step_id": "02_static",
+        "validation": {
+          "checks": [
+            "SOURCE_EXISTS",
+            "SOURCE_NONEMPTY",
+            "UPSTREAM_NOT_BLOCKING"
+          ],
+          "passed": false
+        }
+      }
+    ],
+    "evaluated_at": null,
+    "plan_id": "fip_wf_nacl",
+    "revision": 1,
+    "workflow_id": "wf_nacl"
+  },
+  "goal": {
+    "original_text": "结构优化与静态计算",
+    "requested_tasks": [
+      "relax",
+      "static"
+    ]
+  },
+  "recipe_compositions": [
+    {
+      "composition_id": "composition_01_relax",
+      "composition_sha256": "composition-49b2e7422c6bae249baea4e4830c3a0c",
+      "patch_ids": [],
+      "recipe_pack": {
+        "display_name": "VASP MVP Core Recipe Pack",
+        "pack_id": "vasp-mvp-core",
+        "schema_version": "1.0",
+        "sha256": "2aab9931ff8ca9c0756b708c63fa9c484bd37c3db2bba3e6149aab6ae3a10461",
+        "version": "1.0.0"
+      },
+      "revision": 1,
+      "selected": [
+        {
+          "layer": "base",
+          "matched_context": {
+            "task": "relax"
+          },
+          "order": 10,
+          "recipe_id": "base.vasp",
+          "selection_reason": "所有 VASP 任务共享的受审查基础参数",
+          "sha256": "67f39a5b7372996ccbb6560ec254bb200a282a266df850e57231af7e240a3542",
+          "version": "1.0.0"
+        },
+        {
+          "layer": "task",
+          "matched_context": {
+            "precision": "quick",
+            "task": "relax"
+          },
+          "order": 20,
+          "recipe_id": "task.relax.standard",
+          "selection_reason": "目标包含 relax 且精度档位由 precision 层控制",
+          "sha256": "1260e61d7844e1289a9f6a2beccf49988d90e517940de91024a32cd687cc36f7",
+          "version": "1.0.0"
+        },
+        {
+          "layer": "electronic_type",
+          "matched_context": {
+            "electronic_type": "semiconductor"
+          },
+          "order": 30,
+          "recipe_id": "electronic.semiconductor",
+          "selection_reason": "用户将体系电子类型标记为 semiconductor",
+          "sha256": "4f32e45ab16d58e660ac2f55f37ba773140e732f07892aacd9ab4c9ecad5e8dc",
+          "version": "1.0.0"
+        },
+        {
+          "layer": "precision",
+          "matched_context": {
+            "precision": "quick"
+          },
+          "order": 50,
+          "recipe_id": "precision.quick",
+          "selection_reason": "用户选择精度档位 quick",
+          "sha256": "3c9366571d686ae3e95ca8c199e9e008a8b2246797f79a1c61445408a60ec811",
+          "version": "1.0.0"
+        }
+      ],
+      "step_id": "01_relax"
+    },
+    {
+      "composition_id": "composition_02_static",
+      "composition_sha256": "composition-e9f3dd7f2ba7a09b0fd6766feb6ecdd4",
+      "patch_ids": [],
+      "recipe_pack": {
+        "display_name": "VASP MVP Core Recipe Pack",
+        "pack_id": "vasp-mvp-core",
+        "schema_version": "1.0",
+        "sha256": "2aab9931ff8ca9c0756b708c63fa9c484bd37c3db2bba3e6149aab6ae3a10461",
+        "version": "1.0.0"
+      },
+      "revision": 1,
+      "selected": [
+        {
+          "layer": "base",
+          "matched_context": {
+            "task": "static"
+          },
+          "order": 10,
+          "recipe_id": "base.vasp",
+          "selection_reason": "所有 VASP 任务共享的受审查基础参数",
+          "sha256": "67f39a5b7372996ccbb6560ec254bb200a282a266df850e57231af7e240a3542",
+          "version": "1.0.0"
+        },
+        {
+          "layer": "task",
+          "matched_context": {
+            "precision": "quick",
+            "task": "static"
+          },
+          "order": 20,
+          "recipe_id": "task.static.standard",
+          "selection_reason": "目标包含 static 且精度档位由 precision 层控制",
+          "sha256": "69ca83daae5e68ae8715ee9ce4d879208380ef24af715e767fb3d4f0f15adccd",
+          "version": "1.0.0"
+        },
+        {
+          "layer": "electronic_type",
+          "matched_context": {
+            "electronic_type": "semiconductor"
+          },
+          "order": 30,
+          "recipe_id": "electronic.semiconductor",
+          "selection_reason": "用户将体系电子类型标记为 semiconductor",
+          "sha256": "4f32e45ab16d58e660ac2f55f37ba773140e732f07892aacd9ab4c9ecad5e8dc",
+          "version": "1.0.0"
+        },
+        {
+          "layer": "precision",
+          "matched_context": {
+            "precision": "quick"
+          },
+          "order": 50,
+          "recipe_id": "precision.quick",
+          "selection_reason": "用户选择精度档位 quick",
+          "sha256": "3c9366571d686ae3e95ca8c199e9e008a8b2246797f79a1c61445408a60ec811",
+          "version": "1.0.0"
+        }
+      ],
+      "step_id": "02_static"
+    }
+  ],
+  "remote_execution": {
+    "auto_resubmit": false,
+    "cluster_profile_id": null,
+    "deploy_requires_confirmation": true,
+    "enabled": false,
+    "mode": "disabled",
+    "submit_requires_confirmation": true
+  },
+  "revision": 1,
+  "scheduler": {
+    "nodes": 1,
+    "scheduler_profile_id": null,
+    "scheduler_type": "generic",
+    "tasks_per_node": 1,
+    "vasp_binary_hint": "vasp_std",
+    "walltime": "12:00:00"
+  },
+  "schema_version": "1.0",
+  "steps": [
+    {
+      "blocked_by": [
+        "POTCAR_NOT_PREPARED"
+      ],
+      "depends_on": [],
+      "directory": "01_relax",
+      "label": "relax step",
+      "parameters": {
+        "ALGO": "Normal",
+        "EDIFF": 0.0001,
+        "EDIFFG": -0.02,
+        "ENCUT": 400.0,
+        "IBRION": 2,
+        "ISIF": 3,
+        "ISMEAR": 0,
+        "LCHARG": false,
+        "LREAL": "Auto",
+        "LWAVE": false,
+        "NELM": 60,
+        "NSW": 100,
+        "PREC": "Accurate",
+        "SIGMA": 0.05,
+        "SYSTEM": "NaCl_relax"
+      },
+      "produces": [
+        "CONTCAR",
+        "OUTCAR",
+        "OSZICAR"
+      ],
+      "requires_runtime_outputs": [],
+      "runnable": false,
+      "step_id": "01_relax",
+      "task": "relax"
+    },
+    {
+      "blocked_by": [
+        "POTCAR_NOT_PREPARED",
+        "UPSTREAM_OUTPUT_MISSING",
+        "UPSTREAM_DIAGNOSIS_NOT_PASSED"
+      ],
+      "depends_on": [
+        "01_relax"
+      ],
+      "directory": "02_static",
+      "label": "static step",
+      "parameters": {
+        "EDIFF": 0.0001,
+        "ENCUT": 400.0,
+        "IBRION": -1,
+        "ISIF": 2,
+        "ISMEAR": 0,
+        "LCHARG": true,
+        "LREAL": "Auto",
+        "LWAVE": true,
+        "NELM": 60,
+        "NSW": 0,
+        "PREC": "Accurate",
+        "SIGMA": 0.05,
+        "SYSTEM": "NaCl_static"
+      },
+      "produces": [
+        "CHGCAR",
+        "WAVECAR",
+        "OUTCAR",
+        "OSZICAR"
+      ],
+      "requires_runtime_outputs": [
+        "01_relax/CONTCAR"
+      ],
+      "runnable": false,
+      "step_id": "02_static",
+      "task": "static"
+    }
+  ],
+  "structure": {
+    "counts": [
+      1,
+      1
+    ],
+    "elements": [
+      "Na",
+      "Cl"
+    ],
+    "formula": "NaCl",
+    "source_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "structure_id": "str_nacl"
+  },
+  "template_versions": {
+    "generator": "0.1.0",
+    "recipe_pack": "1.0.0"
+  },
+  "warnings": [
+    {
+      "code": "INITIAL_RECOMMENDATION_ONLY",
+      "message": "这是初始推荐，不是唯一正确设置。",
+      "severity": "medium"
+    },
+    {
+      "code": "QUICK_PRECISION_NOT_FOR_PUBLICATION",
+      "message": "quick 档位仅用于快速试算，不建议用于最终结果。",
+      "severity": "medium"
+    },
+    {
+      "code": "STATIC_TIGHTER_EDIFF_HINT",
+      "message": "static 建议比 relax 更严的 EDIFF；如需 1E-6 请选择 high 精度档或提交 EDIFF patch。",
+      "severity": "info"
+    }
+  ],
+  "workflow_id": "wf_nacl"
+}

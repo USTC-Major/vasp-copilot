@@ -1,0 +1,500 @@
+{
+  "schema_version": "1.0",
+  "diagnosis_id": "",
+  "diagnosis_status": "succeeded",
+  "summary": "发现 1 个高严重度问题（SCF_REACHED_NELM），另有 1 个中等问题，请优先处理后再提交计算。",
+  "detected_run": {
+    "root": "vd_demo_c6a2au84",
+    "run_type": null,
+    "files": [
+      {
+        "name": "INCAR",
+        "kind": "incar",
+        "size": 132,
+        "path": "INCAR"
+      },
+      {
+        "name": "KPOINTS",
+        "kind": "kpoints",
+        "size": 34,
+        "path": "KPOINTS"
+      },
+      {
+        "name": "OSZICAR",
+        "kind": "oszicar",
+        "size": 3607,
+        "path": "OSZICAR"
+      },
+      {
+        "name": "OUTCAR",
+        "kind": "outcar",
+        "size": 8690,
+        "path": "OUTCAR"
+      },
+      {
+        "name": "POSCAR",
+        "kind": "poscar",
+        "size": 99,
+        "path": "POSCAR"
+      }
+    ],
+    "missing_recommended": [],
+    "candidate_job_logs": []
+  },
+  "issues": [
+    {
+      "issue_id": "SCF_REACHED_NELM-0001",
+      "rule_id": "SCF_REACHED_NELM",
+      "severity": "high",
+      "category": "scf",
+      "title": "SCF 达到 NELM 上限",
+      "summary": "电子步数达到配置的 NELM=60 且未出现收敛标志，SCF 疑似未收敛。",
+      "evidence": [
+        {
+          "file": "OSZICAR",
+          "line": null,
+          "message": "last electronic step reached NELM=60",
+          "data_ref": "oszicar.last_step",
+          "excerpt": null
+        }
+      ],
+      "recommendations": [
+        {
+          "action": "set_parameter",
+          "target": "INCAR",
+          "parameter": "ALGO",
+          "new_value": null,
+          "rationale": "检查 ALGO/混合/展宽，一次只改少量参数",
+          "requires_user_confirmation": true
+        }
+      ],
+      "auto_fixable": true,
+      "confidence": 0.85,
+      "blocking": true,
+      "possible_causes": [
+        "ALGO 不合适",
+        "mixing 参数差",
+        "初始磁矩问题",
+        "结构差"
+      ],
+      "data_ref": null,
+      "related_issue_ids": [],
+      "root_cause_candidate": null
+    },
+    {
+      "issue_id": "OUTCAR_TRUNCATED-0001",
+      "rule_id": "OUTCAR_TRUNCATED",
+      "severity": "medium",
+      "category": "outcar",
+      "title": "OUTCAR 截断/未正常结束",
+      "summary": "OUTCAR 缺少正常结束标志或解析区块不完整，输出可能被截断。",
+      "evidence": [
+        {
+          "file": "OUTCAR",
+          "line": null,
+          "message": "missing normal termination flag",
+          "data_ref": "outcar.normal_termination",
+          "excerpt": null
+        }
+      ],
+      "recommendations": [
+        {
+          "action": "review",
+          "target": "manifest",
+          "parameter": null,
+          "new_value": null,
+          "rationale": "补充完整 OUTCAR/job log，检查磁盘、超时、节点异常",
+          "requires_user_confirmation": true
+        }
+      ],
+      "auto_fixable": false,
+      "confidence": 0.85,
+      "blocking": false,
+      "possible_causes": [
+        "磁盘满",
+        "超时",
+        "节点异常"
+      ],
+      "data_ref": null,
+      "related_issue_ids": [],
+      "root_cause_candidate": null
+    }
+  ],
+  "plots": {
+    "scf": {
+      "x_label": "电子步",
+      "y_label": "能量 (eV)",
+      "series": [
+        {
+          "ionic_step": 1,
+          "electronic_step": 1,
+          "energy_ev": -100.05
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 2,
+          "energy_ev": -100.1
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 3,
+          "energy_ev": -100.15
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 4,
+          "energy_ev": -100.2
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 5,
+          "energy_ev": -100.25
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 6,
+          "energy_ev": -100.3
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 7,
+          "energy_ev": -100.35
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 8,
+          "energy_ev": -100.4
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 9,
+          "energy_ev": -100.45
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 10,
+          "energy_ev": -100.5
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 11,
+          "energy_ev": -100.55
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 12,
+          "energy_ev": -100.6
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 13,
+          "energy_ev": -100.65
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 14,
+          "energy_ev": -100.7
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 15,
+          "energy_ev": -100.75
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 16,
+          "energy_ev": -100.8
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 17,
+          "energy_ev": -100.85
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 18,
+          "energy_ev": -100.9
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 19,
+          "energy_ev": -100.95
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 20,
+          "energy_ev": -101.0
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 21,
+          "energy_ev": -101.05
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 22,
+          "energy_ev": -101.1
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 23,
+          "energy_ev": -101.15
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 24,
+          "energy_ev": -101.2
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 25,
+          "energy_ev": -101.25
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 26,
+          "energy_ev": -101.3
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 27,
+          "energy_ev": -101.35
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 28,
+          "energy_ev": -101.4
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 29,
+          "energy_ev": -101.45
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 30,
+          "energy_ev": -101.5
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 31,
+          "energy_ev": -101.55
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 32,
+          "energy_ev": -101.6
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 33,
+          "energy_ev": -101.65
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 34,
+          "energy_ev": -101.7
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 35,
+          "energy_ev": -101.75
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 36,
+          "energy_ev": -101.8
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 37,
+          "energy_ev": -101.85
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 38,
+          "energy_ev": -101.9
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 39,
+          "energy_ev": -101.95
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 40,
+          "energy_ev": -102.0
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 41,
+          "energy_ev": -102.05
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 42,
+          "energy_ev": -102.1
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 43,
+          "energy_ev": -102.15
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 44,
+          "energy_ev": -102.2
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 45,
+          "energy_ev": -102.25
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 46,
+          "energy_ev": -102.3
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 47,
+          "energy_ev": -102.35
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 48,
+          "energy_ev": -102.4
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 49,
+          "energy_ev": -102.45
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 50,
+          "energy_ev": -102.5
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 51,
+          "energy_ev": -102.55
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 52,
+          "energy_ev": -102.6
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 53,
+          "energy_ev": -102.65
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 54,
+          "energy_ev": -102.7
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 55,
+          "energy_ev": -102.75
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 56,
+          "energy_ev": -102.8
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 57,
+          "energy_ev": -102.85
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 58,
+          "energy_ev": -102.9
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 59,
+          "energy_ev": -102.95
+        },
+        {
+          "ionic_step": 1,
+          "electronic_step": 60,
+          "energy_ev": -103.0
+        }
+      ]
+    },
+    "magnetization": {
+      "x_label": "原子索引",
+      "y_label": "磁矩 (μB)",
+      "series": []
+    }
+  },
+  "recommended_fixes": [
+    {
+      "fix_id": "FIX-SCF_REACHED_NELM-0001",
+      "issue_ids": [
+        "SCF_REACHED_NELM-0001"
+      ],
+      "target_file": "INCAR",
+      "strategy": "parameter_patch",
+      "fix_status": "unavailable",
+      "safe_to_generate": false,
+      "requires_user_confirmation": true,
+      "changes": [],
+      "diff": null,
+      "generated_file_id": null,
+      "warnings": [
+        "SCF_REACHED_NELM: 参数 ALGO 缺少具体新值，无法自动修复，需人工给定",
+        "没有可通过白名单自动修复的参数变更"
+      ]
+    }
+  ],
+  "missing_evidence": [],
+  "next_step": {
+    "allowed": false,
+    "reason": "存在 1 个 Critical/High 问题未解决或未确认修复（SCF_REACHED_NELM-0001）",
+    "suggested_task": null
+  },
+  "report": {
+    "report_id": "RPT-43E9E318",
+    "diagnosis_id": "",
+    "format": "markdown",
+    "language": "zh",
+    "title": "VASP-Doctor 诊断报告",
+    "generated_at": "2026-08-09T14:41:26.768460+00:00",
+    "size_bytes": 2660,
+    "sha256": "36cddeb187fefa27ed2f55447e18da25fbfc0b53c008bd59eb9b59fbae73c7fb",
+    "sections": [
+      "summary",
+      "input_overview",
+      "issues",
+      "fixes",
+      "missing_evidence",
+      "disclaimer"
+    ],
+    "download_url": null,
+    "generator_version": "0.1.0"
+  },
+  "llm_explanation": null,
+  "provenance": {
+    "parser_version": "0.1.0",
+    "rule_set_version": "0.1.0",
+    "recipe_pack_version": null,
+    "composition_sha256": null,
+    "vasp_version": "6.3.2",
+    "vasp_binary_hint": "(parallel)",
+    "calculation_mode": {
+      "is_spin_polarized": false,
+      "is_dftu": false,
+      "is_soc": false,
+      "is_noncollinear": false,
+      "magnetization_analysis_mode": "unavailable"
+    },
+    "llm_used": false,
+    "mode": "rule_based"
+  }
+}

@@ -1,0 +1,10 @@
+case_id: scf_reached_nelm
+description: "电子步达到 NELM=60 仍未收敛：展示 SCF 未收敛主路径与 ALGO/混合建议。"
+input_sha256: 0b61636e4f7699375970f134e1be1ddc495e3ba773bcb911bc0dcdd4dd119f8d
+required_feature_flags: []
+expected_rule_ids: ["OUTCAR_TRUNCATED", "SCF_REACHED_NELM"]
+expected_issue_count_by_severity: {"critical": 0, "high": 1, "medium": 1, "low": 0, "info": 0}
+recommended_fix_expected: false
+unsupported_or_missing_evidence: []
+demo_phrase: "上传后运行诊断：应命中 SCF_REACHED_NELM，报告给出收敛建议。"
+max_runtime_seconds: 30

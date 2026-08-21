@@ -1,0 +1,10 @@
+case_id: outcar_truncated
+description: "OUTCAR 被截断（无正常结束标志）：展示输出完整性检查。"
+input_sha256: 9c9b7a7f163ec191520f4163160e18dcf0a93ded82ca9df654d6e2ad35c34c5c
+required_feature_flags: []
+expected_rule_ids: ["OUTCAR_TRUNCATED"]
+expected_issue_count_by_severity: {"critical": 0, "high": 0, "medium": 1, "low": 0, "info": 0}
+recommended_fix_expected: false
+unsupported_or_missing_evidence: []
+demo_phrase: "上传后运行诊断：应命中 OUTCAR_TRUNCATED，提示补齐完整输出。"
+max_runtime_seconds: 30

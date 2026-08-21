@@ -1,0 +1,14 @@
+ vasp.6.3.2 (build Mar 2025) (parallel)
+ running on   1 total cores
+ POSCAR: Si2      (demo)
+     maximum precision for lattice parameters
+
+   LATTYP: Found a simple cubic cell.
+   ALAT       =     5.4300000
+
+   number of electron      12
+
+   LOOP+:  electronic self-consistency
+     1 F=      -100.05000000 E0=      -100.05000000 d E =-5.00000000e-02
+   1 ZHEGV: INFO=7 LAPACK routine ZHEGV failed
+   ZHEGV: Error in diagonalization of overlap matrix

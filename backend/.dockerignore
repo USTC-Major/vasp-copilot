@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+tests/
+tests/.tmp/
+data/
+.env
+openapi.json
+docs/
+examples/
+scripts/
+run.ps1
+run.sh
+run_ci.ps1
+run_ci.sh

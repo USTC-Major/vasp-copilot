@@ -1,0 +1,2 @@
+SLURM: slurmstepd: error: *** JOB 424242 ON cluster-vasp CANCELLED AT 2026-08-09T12:00:00 DUE TO TIME LIMIT ***
+srun: Job step aborted: Reached time limit 0-00:10:00

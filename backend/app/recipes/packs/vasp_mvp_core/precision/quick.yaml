@@ -1,0 +1,33 @@
+schema_version: "1.0"
+recipe_id: precision.quick
+version: 1.0.0
+kind: precision
+recipe_status: published
+display_name: 快速精度
+description: 快速试算精度档位；收敛阈值较松，仅用于流程验证。
+scope:
+  tasks: [relax, static, dos, band]
+  electronic_types: [metal, semiconductor, unknown]
+  vasp_versions: ["5.x", "6.x"]
+parameters:
+  EDIFF: 0.0001
+  NELM: 60
+derived_parameters: []
+requires: []
+conflicts: []
+confirmations: []
+warnings:
+  - code: QUICK_PRECISION_NOT_FOR_PUBLICATION
+    severity: medium
+    message: quick 档位仅用于快速试算，不建议用于最终结果。
+allowed_overrides:
+  EDIFF: {type: number, exclusive_minimum: 0}
+provenance:
+  source_type: project_curated
+  source_note: MVP 教学配方
+  reviewed_by: be-a-domain-review
+  reviewed_at: "2026-08-10"
+tests:
+  test_status: passed
+  case_count: 4
+  last_tested_at: "2026-08-10"

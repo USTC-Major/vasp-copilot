@@ -1,0 +1,30 @@
+schema_version: "1.0"
+recipe_id: precision.standard
+version: 1.0.0
+kind: precision
+recipe_status: published
+display_name: 常规精度
+description: 常规科研训练精度档位；默认推荐起点。
+scope:
+  tasks: [relax, static, dos, band]
+  electronic_types: [metal, semiconductor, unknown]
+  vasp_versions: ["5.x", "6.x"]
+parameters:
+  EDIFF: 0.00001
+  NELM: 100
+derived_parameters: []
+requires: []
+conflicts: []
+confirmations: []
+warnings: []
+allowed_overrides:
+  EDIFF: {type: number, exclusive_minimum: 0}
+provenance:
+  source_type: project_curated
+  source_note: MVP 教学配方
+  reviewed_by: be-a-domain-review
+  reviewed_at: "2026-08-10"
+tests:
+  test_status: passed
+  case_count: 4
+  last_tested_at: "2026-08-10"
