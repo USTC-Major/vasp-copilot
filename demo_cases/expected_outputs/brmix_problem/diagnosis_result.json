@@ -4,38 +4,53 @@
   "diagnosis_status": "succeeded",
   "summary": "发现 1 个高严重度问题（BRMIX_SERIOUS_PROBLEM），另有 1 个中等问题，请优先处理后再提交计算。",
   "detected_run": {
-    "root": "vd_demo_i_v70f15",
+    "root": "vd_demo_e73s3mhr",
     "run_type": null,
     "files": [
       {
         "name": "INCAR",
         "kind": "incar",
         "size": 132,
-        "path": "INCAR"
+        "path": "INCAR",
+        "relative_path": "INCAR",
+        "size_bytes": 132,
+        "sha256": "d6c7454e1e46cc73212b793f5d3d0a2262eae611ce749163f7e210960064fbf9"
       },
       {
         "name": "KPOINTS",
         "kind": "kpoints",
         "size": 34,
-        "path": "KPOINTS"
+        "path": "KPOINTS",
+        "relative_path": "KPOINTS",
+        "size_bytes": 34,
+        "sha256": "0d860d2f395c3073dae46e1af7e084055c4adf136dce2bc6d9db5fb7c0d13342"
       },
       {
         "name": "OSZICAR",
         "kind": "oszicar",
         "size": 775,
-        "path": "OSZICAR"
+        "path": "OSZICAR",
+        "relative_path": "OSZICAR",
+        "size_bytes": 775,
+        "sha256": "257b83bff98c63cf93e2a888a5bc57ca6524e1a09d820b74933538e2b6089bc3"
       },
       {
         "name": "OUTCAR",
         "kind": "outcar",
         "size": 2072,
-        "path": "OUTCAR"
+        "path": "OUTCAR",
+        "relative_path": "OUTCAR",
+        "size_bytes": 2072,
+        "sha256": "18fe812791ef27fbfa530758e8bc87d70429f397f56df718da5773d357b985b3"
       },
       {
         "name": "POSCAR",
         "kind": "poscar",
         "size": 99,
-        "path": "POSCAR"
+        "path": "POSCAR",
+        "relative_path": "POSCAR",
+        "size_bytes": 99,
+        "sha256": "aa58c78431dd5bd4fb816278c0fa7efccca404758f745db4eb4045e5f3eedb8b"
       }
     ],
     "missing_recommended": [],
@@ -123,68 +138,7 @@
     "scf": {
       "x_label": "电子步",
       "y_label": "能量 (eV)",
-      "series": [
-        {
-          "ionic_step": 1,
-          "electronic_step": 1,
-          "energy_ev": -100.05
-        },
-        {
-          "ionic_step": 1,
-          "electronic_step": 2,
-          "energy_ev": -100.1
-        },
-        {
-          "ionic_step": 1,
-          "electronic_step": 3,
-          "energy_ev": -100.15
-        },
-        {
-          "ionic_step": 1,
-          "electronic_step": 4,
-          "energy_ev": -100.2
-        },
-        {
-          "ionic_step": 1,
-          "electronic_step": 5,
-          "energy_ev": -100.25
-        },
-        {
-          "ionic_step": 1,
-          "electronic_step": 6,
-          "energy_ev": -100.3
-        },
-        {
-          "ionic_step": 1,
-          "electronic_step": 7,
-          "energy_ev": -100.35
-        },
-        {
-          "ionic_step": 1,
-          "electronic_step": 8,
-          "energy_ev": -100.4
-        },
-        {
-          "ionic_step": 1,
-          "electronic_step": 9,
-          "energy_ev": -100.45
-        },
-        {
-          "ionic_step": 1,
-          "electronic_step": 10,
-          "energy_ev": -100.5
-        },
-        {
-          "ionic_step": 1,
-          "electronic_step": 11,
-          "energy_ev": -100.55
-        },
-        {
-          "ionic_step": 1,
-          "electronic_step": 12,
-          "energy_ev": -100.6
-        }
-      ]
+      "series": []
     },
     "magnetization": {
       "x_label": "原子索引",
@@ -194,7 +148,7 @@
   },
   "recommended_fixes": [
     {
-      "fix_id": "FIX-05E0F0DC",
+      "fix_id": "FIX-D76C6686",
       "issue_ids": [],
       "target_file": "INCAR",
       "strategy": "parameter_patch",
@@ -216,14 +170,14 @@
     "suggested_task": null
   },
   "report": {
-    "report_id": "RPT-6D1B8D20",
+    "report_id": "RPT-A1BE1268",
     "diagnosis_id": "",
     "format": "markdown",
     "language": "zh",
     "title": "VASP-Doctor 诊断报告",
-    "generated_at": "2026-08-09T14:41:26.822978+00:00",
+    "generated_at": "2026-08-21T16:09:31.362477+00:00",
     "size_bytes": 2592,
-    "sha256": "0b6fb60513936c1173e24e7e9e5bfd19fbc4dd3dd8ce2ff106ce4dd2a5b11283",
+    "sha256": "229adf884e82cfa9942a38bad3ccc80b9e6d1816d2976c3981cc3b3882acf459",
     "sections": [
       "summary",
       "input_overview",

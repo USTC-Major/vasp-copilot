@@ -40,6 +40,14 @@ _MAG_HEADER_COLLINEAR = "magnetization (x)"
 _MAG_HEADER_NONCOLLINEAR = "magnetization (x,y,z)"
 _FINFO_KEY = "General timing and accounting informations"
 
+# 结构优化收敛停止的明确文本（离子收敛证据）：仅完整语句才算证据，
+# 容忍空白差异与 minimisation/minimization 拼写；无上下文的
+# "reached required accuracy" 不构成证据。未命中保持 None（证据不足）。
+_IONIC_CONVERGENCE_RE = re.compile(
+    r"reached\s+required\s+accuracy\s*[-\u2013\u2014]?\s*stopping\s+structural"
+    r"\s+energy\s+minimi[sz]ation",
+    re.IGNORECASE)
+
 
 def _is_t(value: Optional[str]) -> bool:
     return bool(value) and value.strip().upper().startswith("T")
@@ -138,6 +146,10 @@ def parse_outcar(text: str) -> OutcarData:
             except ValueError:
                 continue
     data.final_energy = last_toten
+
+    # 5.5) 结构优化收敛证据：仅完整停止语句命中时为 True，否则 None（证据不足）。
+    data.ionic_convergence_reached = (
+        True if any(_IONIC_CONVERGENCE_RE.search(ln) for ln in lines) else None)
 
     # 6) final magnetization (only meaningful for collinear)
     if mode.magnetization_analysis_mode == MagnetizationAnalysisMode.COLLINEAR:

@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from app.schemas.parsed import (
     ParsedRunData, IncarData, PoscarData, OszicarData,
-    OutcarData, KpointsData, JobLogData,
+    OutcarData, KpointsData, JobLogData, ElectronicStep,
 )
 from app.schemas.mode import CalculationMode, MagnetizationAnalysisMode
 from app.schemas.status import Severity
 from app.diagnostics.engine import DiagnosisEngine
 from app.diagnostics.rules import all_rules
+from app.parsers.oszicar import parse_oszicar
 
 RULES = {r.rule_id: r for r in all_rules()}
 
@@ -114,31 +115,177 @@ def test_icharg11_chgcar_missing_trigger_and_not():
 
 
 # ---------- scf / ionic ----------
+def _elec_block(ionic_step: int, n: int) -> list[ElectronicStep]:
+    """构造一个含 n 条真实电子迭代的块（单调下降，不触发震荡）。"""
+    return [ElectronicStep(ionic_step=ionic_step, electronic_step=i,
+                           algorithm="DAV", energy=-100.0 - 0.1 * i)
+            for i in range(1, n + 1)]
+
+
 def test_scf_reached_nelm_trigger_and_not():
     p = ParsedRunData(incar=IncarData(effective={"NELM": 60}),
-                      oszicar=OszicarData(energy_series=[0.0, 0.1, 0.2, 0.3],
-                                          last_step=60, converged=False))
-    assert len(get("SCF_REACHED_NELM").run(p)) == 1
+                      oszicar=OszicarData(electronic_steps=_elec_block(1, 60),
+                                          last_electronic_step=60,
+                                          last_ionic_step=1, last_step=1,
+                                          converged=False))
+    iss = get("SCF_REACHED_NELM").run(p)
+    assert len(iss) == 1
+    # 谨慎措辞：不得声称绝对确定；证据引用新字段且含步数与 NELM
+    assert iss[0].confidence < 1.0
+    assert iss[0].evidence[0].data_ref == "oszicar.last_electronic_step"
+    assert "60" in iss[0].evidence[0].message
     p2 = ParsedRunData(incar=IncarData(effective={"NELM": 60}),
-                       oszicar=OszicarData(energy_series=[0.0, 0.1, 0.2, 0.3],
-                                           last_step=10, converged=False))
+                       oszicar=OszicarData(electronic_steps=_elec_block(1, 59),
+                                           last_electronic_step=59,
+                                           last_ionic_step=1, last_step=1,
+                                           converged=False))
     assert get("SCF_REACHED_NELM").run(p2) == []
 
 
+def test_scf_reached_nelm_not_triggered_by_ionic_steps():
+    # 离子步达 60 但无电子迭代行：证据不足，不得误触发
+    p = ParsedRunData(incar=IncarData(effective={"NELM": 60}),
+                      oszicar=OszicarData(last_step=60, last_ionic_step=60,
+                                          converged=False))
+    assert get("SCF_REACHED_NELM").run(p) == []
+
+
+def test_scf_reached_nelm_requires_valid_nelm():
+    block = _elec_block(1, 60)
+    for nelm in (0, -5, "60", None):
+        p = ParsedRunData(incar=IncarData(effective={"NELM": nelm}),
+                          oszicar=OszicarData(electronic_steps=block,
+                                              last_electronic_step=60))
+        assert get("SCF_REACHED_NELM").run(p) == []
+
+
+def test_scf_reached_nelm_rejects_bool_nelm():
+    # bool 是 int 子类：NELM=True 不是有效正整数，不得触发
+    p = ParsedRunData(incar=IncarData(effective={"NELM": True}),
+                      oszicar=OszicarData(electronic_steps=_elec_block(1, 60),
+                                          last_electronic_step=60))
+    assert get("SCF_REACHED_NELM").run(p) == []
+    p2 = ParsedRunData(incar=IncarData(effective={"NELM": False}),
+                       oszicar=OszicarData(electronic_steps=_elec_block(1, 60),
+                                           last_electronic_step=60))
+    assert get("SCF_REACHED_NELM").run(p2) == []
+
+
+def test_scf_reached_nelm_no_last_block_evidence_not_triggered():
+    # 真实 parser 链路：电子行仅存在于第一块，最后一个 F= 汇总前无电子行；
+    # SCF_REACHED_NELM 不得使用第一块历史数据误报。
+    text = "\n".join(
+        f"DAV:{i:6d}  {-float(i):.8E}  -0.1E-01  -0.1E-01    96   0.1E+00   0.1E+00"
+        for i in range(1, 61))
+    text += ("\n   1 F= -60.0 E0= -60.0 d E =0.0\n"
+             "   2 F= -60.1 E0= -60.1 d E =0.0\n")
+    osz = parse_oszicar(text)
+    assert osz.total_electronic_lines == 60
+    assert osz.last_electronic_step == 0
+    assert osz.electronic_energy_series == []
+    p = ParsedRunData(incar=IncarData(effective={"NELM": 60}), oszicar=osz)
+    assert get("SCF_REACHED_NELM").run(p) == []
+
+
 def test_scf_energy_oscillation_trigger_and_not():
-    p = ParsedRunData(oszicar=OszicarData(energy_series=[0.0, 0.1, 0.0, 0.1, 0.0, 0.1]))
+    p = ParsedRunData(oszicar=OszicarData(
+        electronic_energy_series=[0.0, 0.1, 0.0, 0.1, 0.0, 0.1]))
     assert len(get("SCF_ENERGY_OSCILLATION").run(p)) == 1
-    p2 = ParsedRunData(oszicar=OszicarData(energy_series=[0.0, -0.01, -0.02, -0.03]))
+    p2 = ParsedRunData(oszicar=OszicarData(
+        electronic_energy_series=[0.0, -0.01, -0.02, -0.03]))
     assert get("SCF_ENERGY_OSCILLATION").run(p2) == []
+
+
+def test_scf_energy_oscillation_ignores_ionic_series():
+    # 离子步 F/E0 序列（旧兼容字段）不再参与震荡判定
+    p = ParsedRunData(oszicar=OszicarData(
+        energy_series=[0.0, 0.1, 0.0, 0.1, 0.0, 0.1]))
+    assert get("SCF_ENERGY_OSCILLATION").run(p) == []
+
+
+def _osc_block(energies: list[float]) -> str:
+    return "\n".join(
+        f"DAV:{i:6d}  {e:.8E}  -0.1E-01  -0.1E-01    96   0.1E+00   0.1E+00"
+        for i, e in enumerate(energies, start=1))
+
+
+def test_scf_oscillation_previous_block_only_not_triggered():
+    # 真实 parser → rule 链路：前块震荡、最后块单调下降，不得触发
+    text = (_osc_block([0.0, 0.1, 0.0, 0.1, 0.0, 0.1]) + "\n"
+            "   1 F= 0.1 E0= 0.1 d E =0.0\n"
+            + _osc_block([-0.1, -0.2, -0.3, -0.4, -0.5, -0.6]) + "\n"
+            "   2 F= -0.6 E0= -0.6 d E =0.0\n")
+    osz = parse_oszicar(text)
+    assert osz.electronic_energy_series == [-0.1, -0.2, -0.3, -0.4, -0.5, -0.6]
+    p = ParsedRunData(oszicar=osz)
+    assert get("SCF_ENERGY_OSCILLATION").run(p) == []
+
+
+def test_scf_oscillation_last_block_triggers():
+    # 真实 parser → rule 链路：前块单调、最后块震荡，必须触发
+    text = (_osc_block([-0.1, -0.2, -0.3, -0.4, -0.5, -0.6]) + "\n"
+            "   1 F= -0.6 E0= -0.6 d E =0.0\n"
+            + _osc_block([0.0, 0.1, 0.0, 0.1, 0.0, 0.1]) + "\n"
+            "   2 F= 0.1 E0= 0.1 d E =0.0\n")
+    osz = parse_oszicar(text)
+    assert osz.electronic_energy_series == [0.0, 0.1, 0.0, 0.1, 0.0, 0.1]
+    p = ParsedRunData(oszicar=osz)
+    assert len(get("SCF_ENERGY_OSCILLATION").run(p)) == 1
 
 
 def test_ionic_reached_nsw_trigger_and_not():
     p = ParsedRunData(incar=IncarData(effective={"NSW": 50}),
-                      oszicar=OszicarData(last_step=50, converged=False))
-    assert len(get("IONIC_REACHED_NSW").run(p)) == 1
+                      oszicar=OszicarData(last_ionic_step=50, last_step=50,
+                                          converged=False))
+    iss = get("IONIC_REACHED_NSW").run(p)
+    assert len(iss) == 1
+    assert iss[0].evidence[0].data_ref == "oszicar.last_ionic_step"
     p2 = ParsedRunData(incar=IncarData(effective={"NSW": 50}),
-                       oszicar=OszicarData(last_step=50, converged=True))
+                       oszicar=OszicarData(last_ionic_step=50, last_step=50,
+                                           converged=True))
     assert get("IONIC_REACHED_NSW").run(p2) == []
+
+
+def test_ionic_reached_nsw_not_for_static_nsw_zero():
+    # NSW=0 静态计算：即使有一次离子汇总也不得触发
+    p = ParsedRunData(incar=IncarData(effective={"NSW": 0}),
+                      oszicar=OszicarData(last_ionic_step=1, last_step=1))
+    assert get("IONIC_REACHED_NSW").run(p) == []
+
+
+def test_ionic_reached_nsw_rejects_bool_nsw():
+    # bool 是 int 子类：NSW=True/False 不是有效正整数，不得触发
+    p = ParsedRunData(incar=IncarData(effective={"NSW": True}),
+                      oszicar=OszicarData(last_ionic_step=50))
+    assert get("IONIC_REACHED_NSW").run(p) == []
+    p2 = ParsedRunData(incar=IncarData(effective={"NSW": False}),
+                       oszicar=OszicarData(last_ionic_step=50))
+    assert get("IONIC_REACHED_NSW").run(p2) == []
+
+
+def test_ionic_reached_nsw_outcar_convergence_text_suppresses():
+    # OUTCAR 明确结构收敛文本（ionic_convergence_reached=True）抑制规则
+    p = ParsedRunData(incar=IncarData(effective={"NSW": 50}),
+                      oszicar=OszicarData(last_ionic_step=50),
+                      outcar=OutcarData(ionic_convergence_reached=True))
+    assert get("IONIC_REACHED_NSW").run(p) == []
+
+
+def test_ionic_reached_nsw_insufficient_evidence_still_triggers():
+    # 无收敛文本（None，证据不足）不视为已收敛，照常提示
+    p = ParsedRunData(incar=IncarData(effective={"NSW": 50}),
+                      oszicar=OszicarData(last_ionic_step=50),
+                      outcar=OutcarData(ionic_convergence_reached=None))
+    assert len(get("IONIC_REACHED_NSW").run(p)) == 1
+
+
+def test_ionic_reached_nsw_not_affected_by_electronic_steps():
+    # 大量电子步但离子步不足 NSW：不受电子步数量影响
+    p = ParsedRunData(incar=IncarData(effective={"NSW": 50}),
+                      oszicar=OszicarData(electronic_steps=_elec_block(1, 80),
+                                          last_electronic_step=80,
+                                          last_ionic_step=5))
+    assert get("IONIC_REACHED_NSW").run(p) == []
 
 
 # ---------- magnetic (collinear only) ----------
@@ -243,7 +390,10 @@ def test_engine_multi_issue_numbering_sorting_evidence():
     p = ParsedRunData(
         incar=IncarData(effective={"NELM": 60, "NSW": 50, "ISMEAR": -5, "LDAU": True, "LMAXMIX": 2,
                                    "NCORE": 4, "KPAR": 0}),
-        oszicar=OszicarData(energy_series=[0.0, 0.1, 0.0, 0.1, 0.0], last_step=60, converged=False),
+        oszicar=OszicarData(electronic_steps=_elec_block(1, 60),
+                            electronic_energy_series=[0.0, 0.1, 0.0, 0.1, 0.0],
+                            last_electronic_step=60,
+                            last_ionic_step=50, last_step=50, converged=False),
         outcar=OutcarData(normal_termination=False, truncated=True),
         kpoints=KpointsData(line_mode=True),
         poscar=PoscarData(elements=["Si"]),

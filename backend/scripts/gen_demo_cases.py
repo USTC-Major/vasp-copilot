@@ -69,6 +69,22 @@ def _oszicar_series(count: int, start: float, step_d: float) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _oszicar_nelm_block(nelm: int, start: float, step_d: float) -> str:
+    """接近真实 VASP 结构的 OSZICAR：单个电子块 nelm 条 DAV 电子迭代
+    （能量单调缓降、末步编号=NELM、无收敛标志）+ 一条离子步汇总。"""
+    lines = ["    NION      2",
+             "    NELEC    12",
+             "-" * 30]
+    for i in range(1, nelm + 1):
+        e = start - step_d * i
+        lines.append(
+            "DAV:%5d  %16.8E %14.5E %14.5E %6d %11.3E"
+            % (i, e, -step_d, -step_d, 216, 0.3))
+    e = start - step_d * nelm
+    lines.append("   1 F=%.8f E0=%.8f d E=%+.8e" % (e, e, -step_d))
+    return "\n".join(lines) + "\n"
+
+
 def _outcar_scf(count: int, start: float, step_d: float, brmix: bool = False) -> str:
     lines = [
         " vasp.6.3.2 (build Mar 2025) (parallel)",
@@ -394,7 +410,7 @@ CASES = [
             "INCAR": SHARED_INCAR,
             "POSCAR": POSCAR_SI,
             "KPOINTS": KPOINTS,
-            "OSZICAR": _oszicar_series(60, -100.0, 0.05),
+            "OSZICAR": _oszicar_nelm_block(60, -100.0, 0.05),
             "OUTCAR": _outcar_scf(60, -100.0, 0.05),
         },
     },

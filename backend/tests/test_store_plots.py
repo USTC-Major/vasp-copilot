@@ -19,6 +19,8 @@ def _zip() -> bytes:
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("OSZICAR", (
+            "DAV:    1    -0.20000000E+02   -0.20000E+02   -0.19000E+02    96   0.100E+01\n"
+            "DAV:    2    -0.20100000E+02   -0.10000E+00   -0.10000E+00    96   0.100E+00\n"
             "  1 F=-20.0 E0=-20.0 d E=-0.5 mag= 0.6\n"
             "  2 F=-20.1 E0=-20.1 d E=-0.1 mag= 0.58\n"
         ))
@@ -58,9 +60,29 @@ def test_run_returns_scf_and_magnetization_series():
     assert plots["scf"]["series"][0]["electronic_step"] == 1
     assert plots["scf"]["series"][1]["electronic_step"] == 2
     assert all("energy_ev" in p for p in plots["scf"]["series"])
+    # SCF 曲线来自真实电子迭代行（DAV），并携带算法标签
+    assert all(p["algorithm"] == "DAV" for p in plots["scf"]["series"])
+    assert plots["scf"]["series"][0]["energy_ev"] == -20.0
     assert plots["magnetization"]["series"]
     atom = plots["magnetization"]["series"][0]
     assert atom["atom_index"] == 1 and atom["tot"] == 0.6
+
+
+def test_scf_series_empty_without_electronic_lines():
+    # 只有离子汇总、无电子迭代：SCF series 为空、不误报 NELM、API 正常 200
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("INCAR", "SYSTEM = demo\nNELM = 60\n")
+        zf.writestr("OSZICAR", "  1 F=-20.0 E0=-20.0 d E=-0.5\n")
+    r = client.post("/api/v1/diagnosis/upload",
+                    files={"file": ("run.zip", buf.getvalue(), "application/zip")})
+    assert r.status_code == 200, r.text
+    diag = r.json()["data"]["diagnosis_id"]
+    r = client.post("/api/v1/diagnosis/run", json={"diagnosis_id": diag})
+    assert r.status_code == 200, r.text
+    g = client.get(f"/api/v1/diagnosis/{diag}").json()["data"]
+    assert g["plots"]["scf"]["series"] == []
+    assert not any(i["rule_id"] == "SCF_REACHED_NELM" for i in g["issues"])
 
 
 def test_upload_echoes_session_id():

@@ -4,38 +4,53 @@
   "diagnosis_status": "succeeded",
   "summary": "发现 1 个高严重度问题（IONIC_REACHED_NSW），另有 0 个中等问题，请优先处理后再提交计算。",
   "detected_run": {
-    "root": "vd_demo_r71v9vr9",
+    "root": "vd_demo_wawdqb6j",
     "run_type": null,
     "files": [
       {
         "name": "INCAR",
         "kind": "incar",
         "size": 143,
-        "path": "INCAR"
+        "path": "INCAR",
+        "relative_path": "INCAR",
+        "size_bytes": 143,
+        "sha256": "8ad6b3ffcce7e2b2e38b6dcc11bb5085443876608ec4601c75b27327d0ee317e"
       },
       {
         "name": "KPOINTS",
         "kind": "kpoints",
         "size": 34,
-        "path": "KPOINTS"
+        "path": "KPOINTS",
+        "relative_path": "KPOINTS",
+        "size_bytes": 34,
+        "sha256": "0d860d2f395c3073dae46e1af7e084055c4adf136dce2bc6d9db5fb7c0d13342"
       },
       {
         "name": "OSZICAR",
         "kind": "oszicar",
         "size": 361,
-        "path": "OSZICAR"
+        "path": "OSZICAR",
+        "relative_path": "OSZICAR",
+        "size_bytes": 361,
+        "sha256": "5230fe684fa7dde2f7d038897d153299628e1cea15d908751b489a749d5e6563"
       },
       {
         "name": "OUTCAR",
         "kind": "outcar",
         "size": 1096,
-        "path": "OUTCAR"
+        "path": "OUTCAR",
+        "relative_path": "OUTCAR",
+        "size_bytes": 1096,
+        "sha256": "7f14d69f3e940169c7fa4a4b1b040a73c2c1cf363262d4749a636293d961511b"
       },
       {
         "name": "POSCAR",
         "kind": "poscar",
         "size": 99,
-        "path": "POSCAR"
+        "path": "POSCAR",
+        "relative_path": "POSCAR",
+        "size_bytes": 99,
+        "sha256": "aa58c78431dd5bd4fb816278c0fa7efccca404758f745db4eb4045e5f3eedb8b"
       }
     ],
     "missing_recommended": [],
@@ -54,7 +69,7 @@
           "file": "OSZICAR",
           "line": null,
           "message": "ionic steps >= NSW=5",
-          "data_ref": "oszicar.last_step",
+          "data_ref": "oszicar.last_ionic_step",
           "excerpt": null
         }
       ],
@@ -84,33 +99,7 @@
     "scf": {
       "x_label": "电子步",
       "y_label": "能量 (eV)",
-      "series": [
-        {
-          "ionic_step": 1,
-          "electronic_step": 1,
-          "energy_ev": -100.05
-        },
-        {
-          "ionic_step": 1,
-          "electronic_step": 2,
-          "energy_ev": -100.1
-        },
-        {
-          "ionic_step": 1,
-          "electronic_step": 3,
-          "energy_ev": -100.15
-        },
-        {
-          "ionic_step": 1,
-          "electronic_step": 4,
-          "energy_ev": -100.2
-        },
-        {
-          "ionic_step": 1,
-          "electronic_step": 5,
-          "energy_ev": -100.25
-        }
-      ]
+      "series": []
     },
     "magnetization": {
       "x_label": "原子索引",
@@ -145,14 +134,14 @@
     "suggested_task": null
   },
   "report": {
-    "report_id": "RPT-729C8197",
+    "report_id": "RPT-95C7F620",
     "diagnosis_id": "",
     "format": "markdown",
     "language": "zh",
     "title": "VASP-Doctor 诊断报告",
-    "generated_at": "2026-08-09T14:41:27.177797+00:00",
+    "generated_at": "2026-08-21T16:09:31.538128+00:00",
     "size_bytes": 2128,
-    "sha256": "e515892184f4505fff86824c166a986bf9c4b08026573f7c80902b9cf856406a",
+    "sha256": "ba6a9f44c92cacdad35c3b19a0cd84cd63997a996bd067f1f7a2f04c7707fb71",
     "sections": [
       "summary",
       "input_overview",

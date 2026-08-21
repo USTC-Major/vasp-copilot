@@ -207,24 +207,17 @@ def _highest_severity(issues: list[Issue]) -> str:
 def _build_plots(parsed: ParsedRunData) -> dict:
     """按 MVP 7.5 构建结构化数值序列（scf + 磁化）。"""
     scf_series: list[dict] = []
-    ionic_counter = 0
-    prev_step = None
     if parsed.oszicar is not None:
-        for step in parsed.oszicar.ionic_steps:
-            cur = step.get("step")
-            if cur is not None:
-                if prev_step is None or cur <= prev_step:
-                    ionic_counter += 1
-                prev_step = cur
-            energy = step.get("F")
-            if energy is None:
-                energy = step.get("E0")
-            if energy is None:
+        # SCF 曲线只来自真实电子迭代（DAV/RMM/CG 等）；
+        # 无电子行时 series 为空，不伪造电子步。
+        for es in parsed.oszicar.electronic_steps:
+            if es.energy is None:
                 continue
             scf_series.append({
-                "ionic_step": ionic_counter,
-                "electronic_step": step.get("step"),
-                "energy_ev": energy,
+                "ionic_step": es.ionic_step,
+                "electronic_step": es.electronic_step,
+                "energy_ev": es.energy,
+                "algorithm": es.algorithm,
             })
     mag_series: list[dict] = []
     if parsed.outcar is not None and parsed.outcar.final_magnetization:

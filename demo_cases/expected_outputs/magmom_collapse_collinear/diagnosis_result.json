@@ -4,38 +4,53 @@
   "diagnosis_status": "succeeded",
   "summary": "发现 1 个问题（均为中/低严重度），运行基本正常。",
   "detected_run": {
-    "root": "vd_demo_1xg_m7p4",
+    "root": "vd_demo_0scwopd5",
     "run_type": null,
     "files": [
       {
         "name": "INCAR",
         "kind": "incar",
         "size": 160,
-        "path": "INCAR"
+        "path": "INCAR",
+        "relative_path": "INCAR",
+        "size_bytes": 160,
+        "sha256": "e85d75eb59161514fa1d9ffb69a85c73950b25a18b358d9b0b852cc42bb6298d"
       },
       {
         "name": "KPOINTS",
         "kind": "kpoints",
         "size": 34,
-        "path": "KPOINTS"
+        "path": "KPOINTS",
+        "relative_path": "KPOINTS",
+        "size_bytes": 34,
+        "sha256": "0d860d2f395c3073dae46e1af7e084055c4adf136dce2bc6d9db5fb7c0d13342"
       },
       {
         "name": "OSZICAR",
         "kind": "oszicar",
         "size": 408,
-        "path": "OSZICAR"
+        "path": "OSZICAR",
+        "relative_path": "OSZICAR",
+        "size_bytes": 408,
+        "sha256": "3e8048c822ebfeb27630475aab5b6fd40d6fca0c650889f050161519be14c0ce"
       },
       {
         "name": "OUTCAR",
         "kind": "outcar",
         "size": 1176,
-        "path": "OUTCAR"
+        "path": "OUTCAR",
+        "relative_path": "OUTCAR",
+        "size_bytes": 1176,
+        "sha256": "cf22a53916d0d66cf4668dda0131c3db05db985665d5f1af88c2efd011a23814"
       },
       {
         "name": "POSCAR",
         "kind": "poscar",
         "size": 110,
-        "path": "POSCAR"
+        "path": "POSCAR",
+        "relative_path": "POSCAR",
+        "size_bytes": 110,
+        "sha256": "15967399faa5843158774a23ae010bafe5a42472124d85bb7f9fad771ca8b421"
       }
     ],
     "missing_recommended": [],
@@ -84,38 +99,7 @@
     "scf": {
       "x_label": "电子步",
       "y_label": "能量 (eV)",
-      "series": [
-        {
-          "ionic_step": 1,
-          "electronic_step": 1,
-          "energy_ev": -50.05
-        },
-        {
-          "ionic_step": 1,
-          "electronic_step": 2,
-          "energy_ev": -50.1
-        },
-        {
-          "ionic_step": 1,
-          "electronic_step": 3,
-          "energy_ev": -50.15
-        },
-        {
-          "ionic_step": 1,
-          "electronic_step": 4,
-          "energy_ev": -50.2
-        },
-        {
-          "ionic_step": 1,
-          "electronic_step": 5,
-          "energy_ev": -50.25
-        },
-        {
-          "ionic_step": 1,
-          "electronic_step": 6,
-          "energy_ev": -50.3
-        }
-      ]
+      "series": []
     },
     "magnetization": {
       "x_label": "原子索引",
@@ -140,7 +124,7 @@
   },
   "recommended_fixes": [
     {
-      "fix_id": "FIX-12A2493B",
+      "fix_id": "FIX-1196B686",
       "issue_ids": [],
       "target_file": "INCAR",
       "strategy": "parameter_patch",
@@ -162,14 +146,14 @@
     "suggested_task": "static"
   },
   "report": {
-    "report_id": "RPT-195C9852",
+    "report_id": "RPT-02DE1F5F",
     "diagnosis_id": "",
     "format": "markdown",
     "language": "zh",
     "title": "VASP-Doctor 诊断报告",
-    "generated_at": "2026-08-09T14:41:26.962823+00:00",
+    "generated_at": "2026-08-21T16:09:31.419895+00:00",
     "size_bytes": 1994,
-    "sha256": "0deb89613ba9c06b35b1cb350184936981476b9af8789f23eac9752762da2e3b",
+    "sha256": "e89f5b4d456b11ec8eb774efa21357bb0e687c07e5ed1e215ce1a8ad787b8302",
     "sections": [
       "summary",
       "input_overview",

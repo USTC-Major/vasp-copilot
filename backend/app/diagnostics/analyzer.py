@@ -52,8 +52,8 @@ def analyze_scf(oszicar_energy: list[float], nelm: Optional[int] = None,
     m.final_amplitude = amps[-1] if amps else 0.0
     # convergence heuristic: electron steps stop when dE below a small epsilon
     m.converged = bool(amps) and amps[-1] < 1e-4
-    # reached NELM: if the reported electronic steps hit the configured NELM,
-    # and the run did NOT converge (it stopped because of the iteration cap)
+    # reached NELM: 达到迭代上限是客观事实，与能量差启发式无关；
+    # 能量震荡是另一个独立判断，启发式不得否决或促成 NELM 判定。
     if nelm is not None and oszicar_last_step:
-        m.reached_nelm = (oszicar_last_step >= nelm) and (not m.converged)
+        m.reached_nelm = oszicar_last_step >= nelm
     return m

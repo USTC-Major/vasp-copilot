@@ -4,38 +4,53 @@
   "diagnosis_status": "succeeded",
   "summary": "发现 1 个高严重度问题（SCF_REACHED_NELM），另有 1 个中等问题，请优先处理后再提交计算。",
   "detected_run": {
-    "root": "vd_demo_c6a2au84",
+    "root": "vd_demo_00n18q5f",
     "run_type": null,
     "files": [
       {
         "name": "INCAR",
         "kind": "incar",
         "size": 132,
-        "path": "INCAR"
+        "path": "INCAR",
+        "relative_path": "INCAR",
+        "size_bytes": 132,
+        "sha256": "d6c7454e1e46cc73212b793f5d3d0a2262eae611ce749163f7e210960064fbf9"
       },
       {
         "name": "KPOINTS",
         "kind": "kpoints",
         "size": 34,
-        "path": "KPOINTS"
+        "path": "KPOINTS",
+        "relative_path": "KPOINTS",
+        "size_bytes": 34,
+        "sha256": "0d860d2f395c3073dae46e1af7e084055c4adf136dce2bc6d9db5fb7c0d13342"
       },
       {
         "name": "OSZICAR",
         "kind": "oszicar",
-        "size": 3607,
-        "path": "OSZICAR"
+        "size": 4805,
+        "path": "OSZICAR",
+        "relative_path": "OSZICAR",
+        "size_bytes": 4805,
+        "sha256": "7235a0855eefb936426e82b29c0148fcae8d0b88221239161cb29f9f853ba970"
       },
       {
         "name": "OUTCAR",
         "kind": "outcar",
         "size": 8690,
-        "path": "OUTCAR"
+        "path": "OUTCAR",
+        "relative_path": "OUTCAR",
+        "size_bytes": 8690,
+        "sha256": "4bc9068f99550821b97e9a39b07a51558a858bda09ed20faec8e20f9798fa982"
       },
       {
         "name": "POSCAR",
         "kind": "poscar",
         "size": 99,
-        "path": "POSCAR"
+        "path": "POSCAR",
+        "relative_path": "POSCAR",
+        "size_bytes": 99,
+        "sha256": "aa58c78431dd5bd4fb816278c0fa7efccca404758f745db4eb4045e5f3eedb8b"
       }
     ],
     "missing_recommended": [],
@@ -48,13 +63,13 @@
       "severity": "high",
       "category": "scf",
       "title": "SCF 达到 NELM 上限",
-      "summary": "电子步数达到配置的 NELM=60 且未出现收敛标志，SCF 疑似未收敛。",
+      "summary": "最后电子块达到 NELM=60 上限，未能在上限之前结束，疑似电子自洽未收敛。",
       "evidence": [
         {
           "file": "OSZICAR",
           "line": null,
-          "message": "last electronic step reached NELM=60",
-          "data_ref": "oszicar.last_step",
+          "message": "last electronic step 60 >= NELM=60",
+          "data_ref": "oszicar.last_electronic_step",
           "excerpt": null
         }
       ],
@@ -128,302 +143,362 @@
         {
           "ionic_step": 1,
           "electronic_step": 1,
-          "energy_ev": -100.05
+          "energy_ev": -100.05,
+          "algorithm": "DAV"
         },
         {
           "ionic_step": 1,
           "electronic_step": 2,
-          "energy_ev": -100.1
+          "energy_ev": -100.1,
+          "algorithm": "DAV"
         },
         {
           "ionic_step": 1,
           "electronic_step": 3,
-          "energy_ev": -100.15
+          "energy_ev": -100.15,
+          "algorithm": "DAV"
         },
         {
           "ionic_step": 1,
           "electronic_step": 4,
-          "energy_ev": -100.2
+          "energy_ev": -100.2,
+          "algorithm": "DAV"
         },
         {
           "ionic_step": 1,
           "electronic_step": 5,
-          "energy_ev": -100.25
+          "energy_ev": -100.25,
+          "algorithm": "DAV"
         },
         {
           "ionic_step": 1,
           "electronic_step": 6,
-          "energy_ev": -100.3
+          "energy_ev": -100.3,
+          "algorithm": "DAV"
         },
         {
           "ionic_step": 1,
           "electronic_step": 7,
-          "energy_ev": -100.35
+          "energy_ev": -100.35,
+          "algorithm": "DAV"
         },
         {
           "ionic_step": 1,
           "electronic_step": 8,
-          "energy_ev": -100.4
+          "energy_ev": -100.4,
+          "algorithm": "DAV"
         },
         {
           "ionic_step": 1,
           "electronic_step": 9,
-          "energy_ev": -100.45
+          "energy_ev": -100.45,
+          "algorithm": "DAV"
         },
         {
           "ionic_step": 1,
           "electronic_step": 10,
-          "energy_ev": -100.5
+          "energy_ev": -100.5,
+          "algorithm": "DAV"
         },
         {
           "ionic_step": 1,
           "electronic_step": 11,
-          "energy_ev": -100.55
+          "energy_ev": -100.55,
+          "algorithm": "DAV"
         },
         {
           "ionic_step": 1,
           "electronic_step": 12,
-          "energy_ev": -100.6
+          "energy_ev": -100.6,
+          "algorithm": "DAV"
         },
         {
           "ionic_step": 1,
           "electronic_step": 13,
-          "energy_ev": -100.65
+          "energy_ev": -100.65,
+          "algorithm": "DAV"
         },
         {
           "ionic_step": 1,
           "electronic_step": 14,
-          "energy_ev": -100.7
+          "energy_ev": -100.7,
+          "algorithm": "DAV"
         },
         {
           "ionic_step": 1,
           "electronic_step": 15,
-          "energy_ev": -100.75
+          "energy_ev": -100.75,
+          "algorithm": "DAV"
         },
         {
           "ionic_step": 1,
           "electronic_step": 16,
-          "energy_ev": -100.8
+          "energy_ev": -100.8,
+          "algorithm": "DAV"
         },
         {
           "ionic_step": 1,
           "electronic_step": 17,
-          "energy_ev": -100.85
+          "energy_ev": -100.85,
+          "algorithm": "DAV"
         },
         {
           "ionic_step": 1,
           "electronic_step": 18,
-          "energy_ev": -100.9
+          "energy_ev": -100.9,
+          "algorithm": "DAV"
         },
         {
           "ionic_step": 1,
           "electronic_step": 19,
-          "energy_ev": -100.95
+          "energy_ev": -100.95,
+          "algorithm": "DAV"
         },
         {
           "ionic_step": 1,
           "electronic_step": 20,
-          "energy_ev": -101.0
+          "energy_ev": -101.0,
+          "algorithm": "DAV"
         },
         {
           "ionic_step": 1,
           "electronic_step": 21,
-          "energy_ev": -101.05
+          "energy_ev": -101.05,
+          "algorithm": "DAV"
         },
         {
           "ionic_step": 1,
           "electronic_step": 22,
-          "energy_ev": -101.1
+          "energy_ev": -101.1,
+          "algorithm": "DAV"
         },
         {
           "ionic_step": 1,
           "electronic_step": 23,
-          "energy_ev": -101.15
+          "energy_ev": -101.15,
+          "algorithm": "DAV"
         },
         {
           "ionic_step": 1,
           "electronic_step": 24,
-          "energy_ev": -101.2
+          "energy_ev": -101.2,
+          "algorithm": "DAV"
         },
         {
           "ionic_step": 1,
           "electronic_step": 25,
-          "energy_ev": -101.25
+          "energy_ev": -101.25,
+          "algorithm": "DAV"
         },
         {
           "ionic_step": 1,
           "electronic_step": 26,
-          "energy_ev": -101.3
+          "energy_ev": -101.3,
+          "algorithm": "DAV"
         },
         {
           "ionic_step": 1,
           "electronic_step": 27,
-          "energy_ev": -101.35
+          "energy_ev": -101.35,
+          "algorithm": "DAV"
         },
         {
           "ionic_step": 1,
           "electronic_step": 28,
-          "energy_ev": -101.4
+          "energy_ev": -101.4,
+          "algorithm": "DAV"
         },
         {
           "ionic_step": 1,
           "electronic_step": 29,
-          "energy_ev": -101.45
+          "energy_ev": -101.45,
+          "algorithm": "DAV"
         },
         {
           "ionic_step": 1,
           "electronic_step": 30,
-          "energy_ev": -101.5
+          "energy_ev": -101.5,
+          "algorithm": "DAV"
         },
         {
           "ionic_step": 1,
           "electronic_step": 31,
-          "energy_ev": -101.55
+          "energy_ev": -101.55,
+          "algorithm": "DAV"
         },
         {
           "ionic_step": 1,
           "electronic_step": 32,
-          "energy_ev": -101.6
+          "energy_ev": -101.6,
+          "algorithm": "DAV"
         },
         {
           "ionic_step": 1,
           "electronic_step": 33,
-          "energy_ev": -101.65
+          "energy_ev": -101.65,
+          "algorithm": "DAV"
         },
         {
           "ionic_step": 1,
           "electronic_step": 34,
-          "energy_ev": -101.7
+          "energy_ev": -101.7,
+          "algorithm": "DAV"
         },
         {
           "ionic_step": 1,
           "electronic_step": 35,
-          "energy_ev": -101.75
+          "energy_ev": -101.75,
+          "algorithm": "DAV"
         },
         {
           "ionic_step": 1,
           "electronic_step": 36,
-          "energy_ev": -101.8
+          "energy_ev": -101.8,
+          "algorithm": "DAV"
         },
         {
           "ionic_step": 1,
           "electronic_step": 37,
-          "energy_ev": -101.85
+          "energy_ev": -101.85,
+          "algorithm": "DAV"
         },
         {
           "ionic_step": 1,
           "electronic_step": 38,
-          "energy_ev": -101.9
+          "energy_ev": -101.9,
+          "algorithm": "DAV"
         },
         {
           "ionic_step": 1,
           "electronic_step": 39,
-          "energy_ev": -101.95
+          "energy_ev": -101.95,
+          "algorithm": "DAV"
         },
         {
           "ionic_step": 1,
           "electronic_step": 40,
-          "energy_ev": -102.0
+          "energy_ev": -102.0,
+          "algorithm": "DAV"
         },
         {
           "ionic_step": 1,
           "electronic_step": 41,
-          "energy_ev": -102.05
+          "energy_ev": -102.05,
+          "algorithm": "DAV"
         },
         {
           "ionic_step": 1,
           "electronic_step": 42,
-          "energy_ev": -102.1
+          "energy_ev": -102.1,
+          "algorithm": "DAV"
         },
         {
           "ionic_step": 1,
           "electronic_step": 43,
-          "energy_ev": -102.15
+          "energy_ev": -102.15,
+          "algorithm": "DAV"
         },
         {
           "ionic_step": 1,
           "electronic_step": 44,
-          "energy_ev": -102.2
+          "energy_ev": -102.2,
+          "algorithm": "DAV"
         },
         {
           "ionic_step": 1,
           "electronic_step": 45,
-          "energy_ev": -102.25
+          "energy_ev": -102.25,
+          "algorithm": "DAV"
         },
         {
           "ionic_step": 1,
           "electronic_step": 46,
-          "energy_ev": -102.3
+          "energy_ev": -102.3,
+          "algorithm": "DAV"
         },
         {
           "ionic_step": 1,
           "electronic_step": 47,
-          "energy_ev": -102.35
+          "energy_ev": -102.35,
+          "algorithm": "DAV"
         },
         {
           "ionic_step": 1,
           "electronic_step": 48,
-          "energy_ev": -102.4
+          "energy_ev": -102.4,
+          "algorithm": "DAV"
         },
         {
           "ionic_step": 1,
           "electronic_step": 49,
-          "energy_ev": -102.45
+          "energy_ev": -102.45,
+          "algorithm": "DAV"
         },
         {
           "ionic_step": 1,
           "electronic_step": 50,
-          "energy_ev": -102.5
+          "energy_ev": -102.5,
+          "algorithm": "DAV"
         },
         {
           "ionic_step": 1,
           "electronic_step": 51,
-          "energy_ev": -102.55
+          "energy_ev": -102.55,
+          "algorithm": "DAV"
         },
         {
           "ionic_step": 1,
           "electronic_step": 52,
-          "energy_ev": -102.6
+          "energy_ev": -102.6,
+          "algorithm": "DAV"
         },
         {
           "ionic_step": 1,
           "electronic_step": 53,
-          "energy_ev": -102.65
+          "energy_ev": -102.65,
+          "algorithm": "DAV"
         },
         {
           "ionic_step": 1,
           "electronic_step": 54,
-          "energy_ev": -102.7
+          "energy_ev": -102.7,
+          "algorithm": "DAV"
         },
         {
           "ionic_step": 1,
           "electronic_step": 55,
-          "energy_ev": -102.75
+          "energy_ev": -102.75,
+          "algorithm": "DAV"
         },
         {
           "ionic_step": 1,
           "electronic_step": 56,
-          "energy_ev": -102.8
+          "energy_ev": -102.8,
+          "algorithm": "DAV"
         },
         {
           "ionic_step": 1,
           "electronic_step": 57,
-          "energy_ev": -102.85
+          "energy_ev": -102.85,
+          "algorithm": "DAV"
         },
         {
           "ionic_step": 1,
           "electronic_step": 58,
-          "energy_ev": -102.9
+          "energy_ev": -102.9,
+          "algorithm": "DAV"
         },
         {
           "ionic_step": 1,
           "electronic_step": 59,
-          "energy_ev": -102.95
+          "energy_ev": -102.95,
+          "algorithm": "DAV"
         },
         {
           "ionic_step": 1,
           "electronic_step": 60,
-          "energy_ev": -103.0
+          "energy_ev": -103.0,
+          "algorithm": "DAV"
         }
       ]
     },
@@ -460,14 +535,14 @@
     "suggested_task": null
   },
   "report": {
-    "report_id": "RPT-43E9E318",
+    "report_id": "RPT-3C992513",
     "diagnosis_id": "",
     "format": "markdown",
     "language": "zh",
     "title": "VASP-Doctor 诊断报告",
-    "generated_at": "2026-08-09T14:41:26.768460+00:00",
-    "size_bytes": 2660,
-    "sha256": "36cddeb187fefa27ed2f55447e18da25fbfc0b53c008bd59eb9b59fbae73c7fb",
+    "generated_at": "2026-08-21T16:09:31.334254+00:00",
+    "size_bytes": 2672,
+    "sha256": "21e5d0826d9ededc59ffb1a543cc808858635ac7b9f0ec4fd5492bc908586b66",
     "sections": [
       "summary",
       "input_overview",
