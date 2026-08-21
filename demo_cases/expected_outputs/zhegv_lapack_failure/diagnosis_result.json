@@ -191,8 +191,8 @@
   },
   "llm_explanation": null,
   "provenance": {
-    "parser_version": "0.1.0",
-    "rule_set_version": "0.1.0",
+    "parser_version": "0.1.1",
+    "rule_set_version": "0.1.1",
     "recipe_pack_version": null,
     "composition_sha256": null,
     "vasp_version": "6.3.2",

@@ -9,6 +9,8 @@
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-08-22
+
 ### Fixed
 
 - 修复 CIF 转 POSCAR 时生成规律性占位坐标的问题，改为通过 pymatgen
@@ -46,5 +48,6 @@
 - 建立 Recipe Pack 驱动的 INCAR、KPOINTS、POSCAR 与提交脚本生成流程。
 - 建立 FastAPI 后端、React 前端、自动化测试、Docker 配置和演示用例。
 
-[Unreleased]: https://github.com/USTC-Major/vasp-copilot/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/USTC-Major/vasp-copilot/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/USTC-Major/vasp-copilot/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/USTC-Major/vasp-copilot/releases/tag/v0.1.0

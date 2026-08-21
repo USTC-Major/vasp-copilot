@@ -80,7 +80,7 @@ async def lifespan(_app: FastAPI):
             pass
 
 
-app = FastAPI(title=settings.app_name, version="0.1.0",
+app = FastAPI(title=settings.app_name, version="0.1.1",
               openapi_url="/api/v1/openapi.json", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
@@ -142,4 +142,3 @@ async def be_a_error_handler(request: Request, exc: BeAError) -> JSONResponse:
 @app.get("/health")
 async def health() -> dict:
     return {"status": "ok", "app": settings.app_name}
-

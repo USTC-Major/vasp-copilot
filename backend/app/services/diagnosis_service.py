@@ -277,7 +277,7 @@ class DiagnosisService:
             next_step=nxt,
             plots=_build_plots(parsed),
             provenance=Provenance(
-                parser_version="0.1.0", rule_set_version="0.1.0",
+                parser_version="0.1.1", rule_set_version="0.1.1",
                 vasp_version=parsed.outcar.vasp_version,
                 vasp_binary_hint=parsed.outcar.vasp_binary_hint,
                 calculation_mode=parsed.outcar.calculation_mode or CalculationMode(),
