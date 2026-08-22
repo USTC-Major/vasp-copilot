@@ -1,6 +1,9 @@
-# VASP-Doctor × vasp-copilot 一体化交付包（v0.1）
+# VASP-Copilot v0.1.1（VASP-Doctor × Workflow Builder）
 
 VASP 计算**诊断**（vasp-doctor）与**工作流生成**（vasp-copilot / Workflow Builder）一体化后端 + 前端源码包。
+
+- 当前稳定版本：[v0.1.1](https://github.com/USTC-Major/vasp-copilot/releases/tag/v0.1.1)
+- 完整更新记录：[CHANGELOG.md](./CHANGELOG.md)
 
 - 上传一个 VASP 运行目录 zip，依次完成：`安全解压 → 文件识别 → 解析 → 规则诊断 → 修复建议 → Markdown 报告 → （可选）LLM 通俗解释与追问`；
 - 也可基于结构文件（POSCAR/CONTCAR/CIF）通过 AI 规划或手工确认生成完整 VASP 输入工作流（relax/static/dos/band 的 INCAR/KPOINTS/POSCAR/submit.sh 与运行说明），产物为确定性 zip 包。
@@ -91,7 +94,7 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 
 ```bash
 cd frontend
-npm install
+npm ci
 npm run dev                          # Vite dev server，默认 http://localhost:5173
 ```
 
@@ -144,6 +147,12 @@ python -B -m pytest tests -q              # 全量测试（doctor 诊断 + BE-A 
 python scripts/export_openapi.py          # 导出 backend/openapi.json（供前端 TS 类型）
 ```
 
+v0.1.1 发布验证：
+
+- 后端测试：`383 passed`；
+- 前端：Vite production build 成功；
+- 完整性校验：`SHA256SUMS.txt` 共 386 项，0 项失败。
+
 一键 CI（Windows / Linux）：
 
 ```bash
@@ -154,10 +163,12 @@ powershell -ExecutionPolicy Bypass -File backend\run_ci.ps1   # Windows
 ## 5. 功能特性速览
 
 - **诊断链路**：上传 zip → 安全解压（防路径逃逸/zip bomb）→ 文件识别（INCAR/OUTCAR/OSZICAR/POSCAR/CONTCAR/CIF/KPOINTS/日志）→ 规则诊断（证据+严重度）→ 修复建议 → Markdown 报告 → 下一步门控；
+- **CIF 转换**：通过 pymatgen 保留真实晶格与原子坐标；无效、缺坐标、无序、部分占据及多结构 CIF 采用 fail-closed 处理，不生成占位坐标；
+- **OSZICAR 诊断**：区分真实电子迭代与离子步汇总，支持 DAV/RMM/CG/DMP/SDA，并为 NELM、NSW 与 SCF 震荡提供对应文件证据；
 - **工作流生成**：`POST /api/v1/workflows/plan|generate`，支持 AI 规划（自然语言→DAG，LLM 不稳定自动降级）与手工确认；产物含 workflow_plan.json / workflow_manifest.json / README_run_order.md / INPUT_CHECK_REPORT.md / POTCAR_REQUIRED.md 与各 step 输入文件，zip 字节级可复现；
 - **HPC 桥接**：P1 Fake 适配器完整状态机（plan → preflight → 授权部署 → 提交 → 回收），只生成不执行、argv 白名单、幂等防重放；
 - **LLM 解释与对话**：`POST /api/v1/chat` 通用多轮对话（模型设置界面配置，默认关闭）；agent/handle 自然语言映射为诊断工具；
-- **plots 输出**：SCF 曲线与磁矩结构化序列，前端直接绘图。
+- **plots 输出**：SCF 曲线只使用真实电子迭代能量；证据不足时返回空序列、不伪造曲线；磁矩以结构化序列供前端直接绘图。
 
 ## 6. 安全边界与已知限制
 
@@ -179,7 +190,9 @@ Get-FileHash -Algorithm SHA256 <file>   # 与清单逐项比对
 
 ## 8. 打包信息
 
-- 包名：vasp_copilot_v0.1.zip
+- 当前稳定版本：v0.1.1
+- 发布页面：https://github.com/USTC-Major/vasp-copilot/releases/tag/v0.1.1
+- GitHub 自动提供 Source code (zip) 与 Source code (tar.gz)
 - 当前 Git 工作目录为精简源码副本，不包含虚拟环境、`node_modules`、缓存或运行数据
-- `SHA256SUMS.txt` 覆盖当前快照中除自身外的源码、测试、前端与 demo case 文件；后续正式发布时应重新生成
+- `SHA256SUMS.txt` 已按当前源码快照重新生成，覆盖除自身外的源码、测试、前端与 demo case 文件，并通过 386 项校验
 - 所有路径均为相对路径，无绝对路径/符号链接
