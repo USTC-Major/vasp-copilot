@@ -1,8 +1,8 @@
-# VASP-Copilot v0.1.1（VASP-Doctor × Workflow Builder）
+# VASP-Copilot v0.1.2（VASP-Doctor × Workflow Builder）
 
 VASP 计算**诊断**（vasp-doctor）与**工作流生成**（vasp-copilot / Workflow Builder）一体化后端 + 前端源码包。
 
-- 当前稳定版本：[v0.1.1](https://github.com/USTC-Major/vasp-copilot/releases/tag/v0.1.1)
+- 当前稳定版本：[v0.1.2](https://github.com/USTC-Major/vasp-copilot/releases/tag/v0.1.2)
 - 完整更新记录：[CHANGELOG.md](./CHANGELOG.md)
 
 - 上传一个 VASP 运行目录 zip，依次完成：`安全解压 → 文件识别 → 解析 → 规则诊断 → 修复建议 → Markdown 报告 → （可选）LLM 通俗解释与追问`；
@@ -147,11 +147,12 @@ python -B -m pytest tests -q              # 全量测试（doctor 诊断 + BE-A 
 python scripts/export_openapi.py          # 导出 backend/openapi.json（供前端 TS 类型）
 ```
 
-v0.1.1 发布验证：
+v0.1.2 发布验证：
 
-- 后端测试：`383 passed`；
-- 前端：Vite production build 成功；
-- 完整性校验：`SHA256SUMS.txt` 共 386 项，0 项失败。
+- 后端测试：`388 passed`；
+- 前端测试：`30 passed`；
+- Vite production build 成功，并启用页面级代码分包（路由级懒加载）；
+- 完整性校验：`SHA256SUMS.txt` 共 394 项，0 项失败。
 
 一键 CI（Windows / Linux）：
 
@@ -166,6 +167,9 @@ powershell -ExecutionPolicy Bypass -File backend\run_ci.ps1   # Windows
 - **CIF 转换**：通过 pymatgen 保留真实晶格与原子坐标；无效、缺坐标、无序、部分占据及多结构 CIF 采用 fail-closed 处理，不生成占位坐标；
 - **OSZICAR 诊断**：区分真实电子迭代与离子步汇总，支持 DAV/RMM/CG/DMP/SDA，并为 NELM、NSW 与 SCF 震荡提供对应文件证据；
 - **工作流生成**：`POST /api/v1/workflows/plan|generate`，支持 AI 规划（自然语言→DAG，LLM 不稳定自动降级）与手工确认；产物含 workflow_plan.json / workflow_manifest.json / README_run_order.md / INPUT_CHECK_REPORT.md / POTCAR_REQUIRED.md 与各 step 输入文件，zip 字节级可复现；
+- **DFT+U 参数确认**：DFT+U 默认关闭；U/J/L 由用户填写并逐条明确确认；用户修改 element/L/U/J 后原有确认自动失效，必须重新确认；生成前展示最终参数摘要，摘要与实际 API payload 使用同一快照；
+- **scheduler 参数一致性**：scheduler 参数从 plan 到 generate replay 保持一致（节点数、每节点任务数、墙钟时间、VASP 可执行文件提示）；
+- **页面级懒加载**：工作流、诊断与 HPC 页面按路由分包加载，减小首屏体积；
 - **HPC 桥接**：P1 Fake 适配器完整状态机（plan → preflight → 授权部署 → 提交 → 回收），只生成不执行、argv 白名单、幂等防重放；
 - **LLM 解释与对话**：`POST /api/v1/chat` 通用多轮对话（模型设置界面配置，默认关闭）；agent/handle 自然语言映射为诊断工具；
 - **plots 输出**：SCF 曲线只使用真实电子迭代能量；证据不足时返回空序列、不伪造曲线；磁矩以结构化序列供前端直接绘图。
@@ -175,6 +179,7 @@ powershell -ExecutionPolicy Bypass -File backend\run_ci.ps1   # Windows
 - POTCAR：本项目**不下载、不内置、不拼接**（`ENABLE_POTCAR_ASSEMBLY=false`，VASP 许可证限制）；无 POTCAR 时生成 POTCAR_REQUIRED.md 且全部 step `runnable=false`；
 - 存储为**内存 + TTL 临时文件**，单用户本地/演示定位；公网/多人使用前必须补认证、CSRF 与租户隔离；
 - 二进制文件（WAVECAR/CHGCAR/POTCAR 等）预览一律拒绝；OUTCAR 预览限 500 行；
+- `vasp_binary_hint` 已有前端 token 白名单（仅允许安全的可执行文件名或 POSIX 路径，拒绝 shell 运算符）；后端 SchedulerSettings 的 shell 字段统一服务端校验仍是启用真实 HPC 自动提交前的阻塞项；
 - 生成链路零 LLM、零 HPC、零网络，可离线完整运行。
 
 ## 7. 完整性校验（SHA256SUMS.txt）
@@ -190,9 +195,9 @@ Get-FileHash -Algorithm SHA256 <file>   # 与清单逐项比对
 
 ## 8. 打包信息
 
-- 当前稳定版本：v0.1.1
-- 发布页面：https://github.com/USTC-Major/vasp-copilot/releases/tag/v0.1.1
+- 当前稳定版本：v0.1.2
+- 发布页面：https://github.com/USTC-Major/vasp-copilot/releases/tag/v0.1.2
 - GitHub 自动提供 Source code (zip) 与 Source code (tar.gz)
 - 当前 Git 工作目录为精简源码副本，不包含虚拟环境、`node_modules`、缓存或运行数据
-- `SHA256SUMS.txt` 已按当前源码快照重新生成，覆盖除自身外的源码、测试、前端与 demo case 文件，并通过 386 项校验
+- `SHA256SUMS.txt` 已按当前源码快照重新生成，覆盖除自身外的源码、测试、前端与 demo case 文件，并通过 394 项校验
 - 所有路径均为相对路径，无绝对路径/符号链接

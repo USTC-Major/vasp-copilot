@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "vasp-doctor",
-    "version": "0.1.0"
+    "version": "0.1.2"
   },
   "paths": {
     "/api/v1/diagnosis/upload": {
@@ -359,10 +359,10 @@
         }
       }
     },
-    "/api/v1/files/{diagnosis_id}/preview": {
+    "/api/v1/diagnosis/{diagnosis_id}/preview": {
       "get": {
         "summary": "Preview",
-        "operationId": "preview_api_v1_files__diagnosis_id__preview_get",
+        "operationId": "preview_api_v1_diagnosis__diagnosis_id__preview_get",
         "parameters": [
           {
             "name": "diagnosis_id",
@@ -767,6 +767,66 @@
         }
       }
     },
+    "/api/v1/workflows/plan_from_nl": {
+      "post": {
+        "tags": [
+          "workflows"
+        ],
+        "summary": "Plan From Nl",
+        "description": "方案 A：用户自然语言需求 -> LLM 解析 -> 复用规则管线出计划（不写文件）。\n\nLLM 仅把自然语言需求解析为 requested_tasks/assumptions/patches，\n文件生成仍走既有 preview_plan/generate 确定性管线，原始文件不进 prompt。\nLLM 不可用/非法输出时降级为默认计划（degraded=true）。",
+        "operationId": "plan_from_nl_api_v1_workflows_plan_from_nl_post",
+        "parameters": [
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Request-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkflowApiRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/files/upload": {
       "post": {
         "summary": "Upload",
@@ -1003,6 +1063,120 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/AnalyzeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/materials/search": {
+      "post": {
+        "summary": "Search Materials",
+        "description": "List MP candidates matching a natural-language / formula query.",
+        "operationId": "search_materials_api_v1_materials_search_post",
+        "parameters": [
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Request-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SearchRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/materials/import": {
+      "post": {
+        "summary": "Import Material",
+        "description": "Fetch an MP material, build a POSCAR, store & analyze it.",
+        "operationId": "import_material_api_v1_materials_import_post",
+        "parameters": [
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Request-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportRequest"
               }
             }
           }
@@ -1794,6 +1968,17 @@
         "type": "object",
         "title": "HTTPValidationError"
       },
+      "ImportRequest": {
+        "properties": {
+          "material_id": {
+            "type": "string",
+            "title": "Material Id",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "title": "ImportRequest"
+      },
       "LatticeInfo": {
         "properties": {
           "matrix": {
@@ -2294,6 +2479,22 @@
         "title": "SchedulerSettings",
         "description": "用户可编辑的资源字段（6.4 节 scheduler）。"
       },
+      "SearchRequest": {
+        "properties": {
+          "query": {
+            "type": "string",
+            "title": "Query",
+            "default": ""
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit",
+            "default": 20
+          }
+        },
+        "type": "object",
+        "title": "SearchRequest"
+      },
       "StructureContext": {
         "properties": {
           "structure_id": {
@@ -2501,6 +2702,20 @@
               }
             ],
             "title": "Assumptions"
+          },
+          "patches": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ParameterPatch"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Patches"
           },
           "workflow": {
             "anyOf": [
