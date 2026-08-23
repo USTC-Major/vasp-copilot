@@ -53,10 +53,35 @@ class WorkflowService:
         self._artifacts: Dict[str, WorkflowArtifact] = {}
         self._plans: Dict[str, WorkflowPlanRecord] = {}
 
+    @staticmethod
+    def _echo_blocks(request: WorkflowGenerateRequest) -> tuple[Dict[str, Any], Dict[str, Any]]:
+        """构造 dftu/scheduler 的稳定响应表示（单一数据源，6.4 节）。
+
+        由同一个 ``request`` 一次构造，同时进入 POST plan 返回与
+        ``_plans`` 缓存的 plan 字典，保证 POST plan、GET workflow、
+        generate replay 三处的字段与语义一致。scheduler 块对齐响应侧
+        ``SchedulerBlock``（scheduler_type + 可选 scheduler_profile_id）。
+        """
+        scheduler = request.scheduler
+        dftu_block = request.dftu.model_dump(mode="json")
+        scheduler_block = {
+            "scheduler_profile_id": None,
+            "scheduler_type": scheduler.type,
+            "nodes": scheduler.nodes,
+            "tasks_per_node": scheduler.tasks_per_node,
+            "walltime": scheduler.walltime,
+            "vasp_binary_hint": scheduler.vasp_binary_hint,
+        }
+        return dftu_block, scheduler_block
+
     def plan(self, request: WorkflowGenerateRequest) -> Dict[str, Any]:
         """Plan 阶段预览（IR-01）；缓存 plan 元数据与请求供 GET/回放。"""
         preview = self._pipeline.preview_plan(request)
         status = "needs_confirmation" if preview.get("needs_confirmation") else "planned"
+        dftu_block, scheduler_block = self._echo_blocks(request)
+        # 回显块同时写入 POST 返回体与缓存 plan（GET 透传），单一构造。
+        preview["dftu"] = dftu_block
+        preview["scheduler"] = scheduler_block
         self._plans[request.workflow_id] = WorkflowPlanRecord(
             workflow_id=request.workflow_id,
             workflow_status=status,
@@ -66,6 +91,8 @@ class WorkflowService:
                 "steps": preview.get("steps", []),
                 "file_inheritance_plan": preview.get("file_inheritance_plan", {}),
                 "recipe_compositions": preview.get("recipe_compositions", []),
+                "dftu": dftu_block,
+                "scheduler": scheduler_block,
             },
             confirmations=preview.get("confirmations", []),
             conflicts=preview.get("conflicts", []),

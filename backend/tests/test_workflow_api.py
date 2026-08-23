@@ -207,3 +207,141 @@ def test_get_unknown_workflow_404():
     r = client.get("/api/v1/workflows/wf_nope")
     assert r.status_code == 404
     assert r.json()["error"]["code"] == "WORKFLOW_NOT_FOUND"
+
+
+# ---------------------------------------------------------------------------
+# B1-B5：v0.1.2 第一阶段 工作流参数链路契约测试（6.4 节回显/一致性）
+# ---------------------------------------------------------------------------
+
+
+def _confirmed_dftu_scheduler_payload() -> dict:
+    return {"workflow": {
+        "requested_tasks": ["relax"],
+        "goal_text": "relax with DFT+U",
+        "confirm": True,
+        "dftu": {
+            "enabled": True,
+            "entries": [{
+                "element": "Fe", "l": 2, "u_ev": 5.3, "j_ev": 0.0,
+                "source_note": "user_input", "confirmed_by_user": True,
+            }],
+        },
+        "scheduler": {
+            "type": "slurm", "nodes": 2, "tasks_per_node": 48,
+            "walltime": "08:00:00", "vasp_binary_hint": "vasp_gam",
+        },
+    }}
+
+
+def test_plan_echoes_confirmed_dftu_and_scheduler():
+    """B1：嵌套请求的 dftu/scheduler 必须原样回显在 plan 响应中。"""
+    diag_id = _seed_run("diag_echo_plan")
+    r = client.post("/api/v1/workflows/plan", json={
+        "diagnosis_id": diag_id,
+        **_confirmed_dftu_scheduler_payload(),
+    })
+    assert r.status_code == 200, r.text
+    data = r.json()["data"]
+    assert data["dftu"]["enabled"] is True
+    fe = data["dftu"]["entries"][0]
+    assert (fe["element"], fe["l"], fe["u_ev"], fe["j_ev"]) == ("Fe", 2, 5.3, 0.0)
+    assert fe["source_note"] == "user_input"
+    assert fe["confirmed_by_user"] is True
+    sched = data["scheduler"]
+    assert sched["scheduler_type"] == "slurm"
+    assert sched["nodes"] == 2 and sched["tasks_per_node"] == 48
+    assert sched["walltime"] == "08:00:00"
+    assert sched["vasp_binary_hint"] == "vasp_gam"
+
+
+def test_plan_echo_matches_get_workflow_plan():
+    """B2：POST plan 与 GET workflow 的 dftu/scheduler 必须完全一致。"""
+    diag_id = _seed_run("diag_echo_get")
+    p = client.post("/api/v1/workflows/plan", json={
+        "diagnosis_id": diag_id,
+        **_confirmed_dftu_scheduler_payload(),
+    })
+    assert p.status_code == 200, p.text
+    post_data = p.json()["data"]
+    wf_id = post_data["workflow_id"]
+    g = client.get(f"/api/v1/workflows/{wf_id}")
+    assert g.status_code == 200, g.text
+    plan = g.json()["data"]["plan"]
+    assert plan["dftu"] == post_data["dftu"]
+    assert plan["scheduler"] == post_data["scheduler"]
+
+
+def test_generate_replay_preserves_confirmed_parameters():
+    """B3：plan 后仅凭 workflow_id 回放生成，产物必须与确认参数一致。"""
+    diag_id = _seed_run("diag_echo_replay")
+    p = client.post("/api/v1/workflows/plan", json={
+        "diagnosis_id": diag_id,
+        **_confirmed_dftu_scheduler_payload(),
+    })
+    assert p.status_code == 200, p.text
+    post_data = p.json()["data"]
+    wf_id = post_data["workflow_id"]
+    g = client.post("/api/v1/workflows/generate", json={"workflow_id": wf_id})
+    assert g.status_code == 200, g.text
+    d = client.get(g.json()["data"]["download_url"])
+    assert d.status_code == 200
+    zf = zipfile.ZipFile(io.BytesIO(d.content))
+    import json as _json
+    plan_file = _json.loads(zf.read("workflow_plan.json"))
+    assert plan_file["dftu"] == post_data["dftu"]
+    assert plan_file["scheduler"]["scheduler_type"] == post_data["scheduler"]["scheduler_type"]
+    assert plan_file["scheduler"]["nodes"] == post_data["scheduler"]["nodes"]
+    assert plan_file["scheduler"]["walltime"] == post_data["scheduler"]["walltime"]
+    # INCAR 精确解析（复用现有 IncarParser，禁止宽泛子串碰巧匹配）：
+    # POSCAR 元素顺序为 Fe、O，仅 Fe 配置了条目；未配置的 O 保持派生 0。
+    from app.generators.serializer import IncarParser
+    incar_params = IncarParser().parse(zf.read("01_relax/INCAR").decode("utf-8"))
+    assert incar_params["LDAU"] is True
+    assert incar_params["LDAUL"] == [2, -1]          # Fe=d(2)，O 未配置→派生 -1
+    assert incar_params["LDAUU"] == [5.3, 0.0]       # Fe 确认值 5.3，O 派生 0
+    assert incar_params["LDAUJ"] == [0.0, 0.0]       # Fe 确认 J=0，O 派生 0
+    poscar_elements = zf.read("01_relax/POSCAR").decode("utf-8").splitlines()[5].split()
+    assert len(incar_params["LDAUL"]) == len(poscar_elements) == 2
+    assert len(incar_params["LDAUU"]) == len(poscar_elements)
+    assert len(incar_params["LDAUJ"]) == len(poscar_elements)
+    # submit.sh 逐行精确验证（资源行与启动行均为确认值）。
+    submit = zf.read("01_relax/submit.sh").decode("utf-8")
+    submit_lines = [line.strip() for line in submit.splitlines()]
+    assert "#SBATCH --nodes=2" in submit_lines
+    assert "#SBATCH --ntasks-per-node=48" in submit_lines
+    assert "#SBATCH --time=08:00:00" in submit_lines
+    # 实际启动行：slurm profile 用 srun 启动确认的 vasp_gam（精确整行匹配）。
+    assert "srun vasp_gam" in submit_lines
+
+
+def test_unconfirmed_dftu_entry_generate_is_409():
+    """B4：条目存在但未经用户确认时，generate 必须 fail-closed。"""
+    diag_id = _seed_run("diag_echo_unconfirmed")
+    payload = {"diagnosis_id": diag_id, "workflow": {
+        "requested_tasks": ["relax"],
+        "confirm": True,
+        "dftu": {"enabled": True, "entries": [{
+            "element": "Fe", "l": 2, "u_ev": 5.3, "j_ev": 0.0,
+            "source_note": "user_input", "confirmed_by_user": False,
+        }]},
+    }}
+    r = client.post("/api/v1/workflows/generate", json=payload)
+    assert r.status_code == 409, r.text
+    assert r.json()["error"]["code"] == "DFTU_CONFIRMATION_REQUIRED"
+
+
+def test_legacy_toplevel_goals_assumptions_still_works():
+    """B5：旧 top-level goals/assumptions 请求路径保持可用。"""
+    diag_id = _seed_run("diag_echo_legacy")
+    r = client.post("/api/v1/workflows/plan", json={
+        "diagnosis_id": diag_id,
+        "goals": ["relax"],
+        "assumptions": {"electronic_type": "semiconductor",
+                        "magnetic": True, "soc": False, "precision": "standard"},
+    })
+    assert r.status_code == 200, r.text
+    data = r.json()["data"]
+    assert [s["task"] for s in data["steps"]] == ["relax"]
+    # 未显式提供时回显为后端默认值（dftu 关闭）
+    assert data["dftu"]["enabled"] is False and data["dftu"]["entries"] == []
+    assert data["scheduler"]["scheduler_type"] == "slurm"

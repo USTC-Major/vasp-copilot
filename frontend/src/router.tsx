@@ -1,27 +1,38 @@
 // ============================================================
-// Router — React Router v6 路由配置
+// Router — React Router 路由配置（页面级懒加载）
 // ============================================================
 
+import React, { lazy, Suspense } from 'react';
 import { createBrowserRouter } from 'react-router-dom';
+import type { RouteObject } from 'react-router-dom';
 import App from './App';
 import HomePage from './pages/HomePage';
-import WorkflowBuilderPage from './pages/WorkflowBuilderPage';
-import DiagnosisUploadPage from './pages/DiagnosisUploadPage';
-import DiagnosisResultPage from './pages/DiagnosisResultPage';
-import HpcDeploymentPage from './pages/HpcDeploymentPage';
-import RemoteJobPage from './pages/RemoteJobPage';
+import PageLoading from './components/common/PageLoading';
 
-export const router = createBrowserRouter([
+const WorkflowBuilderPage = lazy(() => import('./pages/WorkflowBuilderPage'));
+const DiagnosisUploadPage = lazy(() => import('./pages/DiagnosisUploadPage'));
+const DiagnosisResultPage = lazy(() => import('./pages/DiagnosisResultPage'));
+const HpcDeploymentPage = lazy(() => import('./pages/HpcDeploymentPage'));
+const RemoteJobPage = lazy(() => import('./pages/RemoteJobPage'));
+
+const withSuspense = (element: React.ReactNode) => (
+  <Suspense fallback={<PageLoading />}>{element}</Suspense>
+);
+
+/** 导出路由表供测试以 createMemoryRouter 复用。 */
+export const routes: RouteObject[] = [
   {
     path: '/',
     element: <App />,
     children: [
       { index: true, element: <HomePage /> },
-      { path: 'workflow', element: <WorkflowBuilderPage /> },
-      { path: 'diagnosis/upload', element: <DiagnosisUploadPage /> },
-      { path: 'diagnosis/:id', element: <DiagnosisResultPage /> },
-      { path: 'hpc/deploy', element: <HpcDeploymentPage /> },
-      { path: 'hpc/jobs/:id', element: <RemoteJobPage /> },
+      { path: 'workflow', element: withSuspense(<WorkflowBuilderPage />) },
+      { path: 'diagnosis/upload', element: withSuspense(<DiagnosisUploadPage />) },
+      { path: 'diagnosis/:id', element: withSuspense(<DiagnosisResultPage />) },
+      { path: 'hpc/deploy', element: withSuspense(<HpcDeploymentPage />) },
+      { path: 'hpc/jobs/:id', element: withSuspense(<RemoteJobPage />) },
     ],
   },
-]);
+];
+
+export const router = createBrowserRouter(routes);

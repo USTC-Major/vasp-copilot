@@ -54,7 +54,7 @@ export function useStructureAnalysis() {
 // ---- 工作流 ----
 export function useWorkflowPlan() {
   return useMutation({
-    mutationFn: (params: { structure_id: string; goals: string[]; assumptions?: Record<string, unknown> }) =>
+    mutationFn: (params: import('../types/workflow-contract').WorkflowPlanRequestBody) =>
       workflowsApi.plan(params),
   });
 }

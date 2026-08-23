@@ -94,14 +94,15 @@ export const workflowPlanFixture: WorkflowPlan = {
       {
         element: 'Fe',
         l: 2,
-        u_ev: 4.0,
+        u_ev: 5.3,
         j_ev: 0.0,
-        source_note: '用户提供',
+        source_note: 'user_input',
         confirmed_by_user: true,
       },
     ],
   },
   scheduler: {
+    scheduler_type: 'slurm',
     scheduler_profile_id: 'scheduler_demo_slurm',
     nodes: 1,
     tasks_per_node: 32,

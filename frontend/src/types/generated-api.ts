@@ -196,8 +196,11 @@ export interface DftuSettings {
   entries: DftuEntry[];
 }
 
+/** 响应侧 scheduler 块（后端 SchedulerBlock）。
+ * 请求侧请改用 types/workflow-contract.ts 的 SchedulerRequest（字段为 type）。 */
 export interface SchedulerSettings {
-  scheduler_profile_id: string;
+  scheduler_type: string;
+  scheduler_profile_id?: string | null;
   nodes: number;
   tasks_per_node: number;
   walltime: string;

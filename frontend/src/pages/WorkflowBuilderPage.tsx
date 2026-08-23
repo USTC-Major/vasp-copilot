@@ -2,12 +2,13 @@
 // WorkflowBuilderPage — 串联上传→解析→计划→生成→下载完整流程
 // ============================================================
 
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useRef } from 'react';
 import { Steps, Button, Space, Card, Result, Typography } from 'antd';
 import { ReloadOutlined, DownloadOutlined, ArrowRightOutlined, ArrowLeftOutlined, RobotOutlined, GlobalOutlined } from '@ant-design/icons';
 import StructureUploadPanel from '../components/upload/StructureUploadPanel';
 import MaterialsProjectPanel from '../components/upload/MaterialsProjectPanel';
-import ParameterConfirmForm from '../components/workflow/ParameterConfirmForm';
+import ParameterConfirmForm, { type ParameterConfirmFormData } from '../components/workflow/ParameterConfirmForm';
+import WorkflowConfirmSummaryModal from '../components/workflow/WorkflowConfirmSummaryModal';
 import WorkflowPlanPreview from '../components/workflow/WorkflowPlanPreview';
 import RecipeCompositionPreview from '../components/recipes/RecipeCompositionPreview';
 import ParameterPatchEditor from '../components/recipes/ParameterPatchEditor';
@@ -17,6 +18,11 @@ import AiPlanAssistant, { type AiPlanAssistantResult } from '../components/workf
 import { useWorkflowPlan, useWorkflowGenerate, useWorkflowDownload } from '../hooks/useApi';
 import type { StructureSummary, WorkflowPlan, FileTreeNode, ParameterPatch } from '../types/generated-api';
 import type { WorkflowStatus } from '../types/enums';
+import type {
+  DftuSettingsRequest,
+  WorkflowConfirmSnapshot,
+  WorkflowPlanRequestBody,
+} from '../types/workflow-contract';
 
 const { Title } = Typography;
 
@@ -32,6 +38,67 @@ const ALLOWED_PARAMS: { parameter: string; type: string; minimum?: number; maxim
 
 type StepKey = 'upload' | 'confirm' | 'plan' | 'edit' | 'generate' | 'download';
 
+/** 表单数据 → 不可变快照（Modal 展示与实际 payload 同源，避免显示与发送不一致）。 */
+const buildSnapshot = (data: ParameterConfirmFormData, summary: StructureSummary): WorkflowConfirmSnapshot => {
+  const dftu: DftuSettingsRequest = data.dftu.enabled
+    ? {
+        enabled: true,
+        entries: data.dftu.entries.map((entry) => ({
+          element: entry.element as string,
+          l: entry.l as number,
+          u_ev: entry.u_ev as number,
+          j_ev: entry.j_ev as number,
+          source_note: 'user_input',
+          // 必须复制表单真实确认状态，禁止在此处生成/伪造用户确认。
+          confirmed_by_user: entry.confirmed_by_user === true,
+        })),
+      }
+    : { enabled: false, entries: [] };
+  // 深拷贝冻结，后续表单变化不影响快照。
+  return JSON.parse(JSON.stringify({
+    structure: {
+      formula: summary.formula,
+      elements: summary.elements,
+    },
+    requested_tasks: data.tasks,
+    electronic_type: data.electronic_type,
+    magnetic: data.magnetic,
+    soc: data.soc,
+    precision: data.precision,
+    dftu,
+    scheduler: {
+      type: data.scheduler.type,
+      nodes: data.scheduler.nodes,
+      tasks_per_node: data.scheduler.tasks_per_node,
+      walltime: data.scheduler.walltime,
+      vasp_binary_hint: data.scheduler.vasp_binary_hint,
+    },
+  })) as WorkflowConfirmSnapshot;
+};
+
+/** Fail-closed 守卫：DFT+U 启用时，任一条目未获用户真实确认即不允许构造确认快照。 */
+export const canBuildConfirmSnapshot = (data: Pick<ParameterConfirmFormData, 'dftu'>): boolean =>
+  !data.dftu.enabled || data.dftu.entries.every((entry) => entry.confirmed_by_user === true);
+
+/** 快照 → 后端嵌套契约请求体（confirm=true 已在最终确认 Modal 中由用户点击确认）。 */
+const buildPlanBody = (structureId: string, snapshot: WorkflowConfirmSnapshot): WorkflowPlanRequestBody => ({
+  structure_id: structureId,
+  workflow: {
+    requested_tasks: snapshot.requested_tasks,
+    goal_text: snapshot.requested_tasks.join('、'),
+    material_assumptions: {
+      electronic_type: snapshot.electronic_type,
+      magnetic: snapshot.magnetic,
+      soc: snapshot.soc,
+      precision: snapshot.precision,
+    },
+    precision: snapshot.precision,
+    dftu: snapshot.dftu,
+    scheduler: snapshot.scheduler,
+    confirm: true,
+  },
+});
+
 const WorkflowBuilderPage: React.FC = () => {
   const [currentStep, setCurrentStep] = useState<StepKey>('upload');
   const [structureId, setStructureId] = useState<string | null>(null);
@@ -43,6 +110,9 @@ const WorkflowBuilderPage: React.FC = () => {
   const [, setWorkflowStatus] = useState<WorkflowStatus>('draft');
   const [showAiPanel, setShowAiPanel] = useState(false);
   const [showMpPanel, setShowMpPanel] = useState(false);
+  const [confirmSnapshot, setConfirmSnapshot] = useState<WorkflowConfirmSnapshot | null>(null);
+  // 同步互斥锁：调用 API 前同步加锁，快速双击/重复回调只能产生一次请求。
+  const submitLock = useRef(false);
 
   const planMutation = useWorkflowPlan();
   const generateMutation = useWorkflowGenerate();
@@ -61,33 +131,38 @@ const WorkflowBuilderPage: React.FC = () => {
     setShowAiPanel(false);
   }, []);
 
-  const handleConfirm = useCallback(async (data: {
-    electronic_type: string;
-    magnetic: boolean;
-    soc: boolean;
-    precision: string;
-    tasks: string[];
-  }) => {
-    if (!structureId) return;
+  const handleFormSubmit = useCallback((data: ParameterConfirmFormData) => {
+    if (!structureId || !summary) return;
+    // Fail-closed：DFT+U 启用且任一条目未获用户真实确认时，
+    // 不构造确认快照、不打开最终确认 Modal（表单校验之外的二道防线）。
+    if (!canBuildConfirmSnapshot(data)) return;
+    // 不直接调 API：先冻结快照并打开最终确认 Modal。
+    setConfirmSnapshot(buildSnapshot(data, summary));
+  }, [structureId, summary]);
+
+  const handleModalConfirm = useCallback(async () => {
+    if (submitLock.current || !confirmSnapshot || !structureId) return;
+    submitLock.current = true;
     try {
-      const plan = await planMutation.mutateAsync({
-        structure_id: structureId,
-        goals: data.tasks,
-        assumptions: {
-          electronic_type: data.electronic_type,
-          magnetic: data.magnetic,
-          soc: data.soc,
-          precision: data.precision,
-        },
-      });
+      const plan = await planMutation.mutateAsync(buildPlanBody(structureId, confirmSnapshot));
+      // 成功：关闭并清空快照，进入计划步骤。
+      setConfirmSnapshot(null);
       setWorkflowPlan(plan);
       setWorkflowId(plan.workflow_id);
       setWorkflowStatus(plan.workflow_id ? 'planned' : 'draft');
       setCurrentStep('plan');
     } catch {
-      // handled by error display
+      // 失败：保留不可变快照，允许用户安全重试（错误由 ErrorAlert 展示）。
+    } finally {
+      submitLock.current = false;
     }
-  }, [structureId, planMutation]);
+  }, [structureId, confirmSnapshot, planMutation]);
+
+  const handleModalCancel = useCallback(() => {
+    if (submitLock.current) return;
+    // 取消/关闭：清空快照且不调用 API。
+    setConfirmSnapshot(null);
+  }, []);
 
   const handleGenerate = useCallback(async () => {
     if (!workflowId) return;
@@ -216,11 +291,20 @@ const WorkflowBuilderPage: React.FC = () => {
         <ParameterConfirmForm
           elements={summary.elements}
           transitionMetals={summary.transition_metals}
-          onSubmit={handleConfirm}
+          onSubmit={handleFormSubmit}
           isGenerating={planMutation.isPending}
           onBack={() => setCurrentStep('upload')}
         />
       )}
+
+      {/* 最终确认摘要：展示内容与发送 payload 同源于 confirmSnapshot */}
+      <WorkflowConfirmSummaryModal
+        open={confirmSnapshot !== null}
+        snapshot={confirmSnapshot}
+        isPending={planMutation.isPending}
+        onConfirm={handleModalConfirm}
+        onCancel={handleModalCancel}
+      />
 
       {/* Step 3: 工作流计划 */}
       {currentStep === 'plan' && workflowPlan && (
@@ -369,3 +453,4 @@ const WorkflowBuilderPage: React.FC = () => {
 };
 
 export default WorkflowBuilderPage;
+export { buildSnapshot };

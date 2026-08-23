@@ -137,7 +137,7 @@ export const materialsApi = {
 };
 // ---- Workflows API ----
 export const workflowsApi = {
-  plan: (body: { structure_id: string; goals: string[]; assumptions?: Record<string, unknown> }) =>
+  plan: (body: import('../types/workflow-contract').WorkflowPlanRequestBody) =>
     request<{ request_id: string } & import('../types/generated-api').WorkflowPlan>('/workflows/plan', {
       method: 'POST',
       body,
