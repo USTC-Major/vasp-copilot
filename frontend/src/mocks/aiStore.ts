@@ -6,6 +6,7 @@
 
 import type {
   AiProject, AiTask, AiMessage, AiJobRecord, AiWaitQueueEntry, AiContextSummary,
+  AiFlowDetail, AiFlowJob,
 } from '../types/ai';
 
 const now = (offsetMs = 0) => new Date(Date.now() + offsetMs).toISOString();
@@ -202,6 +203,32 @@ export class AiDemoBackend {
     const reply = '收到。这是演示环境对话回复；接入真实 LLM 后我会生成 VASP 输入文件并推进作业状态。';
     this.appendMessage(projectId, taskId, { role: 'assistant', content: reply, at: now() });
     return reply;
+  }
+
+  flowDetail(projectId: string, taskId: string): { mode: string; task_id: string; flow: AiFlowDetail } | undefined {
+    const task = this.getTask(projectId, taskId);
+    if (!task) return undefined;
+    // 演示 flow：与真实 /detail 返回的 AiFlowDetail schema 对齐（作业链嵌套依赖）
+    const jobs: AiFlowJob[] = [
+      { key: 'relax', label: '结构优化 relax', kind: 'relax', requires: [], status: 'submitted', slurm_id: 12001, description: '对 Fe2O3 原胞做晶格与原子位置优化' },
+      { key: 'relax/static', label: '静态计算 static', kind: 'static', requires: ['relax'], status: 'waiting', slurm_id: null, description: '使用优化后结构做静态自洽计算' },
+      { key: 'relax/static/dos', label: '态密度 dos', kind: 'dos', requires: ['relax/static'], status: 'waiting', slurm_id: null, description: '基于静态电荷密度计算 DOS' },
+    ];
+    return {
+      mode: 'ai',
+      task_id: taskId,
+      flow: {
+        phase: 'running',
+        goal: task.goal,
+        strategy: 'relax → static → dos',
+        local_dir: task.local_workspace || '',
+        hpc_dir: task.hpc_workspace || '',
+        waiting: ['relax/static', 'relax/static/dos'],
+        precheck: { ok: true, issues: [] },
+        report: '',
+        jobs,
+      },
+    };
   }
 
   taskContext(projectId: string, taskId: string): AiContextSummary {

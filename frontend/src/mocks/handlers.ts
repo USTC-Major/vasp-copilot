@@ -551,6 +551,17 @@ export const aiHandlers = [
       result: approved ? "已授权本批操作，后续同类操作将直接执行" : "已拒绝本批操作，后续同类操作不再弹卡",
     });
   }),
+  http.get(`${AI_BASE}/projects/:projectId/tasks/:taskId/detail`, async ({ params }) => {
+    await delay(200);
+    const detail = aiDemo.flowDetail(String(params.projectId), String(params.taskId));
+    if (!detail) {
+      return HttpResponse.json(
+        { error: { code: "AI_MODE_TASK_NOT_FOUND", message: "计算任务不存在或被删除", retryable: false } },
+        { status: 404 }
+      );
+    }
+    return HttpResponse.json(detail);
+  }),
   http.get(`${AI_BASE}/projects/:projectId/tasks/:taskId/context`, async ({ params }) => {
     await delay(150);
     return HttpResponse.json(aiDemo.taskContext(String(params.projectId), String(params.taskId)));

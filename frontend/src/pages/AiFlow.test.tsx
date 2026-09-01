@@ -78,13 +78,21 @@ describe('AI 前端整合（M12）', () => {
 
   it('进度页展示作业时间线', async () => {
     renderPath('/ai/projects/prj_001/progress/tsk_001');
-    expect(await screen.findByText('计算目标')).toBeInTheDocument();
-    expect(screen.getByText(/覆盖段/)).toBeInTheDocument();
-    expect(screen.getByText('已提交计算作业')).toBeInTheDocument();
-    expect(screen.getAllByText('ai_job_001').length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/已提交/).length).toBeGreaterThan(0);
+    // 等待 GET .../detail 的 flow 数据真正渲染出来（作业链最深层 key）
+    expect(await screen.findByText('relax/static/dos')).toBeInTheDocument();
+    expect(screen.getByText('计算目标')).toBeInTheDocument();
+    expect(screen.getByText('作业链与进度')).toBeInTheDocument();
+    // 作业链：relax 已提交（含 Slurm 号），static/dos 依赖嵌套等待前置
+    expect(screen.getByText('结构优化 relax')).toBeInTheDocument();
+    expect(screen.getByText('relax/static')).toBeInTheDocument();
+    expect(screen.getByText('已提交')).toBeInTheDocument();
+    expect(screen.getByText('Slurm 作业号 12001')).toBeInTheDocument();
+    expect(screen.getAllByText('等待前置').length).toBe(2);
+    expect(screen.getByText(/依赖：relax（前序完成后自动补提）/)).toBeInTheDocument();
+    // 等待队列：依赖闸门未放行的作业
+    expect(screen.getByText('等待队列')).toBeInTheDocument();
     // 左任务栏保留：任务标题仍可见
-    expect(screen.getByText('结构优化 + 静态 + DOS')).toBeInTheDocument();
+    expect(await screen.findByText('结构优化 + 静态 + DOS')).toBeInTheDocument();
   });
 
   it('M47 弹卡：高风险命令先生成授权卡片，可拒绝', async () => {
@@ -100,8 +108,12 @@ describe('AI 前端整合（M12）', () => {
     expect(rejectButton).toBeInTheDocument();
     await user.click(rejectButton);
     await waitFor(() => expect(screen.queryByText('操作授权')).not.toBeInTheDocument());
-    const input = (await screen.findByPlaceholderText(/描述计算需求/)) as HTMLInputElement;
-    expect(input).toBeEnabled();
+    // 等待真正回到 idle：SSE 流结束后 send() 的 finally 复位 streaming，「发送」按钮恢复
+    await screen.findByRole('button', { name: /发送/ }, { timeout: 5000 });
+    await waitFor(() => {
+      const input = screen.getByPlaceholderText(/描述计算需求/) as HTMLInputElement;
+      expect(input).toBeEnabled();
+    });
   });
 
   it('设置页渲染全局设置表单与连通测试入口', async () => {
