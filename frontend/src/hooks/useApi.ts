@@ -5,7 +5,7 @@
 import { useQuery, useMutation } from '@tanstack/react-query';
 import {
   filesApi, structureApi, workflowsApi,
-  diagnosisApi, recipesApi, hpcApi, llmApi, chatApi, materialsApi,
+  diagnosisApi, recipesApi, hpcApi, llmApi, chatApi, materialsApi, aiApi,
 } from '../api/client';
 import type { LlmConfigUpdate, ChatMessageItem } from '../api/client';
 import { getFeatureFlags } from '../config/featureFlags';
@@ -290,5 +290,162 @@ export function useMaterialsSearch() {
 export function useMaterialsImport() {
   return useMutation({
     mutationFn: (materialId: string) => materialsApi.importMaterial(materialId),
+  });
+}
+
+
+// ---- AI 模式（M12：设置/项目/任务/消息/上下文/队列）----
+export function useAiSettings(enabled: boolean) {
+  return useQuery({
+    queryKey: ['aiSettings'],
+    queryFn: () => aiApi.getSettings(),
+    enabled,
+    staleTime: 30 * 1000,
+  });
+}
+
+export function useAiSettingsSave() {
+  return useMutation({
+    mutationFn: (patch: Record<string, unknown>) => aiApi.saveSettings(patch),
+  });
+}
+
+export function useAiSettingsTest() {
+  return useMutation({
+    mutationFn: (provider: string) => aiApi.testProvider(provider),
+  });
+}
+
+
+export function useAiSecretStatus(enabled: boolean) {
+  return useQuery({
+    queryKey: ["aiSecretStatus"],
+    queryFn: () => aiApi.getSecretStatus(),
+    enabled,
+    staleTime: 30 * 1000,
+  });
+}
+
+export function useAiSecretReveal() {
+  return useMutation({
+    mutationFn: (kind: "llm" | "mp" | "ssh") => aiApi.revealSecret(kind),
+  });
+}
+export function useAiProjectSettings(projectId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ['aiProjectSettings', projectId],
+    queryFn: () => aiApi.getProjectSettings(projectId),
+    enabled: !!projectId && enabled,
+  });
+}
+
+export function useAiProjectSettingsSave() {
+  return useMutation({
+    mutationFn: ({ projectId, accuracy }: { projectId: string; accuracy: string[] }) =>
+      aiApi.saveProjectSettings(projectId, accuracy),
+  });
+}
+
+export function useAiProjectSettingsDelete() {
+  return useMutation({
+    mutationFn: (projectId: string) => aiApi.deleteProjectSettings(projectId),
+  });
+}
+
+export function useAiProjects() {
+  return useQuery({
+    queryKey: ['aiProjects'],
+    queryFn: () => aiApi.listProjects(),
+    staleTime: 15 * 1000,
+  });
+}
+
+export function useAiProjectCreate() {
+  return useMutation({
+    mutationFn: (body: { name: string; description?: string }) => aiApi.createProject(body),
+  });
+}
+
+export function useAiProjectDelete() {
+  return useMutation({
+    mutationFn: (projectId: string) => aiApi.deleteProject(projectId),
+  });
+}
+
+export function useAiTasks(projectId: string | null) {
+  return useQuery({
+    queryKey: ['aiTasks', projectId],
+    queryFn: () => aiApi.listTasks(projectId!),
+    enabled: !!projectId,
+  });
+}
+
+export function useAiTaskCreate() {
+  return useMutation({
+    mutationFn: ({ projectId, title, goal, local_workspace, hpc_workspace }: { projectId: string; title: string; goal?: string; local_workspace?: string; hpc_workspace?: string }) =>
+      aiApi.createTask(projectId, { title, goal, local_workspace, hpc_workspace }),
+  });
+}
+
+
+export function useAiTaskUpdate() {
+  return useMutation({
+    mutationFn: ({ projectId, taskId, patch }: { projectId: string; taskId: string; patch: import('../types/ai').AiTaskPatch }) =>
+      aiApi.updateTask(projectId, taskId, patch),
+  });
+}
+
+export function useAiTaskDelete() {
+  return useMutation({
+    mutationFn: ({ projectId, taskId }: { projectId: string; taskId: string }) =>
+      aiApi.deleteTask(projectId, taskId),
+  });
+}
+export function useAiMessages(projectId: string | null, taskId: string | null) {
+  return useQuery({
+    queryKey: ['aiMessages', projectId, taskId],
+    queryFn: () => aiApi.getMessages(projectId!, taskId!),
+    enabled: !!projectId && !!taskId,
+  });
+}
+
+export function useAiSendMessage() {
+  return useMutation({
+    mutationFn: ({ projectId, taskId, content }: { projectId: string; taskId: string; content: string }) =>
+      aiApi.sendMessage(projectId, taskId, content),
+  });
+}
+
+export function useAiContext() {
+  return useQuery({
+    queryKey: ['aiContext'],
+    queryFn: () => aiApi.getContext(),
+    staleTime: 15 * 1000,
+  });
+}
+
+export function useAiTaskContext(projectId: string | null, taskId: string | null) {
+  return useQuery({
+    queryKey: ['aiTaskContext', projectId, taskId],
+    queryFn: () => aiApi.getTaskContext(projectId!, taskId!),
+    enabled: !!projectId && !!taskId,
+  });
+}
+
+export function useAiTaskDetail(projectId: string | null, taskId: string | null) {
+  return useQuery({
+    queryKey: ['aiTaskDetail', projectId, taskId],
+    queryFn: () => aiApi.getTaskDetail(projectId!, taskId!),
+    enabled: !!projectId && !!taskId,
+    // 监控中状态变化频繁，进度页轮询 15s 自动刷新
+    refetchInterval: 15 * 1000,
+  });
+}
+
+export function useAiWaitQueue() {
+  return useQuery({
+    queryKey: ['aiWaitQueue'],
+    queryFn: () => aiApi.getWaitQueue(),
+    staleTime: 15 * 1000,
   });
 }

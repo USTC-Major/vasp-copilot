@@ -345,3 +345,149 @@ export const chatApi = {
       method: 'DELETE',
     }),
 };
+
+
+// ============================================================
+// AI 模式 API（智能模式独立后端，端口与 /ai/v1 前缀经 Vite 代理；
+// 项目/任务/消息/上下文/等待队列已对接真实后端（Vite 代理到 :8500），MSW 仅用于前端演示层测试）
+// ============================================================
+const AI_BASE = "/ai/v1";
+
+interface AiError { code?: string; message?: string; retryable?: boolean; field_errors?: { field: string; code: string; message: string }[] }
+
+async function aiRequest<T>(endpoint: string, options: RequestOptions = {}): Promise<T> {
+  const { method = "GET", body, headers = {}, signal } = options;
+  const fetchHeaders: Record<string, string> = { ...headers, ...(body ? { "Content-Type": "application/json" } : {}) };
+  const response = await fetch(`${AI_BASE}${endpoint}`, {
+    method,
+    headers: fetchHeaders,
+    body: body ? JSON.stringify(body) : undefined,
+    signal,
+  });
+  let data: { error?: AiError } = {};
+  try {
+    data = (await response.json()) as { error?: AiError };
+  } catch {
+    data = {};
+  }
+  if (!response.ok || data.error) {
+    const err = data.error || {};
+    throw new ApiError(
+      err.code || "UNKNOWN",
+      err.message || "智能模式请求失败",
+      !!err.retryable,
+      response.status,
+      err.field_errors || []
+    );
+  }
+  return data as unknown as T;
+}
+
+export const aiApi = {
+  ping: () => aiRequest<{ mode: string; enabled: boolean; version: string }>("/ping"),
+
+  getSettings: () =>
+    aiRequest<{ mode: string; enabled: boolean; settings: import("../types/ai").AiSettingsOut; writable: string[] }>("/settings"),
+  saveSettings: (patch: Record<string, unknown>) =>
+    aiRequest<{ mode: string; ok: boolean; settings: import("../types/ai").AiSettingsOut }>("/settings", { method: "PUT", body: patch }),
+  testProvider: (provider: string) =>
+    aiRequest<{ mode: string; provider: string; ok: boolean; message: string }>(`/settings/test/${encodeURIComponent(provider)}`, { method: "POST" }),
+  getSecretStatus: () =>
+    aiRequest<{ mode: string; enabled: boolean; secrets: import("../types/ai").AiSecretStatus }>("/settings/secret-status"),
+  revealSecret: (kind: "llm" | "mp" | "ssh") =>
+    aiRequest<import("../types/ai").AiSecretReveal>("/settings/reveal", { method: "POST", body: { kind } }),
+
+  getProjectSettings: (projectId: string) =>
+    aiRequest<{ mode: string; project_id: string; settings: import("../types/ai").AiProjectSettings }>(`/projects/${encodeURIComponent(projectId)}/settings`),
+  saveProjectSettings: (projectId: string, accuracy: string[]) =>
+    aiRequest<{ mode: string; ok: boolean; settings: import("../types/ai").AiProjectSettings }>(`/projects/${encodeURIComponent(projectId)}/settings`, { method: "PUT", body: { accuracy } }),
+  deleteProjectSettings: (projectId: string) =>
+    aiRequest<{ mode: string; ok: boolean; deleted: boolean; project_id: string }>(`/projects/${encodeURIComponent(projectId)}/settings`, { method: "DELETE" }),
+
+  // 演示数据后端（M13 前）：项目/任务/上下文/等待队列
+  listProjects: () =>
+    aiRequest<{ projects: import("../types/ai").AiProject[] }>("/projects"),
+  createProject: (body: { name: string; description?: string }) =>
+    aiRequest<{ project: import("../types/ai").AiProject }>("/projects", { method: "POST", body }),
+  deleteProject: (projectId: string) =>
+    aiRequest<{ deleted: boolean }>(`/projects/${encodeURIComponent(projectId)}`, { method: "DELETE" }),
+  listTasks: (projectId: string) =>
+    aiRequest<{ tasks: import("../types/ai").AiTask[] }>(`/projects/${encodeURIComponent(projectId)}/tasks`),
+  createTask: (projectId: string, body: { title: string; goal?: string; local_workspace?: string; hpc_workspace?: string }) =>
+    aiRequest<{ task: import("../types/ai").AiTask }>(`/projects/${encodeURIComponent(projectId)}/tasks`, { method: "POST", body }),
+  updateTask: (projectId: string, taskId: string, body: import("../types/ai").AiTaskPatch) =>
+    aiRequest<{ task: import("../types/ai").AiTask }>(`/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(taskId)}`, { method: "PATCH", body }),
+  deleteTask: (projectId: string, taskId: string) =>
+    aiRequest<{ deleted: boolean }>(`/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(taskId)}`, { method: "DELETE" }),
+  browseLocal: (path?: string) =>
+    aiRequest<import("../types/ai").AiBrowseResponse>(`/browse/local${path ? `?path=${encodeURIComponent(path)}` : ""}`),
+  browseHpc: (path?: string) =>
+    aiRequest<import("../types/ai").AiBrowseResponse>(`/browse/hpc${path ? `?path=${encodeURIComponent(path)}` : ""}`),
+
+  mkdirLocal: (path: string, name: string) =>
+    aiRequest<import("../types/ai").AiMkdirResponse>("/browse/local/mkdir", { method: "POST", body: { path, name } }),
+  mkdirHpc: (path: string, name: string) =>
+    aiRequest<import("../types/ai").AiMkdirResponse>("/browse/hpc/mkdir", { method: "POST", body: { path, name } }),
+
+  pickLocal: (initialDir?: string) =>
+    aiRequest<import("../types/ai").AiPickResponse>("/browse/local/pick", {
+      method: "POST",
+      body: initialDir && initialDir.trim() ? { initial_dir: initialDir } : {},
+    }),
+  getMessages: (projectId: string, taskId: string) =>
+    aiRequest<{ messages: import("../types/ai").AiMessage[] }>(`/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(taskId)}/messages`),
+  sendMessage: (projectId: string, taskId: string, content: string) =>
+    aiRequest<{ answer: string }>(`/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(taskId)}/messages`, { method: "POST", body: { content } }),
+  async *sendMessageStream(projectId: string, taskId: string, content: string)
+    : AsyncGenerator<import("../types/ai").AiStreamEvent> {
+    const resp = await fetch(`${AI_BASE}/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(taskId)}/messages/stream`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+      body: JSON.stringify({ content }),
+    });
+    if (!resp.ok) {
+      let msg = `HTTP ${resp.status}`;
+      try {
+        const j = await resp.json().catch(() => null);
+        msg = j?.error?.message || msg;
+      } catch { /* 忽略 */ }
+      throw new Error(msg);
+    }
+    if (!resp.body) throw new Error("响应无流式内容");
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder("utf-8");
+    let buffer = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const blocks = buffer.split(/\r?\n\r?\n/);
+      buffer = blocks.pop() ?? "";
+      for (const block of blocks) {
+        const line = block.split("\n").find((l) => l.startsWith("data:"));
+        if (!line) continue;
+        const raw = line.slice(5).trim();
+        if (!raw) continue;
+        try {
+          yield JSON.parse(raw) as import("../types/ai").AiStreamEvent;
+        } catch { /* 忽略非 JSON */ }
+      }
+    }
+  },
+  stopMessage: (projectId: string, taskId: string) =>
+    aiRequest<{ mode: string; stopped: boolean }>(`/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(taskId)}/messages/stop`, { method: "POST" }),
+  resolveConsent: (projectId: string, taskId: string, cardId: string, approved: boolean, note?: string) =>
+    aiRequest<{ mode: string; ok: boolean; kind: string; approved: boolean; result?: string }>(
+      `/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(taskId)}/messages/consent`,
+      { method: "POST", body: { card_id: cardId, approved, note: note ?? "" } }
+    ),
+  getContext: () =>
+    aiRequest<import("../types/ai").AiContextSummary>("/context"),
+  getTaskContext: (projectId: string, taskId: string) =>
+    aiRequest<import("../types/ai").AiContextSummary>(`/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(taskId)}/context`),
+  getTaskDetail: (projectId: string, taskId: string) =>
+    aiRequest<{ mode: string; task_id: string; flow: import("../types/ai").AiFlowDetail }>(
+      `/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(taskId)}/detail`),
+  getWaitQueue: () =>
+    aiRequest<{ waiting: import("../types/ai").AiWaitQueueEntry[]; count: number }>("/jobs/waiting"),
+};

@@ -390,3 +390,366 @@ export const handlers = [
     return;
   }),
 ];
+
+
+// ============================================================
+// AI 模式（/ai/v1）— 项目/任务/消息/上下文/等待队列（演示数据后端）
+// 设置类接口暂不在此拦截（走真实后端；如需离线演示可加 handler）。
+// 注意：handler 顺序无关（MSW 按路径匹配），放在最后即可。
+// ============================================================
+import { aiDemo } from './aiStore';
+
+// M41：模拟进行中的流式生成停止标记（键=projectId:taskId）；与真实后端 _ACTIVE_STOPS 语义一致。
+const aiStreamStops = new Set<string>();
+const aiStreamKey = (projectId: string, taskId: string) => `${projectId}:${taskId}`;
+
+const AI_BASE = '/ai/v1';
+
+export const aiHandlers = [
+  http.get(`${AI_BASE}/projects`, async () => {
+    await delay(250);
+    return HttpResponse.json({ projects: aiDemo.listProjects() });
+  }),
+
+  http.post(`${AI_BASE}/projects`, async ({ request }) => {
+    const body = (await request.json()) as { name?: string; description?: string };
+    await delay(300);
+    return HttpResponse.json({ project: aiDemo.createProject(body?.name || '', body?.description || '') });
+  }),
+
+  http.delete(`${AI_BASE}/projects/:projectId`, async ({ params }) => {
+    await delay(250);
+    return HttpResponse.json({ deleted: aiDemo.deleteProject(String(params.projectId)) });
+  }),
+
+  http.get(`${AI_BASE}/projects/:projectId/tasks`, async ({ params }) => {
+    await delay(250);
+    return HttpResponse.json({ tasks: aiDemo.listTasks(String(params.projectId)) });
+  }),
+
+  http.post(`${AI_BASE}/projects/:projectId/tasks`, async ({ params, request }) => {
+    const body = (await request.json()) as { title?: string; goal?: string; local_workspace?: string; hpc_workspace?: string };
+    await delay(300);
+    const task = aiDemo.createTask(String(params.projectId), body?.title || '', body?.goal || '', { local_workspace: body?.local_workspace, hpc_workspace: body?.hpc_workspace });
+    return HttpResponse.json({ task });
+  }),
+
+  http.patch(`${AI_BASE}/projects/:projectId/tasks/:taskId`, async ({ params, request }) => {
+    const body = (await request.json()) as { title?: string; goal?: string; local_workspace?: string; hpc_workspace?: string };
+    await delay(200);
+    const task = aiDemo.updateTask(String(params.projectId), String(params.taskId), body);
+    if (!task) {
+      return HttpResponse.json({ error: { code: "AI_MODE_PROJECT_NOT_FOUND", message: "计算任务不存在或被删除", retryable: false } }, { status: 404 });
+    }
+    return HttpResponse.json({ task });
+  }),
+
+  http.delete(`${AI_BASE}/projects/:projectId/tasks/:taskId`, async ({ params }) => {
+    await delay(200);
+    const deleted = aiDemo.deleteTask(String(params.projectId), String(params.taskId));
+    if (!deleted) {
+      return HttpResponse.json({ error: { code: "AI_MODE_PROJECT_NOT_FOUND", message: "计算任务不存在或被删除", retryable: false } }, { status: 404 });
+    }
+    return HttpResponse.json({ deleted: true, task_id: String(params.taskId) });
+  }),
+
+  http.get(`${AI_BASE}/projects/:projectId/tasks/:taskId/messages`, async ({ params }) => {
+    await delay(200);
+    return HttpResponse.json({ messages: aiDemo.getMessages(String(params.projectId), String(params.taskId)) });
+  }),
+
+  http.post(`${AI_BASE}/projects/:projectId/tasks/:taskId/messages`, async ({ params, request }) => {
+    const body = (await request.json()) as { content?: string };
+    await delay(700);
+    const answer = aiDemo.sendMessage(String(params.projectId), String(params.taskId), body?.content || '');
+    return HttpResponse.json({ answer });
+  }),
+
+  http.post(`${AI_BASE}/projects/:projectId/tasks/:taskId/messages/stream`, async ({ params, request }) => {
+    const body = (await request.json()) as { content?: string };
+    const projectId = String(params.projectId);
+    const taskId = String(params.taskId);
+    const key = aiStreamKey(projectId, taskId);
+    aiStreamStops.add(key);
+    const answer = aiDemo.sendMessage(projectId, taskId, body?.content || '');
+    const wantsCard = /(rm -rf|删除文件|弹卡)/.test(body?.content || '');
+    await delay(120);
+    const emit = (ev: unknown) => `data: ${JSON.stringify(ev)}\n\n`;
+    const sse = async function* () {
+      if (wantsCard) {
+        yield emit({ type: "card", card: {
+          card_id: "card_m47_demo",
+          tool: "run_exec",
+          args: { command: "rm -rf cache/" },
+          risk: "high",
+          reason: "rm 属破坏性删除，需你授权后才能执行。",
+          options: ["同意本次", "同意本批", "拒绝"],
+          batch_key: "ws|rm|demo",
+          kind: "workspace",
+          summary: "本地计算目录内的高风险命令（rm -rf cache/），需你授权后执行。",
+        } });
+        yield emit({ type: "done", answer: "已生成授权请求，等待你确认。" });
+        aiStreamStops.delete(key);
+        return;
+      }
+
+      yield emit({ type: "thinking", text: "正在读取任务与工作区…" });
+      const third = Math.max(1, Math.ceil(answer.length / 3));
+      let sent = "";
+      for (let i = 0; i < 3; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 120));
+        if (aiStreamStops.has(key)) {
+          aiStreamStops.delete(key);
+          yield emit({ type: "stopped", answer: sent });
+          return;
+        }
+        const chunk = answer.slice(i * third, (i + 1) * third);
+        sent += chunk;
+        yield emit({ type: "answer", text: chunk });
+      }
+      if (aiStreamStops.has(key)) {
+        aiStreamStops.delete(key);
+        yield emit({ type: "stopped", answer: sent });
+        return;
+      }
+      aiStreamStops.delete(key);
+      yield emit({ type: "done", answer });
+    };
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      async start(controller) {
+        for await (const chunk of sse()) {
+          controller.enqueue(encoder.encode(chunk));
+        }
+        controller.close();
+      },
+    });
+    return new HttpResponse(stream, {
+      headers: { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache" },
+    });
+  }),
+  http.post(`${AI_BASE}/projects/:projectId/tasks/:taskId/messages/stop`, async ({ params }) => {
+    await delay(120);
+    const projectId = String(params.projectId);
+    const taskId = String(params.taskId);
+    if (!aiDemo.getTask(projectId, taskId)) {
+      return HttpResponse.json(
+        { error: { code: "AI_MODE_PROJECT_NOT_FOUND", message: "计算任务不存在或被删除", retryable: false } },
+        { status: 404 }
+      );
+    }
+    return HttpResponse.json({ mode: "ai", stopped: aiStreamStops.has(aiStreamKey(projectId, taskId)) });
+  }),
+  http.post(`${AI_BASE}/projects/:projectId/tasks/:taskId/messages/consent`, async ({ request }) => {
+    const body = (await request.json()) as { card_id?: string; approved?: boolean; note?: string };
+    if (!body || !body.card_id) {
+      return HttpResponse.json({ mode: "ai", ok: false, reason: "card_missing", message: "该授权卡片不存在或已处理，请重新发起。" }, { status: 400 });
+    }
+    const approved = !!body.approved;
+    return HttpResponse.json({
+      mode: "ai", ok: true, kind: "workspace", approved,
+      result: approved ? "已授权本批操作，后续同类操作将直接执行" : "已拒绝本批操作，后续同类操作不再弹卡",
+    });
+  }),
+  http.get(`${AI_BASE}/projects/:projectId/tasks/:taskId/context`, async ({ params }) => {
+    await delay(150);
+    return HttpResponse.json(aiDemo.taskContext(String(params.projectId), String(params.taskId)));
+  }),
+
+  http.get(`${AI_BASE}/context`, async () => {
+    await delay(200);
+    return HttpResponse.json(aiDemo.context);
+  }),
+
+  http.get(`${AI_BASE}/jobs/waiting`, async () => {
+    await delay(200);
+    return HttpResponse.json(aiDemo.getWaitQueue());
+  }),
+
+  http.get(`${AI_BASE}/browse/local`, async ({ request }) => {
+    const url = new URL(request.url);
+    const p = url.searchParams.get("path") || "";
+    return HttpResponse.json({
+      mode: "ai",
+      kind: "local",
+      path: p,
+      parent: p ? p.split(/[\\/]/).slice(0, -1).join("\\") : null,
+      exists: true,
+      is_dir: true,
+      roots: p ? undefined : [
+        { name: "C:\\", is_dir: true },
+        { name: "D:\\", is_dir: true },
+      ],
+      entries: p ? [
+        { name: "calc", is_dir: true },
+        { name: "data", is_dir: true },
+        { name: "POSCAR", is_dir: false },
+      ] : [],
+    });
+  }),
+
+  http.get(`${AI_BASE}/browse/hpc`, async ({ request }) => {
+    const url = new URL(request.url);
+    const p = url.searchParams.get("path") || "";
+    return HttpResponse.json({
+      mode: "ai",
+      kind: "hpc",
+      path: p,
+      parent: p ? p.split("/").slice(0, -1).join("/") : null,
+      exists: true,
+      is_dir: true,
+      roots: p ? undefined : [{ name: "/", is_dir: true }],
+      entries: p ? [
+        { name: "hpc_home", is_dir: true },
+        { name: "INCAR", is_dir: false },
+      ] : [],
+    });
+  }),
+
+  http.post(`${AI_BASE}/browse/local/mkdir`, async ({ request }) => {
+    const body = (await request.json()) as { path?: string; name?: string };
+    const name = (body.name || "").trim();
+    if (!name) {
+      return HttpResponse.json({ mode: "ai", ok: false, notice: "文件夹名不能为空" });
+    }
+    const p = ((body.path || "D:/").replace(/[/]+$/, "") + "/" + name);
+    return HttpResponse.json({ mode: "ai", kind: "local", ok: true, path: p, notice: "" });
+  }),
+
+  http.post(`${AI_BASE}/browse/local/pick`, () =>
+    HttpResponse.json({ mode: "ai", kind: "local", ok: true, path: "D:\\mock\\workspace\\picked" }),
+  ),
+
+  http.post(`${AI_BASE}/browse/hpc/mkdir`, async ({ request }) => {
+    const body = (await request.json()) as { path?: string; name?: string };
+    const name = (body.name || "").trim();
+    if (!name) {
+      return HttpResponse.json({ mode: "ai", ok: false, notice: "文件夹名不能为空" });
+    }
+    const p = ((body.path || "/").replace(/[/]+$/, "") + "/" + name);
+    return HttpResponse.json({ mode: "ai", kind: "hpc", ok: true, path: p, notice: "" });
+  }),
+];
+
+// 并入主 handlers：MSW server（测试）与 browser（?mock=1 演示）均依赖它。
+aiDemo.enqueue('本机等待队列未满时自动提交；此处演示队列界面。', 'Fe2O3 能带计算');
+if (aiDemo.waiting.length === 1) {
+  aiDemo.enqueue('超算作业数已达上限，排队等待空位。', 'Fe2O3 DOS 计算');
+  aiDemo.enqueue('排队顺序按确认先后回填。', 'Fe2O3 band 结构精修');
+}
+handlers.push(...aiHandlers);
+
+
+// ---- AI 设置类（MSW 离线演示/测试用；正常开发直连真实后端）----
+let mockAiSettings = {
+  enabled: true,
+  max_jobs: 20,
+  llm: { base_url: "https://api.openai.com/v1", model: "gpt-4o", provider: "auto", api_key: "" },
+  materials_project: { api_key: "" },
+  ssh: { name: "", host: "", port: 22, username: "" },
+};
+let mockSshPassword = "";
+let mockProjectSettings: Record<string, { project_id: string; accuracy: string[] }> = {};
+
+const AI_SETTINGS_BASE = "/ai/v1";
+
+const aiSettingsHandlers = [
+  http.get(`${AI_SETTINGS_BASE}/settings`, async () => {
+    await delay(250);
+    return HttpResponse.json({ mode: "ai", enabled: true, settings: mockAiSettings, writable: ["max_jobs", "llm_provider", "llm_base_url", "llm_model", "mp_api_key", "llm_api_key", "ssh_name", "ssh_host", "ssh_port", "ssh_username"] });
+  }),
+
+  http.put(`${AI_SETTINGS_BASE}/settings`, async ({ request }) => {
+    const patch = (await request.json()) as Record<string, unknown>;
+    await delay(250);
+    const pick = <T>(k: string, fb: T): T => (k in patch ? (patch[k] as T) : fb);
+    mockAiSettings = {
+      enabled: mockAiSettings.enabled,
+      max_jobs: pick("max_jobs", mockAiSettings.max_jobs),
+      llm: {
+        ...mockAiSettings.llm,
+        base_url: pick("llm_base_url", mockAiSettings.llm.base_url),
+        model: pick("llm_model", mockAiSettings.llm.model),
+        provider: pick("llm_provider", mockAiSettings.llm.provider),
+        api_key: patch.llm_api_key !== undefined ? String(patch.llm_api_key) : mockAiSettings.llm.api_key,
+      },
+      materials_project: {
+        api_key: patch.mp_api_key !== undefined ? String(patch.mp_api_key)   : mockAiSettings.materials_project.api_key,  
+      },
+      ssh: {
+        ...mockAiSettings.ssh,
+        name: pick("ssh_name", mockAiSettings.ssh.name),
+        host: pick("ssh_host", mockAiSettings.ssh.host),
+        username: pick("ssh_username", mockAiSettings.ssh.username),
+        port: pick("ssh_port", mockAiSettings.ssh.port),
+      },
+    };
+    mockSshPassword = patch.ssh_password !== undefined ? String(patch.ssh_password) : mockSshPassword;
+    return HttpResponse.json({ mode: "ai", ok: true, settings: mockAiSettings });
+  }),
+
+  http.post(`${AI_SETTINGS_BASE}/settings/test/:provider`, async ({ params }) => {
+    await delay(400);
+    const provider = String(params.provider);
+    if (!["llm", "mp", "ssh"].includes(provider)) {
+      return HttpResponse.json({ mode: "ai", ok: false, message: "未知 provider（Mock）" }, { status: 400 });
+    }
+    return HttpResponse.json({ mode: "ai", provider, ok: true, message: `${provider} 连通成功（Mock）` });
+  }),
+
+  http.get(`${AI_SETTINGS_BASE}/settings/secret-status`, async () => {
+    await delay(200);
+    return HttpResponse.json({
+      mode: "ai",
+      enabled: true,
+      secrets: {
+        llm: mockAiSettings.llm.api_key !== "",
+        mp: mockAiSettings.materials_project.api_key !== "",
+        ssh: mockSshPassword !== "",
+      },
+    });
+  }),
+
+  http.post(`${AI_SETTINGS_BASE}/settings/reveal`, async ({ request }) => {
+    const body = (await request.json().catch(() => ({}))) as { kind?: string };
+    await delay(200);
+    const kind = String(body.kind || "").trim().toLowerCase();
+    if (kind === "llm") return HttpResponse.json({ mode: "ai", kind, value: mockAiSettings.llm.api_key || "" });
+    if (kind === "mp") return HttpResponse.json({ mode: "ai", kind, value: mockAiSettings.materials_project.api_key || "" });
+    if (kind === "ssh") return HttpResponse.json({ mode: "ai", kind, value: mockSshPassword });
+    return HttpResponse.json({ mode: "ai", error: { code: "AI_MODE_UNKNOWN_SECRET", message: "未知密钥类型", retryable: false } }, { status: 400 });
+  }),
+
+  http.get(`${AI_SETTINGS_BASE}/projects/:projectId/settings`, async ({ params }) => {
+    const pid = String(params.projectId);
+    await delay(200);
+    return HttpResponse.json({ mode: "ai", project_id: pid, settings: mockProjectSettings[pid] ?? { project_id: pid, accuracy: [] } });
+  }),
+
+  http.put(`${AI_SETTINGS_BASE}/projects/:projectId/settings`, async ({ params, request }) => {
+    const pid = String(params.projectId);
+    const body = (await request.json()) as { accuracy?: string[] };
+    const accuracy = Array.isArray(body?.accuracy)
+      ? body.accuracy.filter((x) => typeof x === 'string' && x.trim() !== '')
+      : [];
+    for (const entry of accuracy) {
+      if (/(password|passwd|secret|credential|api_key|private key|access token|bearer)/i.test(entry)) {
+        return HttpResponse.json({ mode: "ai", error: { code: "AI_MODE_BAD_PROJECT_SETTINGS", message: "条目内容疑似含敏感信息（密钥/口令等不得写入项目设置）", retryable: false } }, { status: 400 });
+      }
+    }
+    await delay(250);
+    mockProjectSettings[pid] = { project_id: pid, accuracy };
+    return HttpResponse.json({ mode: "ai", ok: true, settings: mockProjectSettings[pid] });
+  }),
+
+  http.delete(`${AI_SETTINGS_BASE}/projects/:projectId/settings`, async ({ params }) => {
+    const pid = String(params.projectId);
+    await delay(200);
+    const deleted = pid in mockProjectSettings;
+    delete mockProjectSettings[pid];
+    return HttpResponse.json({ mode: "ai", ok: true, deleted, project_id: pid });
+  }),
+];
+
+handlers.push(...aiSettingsHandlers);
+

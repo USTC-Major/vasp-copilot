@@ -4,10 +4,10 @@
 
 import React, { useState } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
-import { Layout, Menu, Typography, Space, Tag, Button } from 'antd';
+import { Layout, Menu, Typography, Space, Tag, Button, Tooltip } from 'antd';
 import {
-  HomeOutlined, BuildOutlined, BugOutlined,
-  CloudUploadOutlined, SettingOutlined,
+  HomeOutlined, BuildOutlined, BugOutlined, RobotOutlined,
+  CloudUploadOutlined, SettingOutlined, ToolOutlined,
 } from '@ant-design/icons';
 import { isFeatureEnabled } from './config/featureFlags';
 import LlmSettingsModal from './components/settings/LlmSettingsModal';
@@ -22,21 +22,29 @@ const App: React.FC = () => {
   const fakeHpcEnabled = isFeatureEnabled('ENABLE_FAKE_HPC');
   const [settingsOpen, setSettingsOpen] = useState(false);
 
+
   const menuItems = [
     { key: '/', icon: <HomeOutlined />, label: '首页' },
-    { key: '/workflow', icon: <BuildOutlined />, label: '生成工作流' },
-    { key: '/diagnosis/upload', icon: <BugOutlined />, label: '诊断计算' },
-    ...(fakeHpcEnabled ? [
-      { key: '/hpc/deploy', icon: <CloudUploadOutlined />, label: '远程部署' },
-    ] : []),
+    { key: '/ai', icon: <RobotOutlined />, label: '智能模式' },
+    {
+      key: '/toolbox',
+      icon: <ToolOutlined />,
+      label: '工具箱',
+      children: [
+        { key: '/workflow', icon: <BuildOutlined />, label: '生成工作流' },
+        { key: '/diagnosis/upload', icon: <BugOutlined />, label: '诊断计算' },
+        ...(fakeHpcEnabled ? [{ key: '/hpc/deploy', icon: <CloudUploadOutlined />, label: '远程部署' }] : []),
+      ],
+    },
   ];
 
-  const selectedKey = menuItems.find((item) =>
-    location.pathname === item.key || location.pathname.startsWith(item.key + '/')
-  )?.key || '/';
+  const selectedKey =
+    menuItems
+      .flatMap((item) => [...(item.children ?? []).map((child) => child.key), item.key])
+      .find((key) => location.pathname === key || location.pathname.startsWith(key + '/')) || '/';
 
   return (
-    <Layout style={{ minHeight: '100vh' }}>
+    <Layout style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
       <Header style={{
         display: 'flex',
         alignItems: 'center',
@@ -64,25 +72,28 @@ const App: React.FC = () => {
         {fakeHpcEnabled && (
           <Tag color="warning" style={{ marginLeft: 8, borderRadius: 999, padding: '2px 12px' }}>模拟环境</Tag>
         )}
-        <Button
-          type="text"
-          icon={<SettingOutlined />}
-          style={{ color: '#1d1d1f', marginLeft: 8, borderRadius: 8 }}
-          onClick={() => setSettingsOpen(true)}
-        >
-          模型设置
-        </Button>
+        <Tooltip title='智能设置'>
+          <Button
+            type="text"
+            icon={<SettingOutlined />}
+            aria-label='智能设置'
+            style={{ color: '#1d1d1f', marginLeft: 8, borderRadius: 8 }}
+            onClick={() => navigate('/ai/settings')}
+          />
+        </Tooltip>
       </Header>
-      <Content style={{ padding: '32px 24px', maxWidth: 1400, margin: '0 auto', width: '100%' }}>
+      <Content style={{ flex: 1, minHeight: 0, padding: '32px 24px', maxWidth: 1400, margin: '0 auto', width: '100%' }}>
         <Outlet />
       </Content>
-      <Footer style={{ textAlign: 'center', color: '#6e6e73', borderTop: '1px solid rgba(0,0,0,0.04)' }}>
-        <Space>
-          <Text type="secondary">VASP-Copilot / VASP-Doctor+ MVP</Text>
-          <Text type="secondary">|</Text>
-          <Text type="secondary">面向材料计算初学者的训练与排错助手</Text>
-        </Space>
-      </Footer>
+{location.pathname === '/' && (
+        <Footer style={{ textAlign: 'center', color: '#6e6e73', borderTop: '1px solid rgba(0,0,0,0.04)' }}>
+          <Space>
+            <Text type="secondary">VASP-Copilot / VASP-Doctor+ MVP</Text>
+            <Text type="secondary">|</Text>
+            <Text type="secondary">面向材料计算初学者的训练与排错助手</Text>
+          </Space>
+        </Footer>
+      )}
       <LlmSettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
       <ChatPanel onOpenSettings={() => setSettingsOpen(true)} />
     </Layout>
@@ -90,3 +101,4 @@ const App: React.FC = () => {
 };
 
 export default App;
+
