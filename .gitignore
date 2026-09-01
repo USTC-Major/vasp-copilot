@@ -32,3 +32,22 @@ Thumbs.db
 
 # Runtime logs (demo case logs already tracked before this rule remain available)
 *.local.log
+
+# All runtime / dev server logs (backend, frontend, uvicorn, vite, smoke, etc.)
+*.log
+*.log.err
+# Demo fixture logs are test dependencies, keep them (upstream tracks them)
+!demo_cases/**/*.log
+!backend/examples/**/*.log
+
+# TypeScript / build check outputs
+tsc*.txt
+
+# Local temp scripts
+_tmp_*.py
+.smoke_*.py
+
+# Local development-process docs (AI assistant guidance, design/devlog, workflow spec) — not part of deliverable
+AGENTS.md
+AI_MODE_*.md
+V020_TEAM_DEVELOPMENT_WORKFLOW.md
