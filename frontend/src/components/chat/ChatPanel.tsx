@@ -28,6 +28,57 @@ const { TextArea } = Input;
 
 const STORAGE_KEY = 'vasp-ai-chat-history';
 
+const FAB_POS_KEY = 'vasp-ai-assistant-fab-pos';
+const PANEL_POS_KEY = 'vasp-ai-assistant-panel-pos';
+
+interface Pos {
+  left: number;
+  top: number;
+}
+
+function clampPos(pos: Pos, w: number, h: number): Pos {
+  const margin = 8;
+  const vw = Math.max(margin, window.innerWidth);
+  const vh = Math.max(margin, window.innerHeight);
+  return {
+    left: Math.min(Math.max(margin, pos.left), vw - w - margin),
+    top: Math.min(Math.max(margin, pos.top), vh - h - margin),
+  };
+}
+
+function loadPos(key: string, fallback: () => Pos): Pos {
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw) {
+      const parsed: unknown = JSON.parse(raw);
+      const p = parsed as Pos;
+      if (typeof p.left === 'number' && typeof p.top === 'number') {
+        return p;
+      }
+    }
+  } catch {
+    // ignore corrupted position
+  }
+  return fallback();
+}
+
+const FAB_SIZE = 52;
+const PANEL_WIDTH = 380;
+const PANEL_HEIGHT = 560;
+
+function defaultFabPos(): Pos {
+  return {
+    left: Math.max(8, window.innerWidth - 24 - FAB_SIZE),
+    top: Math.max(8, window.innerHeight - 24 - FAB_SIZE),
+  };
+}
+
+function defaultPanelPos(): Pos {
+  return {
+    left: Math.max(8, window.innerWidth - 24 - PANEL_WIDTH),
+    top: Math.max(8, window.innerHeight - 24 - FAB_SIZE - 12 - PANEL_HEIGHT),
+  };
+}
 interface ChatPanelProps {
   onOpenSettings: () => void;
 }
@@ -70,19 +121,95 @@ const PANEL_STYLE: React.CSSProperties = {
 
 const FAB_STYLE: React.CSSProperties = {
   position: 'fixed',
-  right: 24,
-  bottom: 24,
   zIndex: 999,
   width: 52,
   height: 52,
   borderRadius: '50%',
   fontSize: 20,
+  userSelect: 'none',
+  touchAction: 'none',
 };
 
 const ChatPanel: React.FC<ChatPanelProps> = ({ onOpenSettings }) => {
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessageItem[]>(loadHistory);
   const [input, setInput] = useState('');
+
+  const [fabPos, setFabPos] = useState<Pos>(() => loadPos(FAB_POS_KEY, defaultFabPos));
+  const [panelPos, setPanelPos] = useState<Pos>(() => loadPos(PANEL_POS_KEY, defaultPanelPos));
+  const dragRef = useRef<{
+    key: 'fab' | 'panel';
+    startX: number;
+    startY: number;
+    orig: Pos;
+    w: number;
+    h: number;
+  } | null>(null);
+  const suppressClickRef = useRef(false);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(FAB_POS_KEY, JSON.stringify(fabPos));
+    } catch { /* ignore */ }
+  }, [fabPos]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(PANEL_POS_KEY, JSON.stringify(panelPos));
+    } catch { /* ignore */ }
+  }, [panelPos]);
+
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      const drag = dragRef.current;
+      if (!drag) return;
+      const next = clampPos(
+        {
+          left: drag.orig.left + e.clientX - drag.startX,
+          top: drag.orig.top + e.clientY - drag.startY,
+        },
+        drag.w,
+        drag.h,
+      );
+      if (drag.key === 'fab') setFabPos(next);
+      else setPanelPos(next);
+    };
+    const onUp = (e: MouseEvent) => {
+      const drag = dragRef.current;
+      if (!drag) return;
+      const dx = e.clientX - drag.startX;
+      const dy = e.clientY - drag.startY;
+      if (dx * dx + dy * dy > 36) suppressClickRef.current = true;
+      dragRef.current = null;
+    };
+    const onResize = () => {
+      setFabPos((p) => clampPos(p, FAB_SIZE, FAB_SIZE));
+      setPanelPos((p) => clampPos(p, PANEL_WIDTH, PANEL_HEIGHT));
+    };
+    window.addEventListener('mousemove', onMove as EventListener);
+    window.addEventListener('mouseup', onUp);
+    window.addEventListener('resize', onResize);
+    return () => {
+      window.removeEventListener('mousemove', onMove as EventListener);
+      window.removeEventListener('mouseup', onUp);
+      window.removeEventListener('resize', onResize);
+    };
+  }, []);
+
+  const startDrag = (key: 'fab' | 'panel', e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    suppressClickRef.current = false;
+    const pos = key === 'fab' ? fabPos : panelPos;
+    dragRef.current = {
+      key,
+      startX: e.clientX,
+      startY: e.clientY,
+      orig: pos,
+      w: key === 'fab' ? FAB_SIZE : PANEL_WIDTH,
+      h: key === 'fab' ? FAB_SIZE : PANEL_HEIGHT,
+    };
+  };
   const listRef = useRef<HTMLDivElement>(null);
   const saveTimer = useRef<number | undefined>(undefined);
   const { data: config, isLoading: configLoading } = useLlmConfig(open);
@@ -190,14 +317,19 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onOpenSettings }) => {
       <Button
         type="primary"
         icon={open ? <CloseOutlined /> : <MessageOutlined />}
-        style={FAB_STYLE}
-        onClick={() => setOpen((v) => !v)}
+        style={{ ...FAB_STYLE, left: fabPos.left, top: fabPos.top, cursor: 'grab' }}
+        onMouseDown={(e) => startDrag('fab', e)}
+        onClick={() => {
+          if (suppressClickRef.current) return;
+          setOpen((v) => !v);
+        }}
         aria-label={open ? '关闭 AI 助手' : '打开 AI 助手'}
       />
 
       {open && (
-        <div style={PANEL_STYLE}>
+        <div style={{ ...PANEL_STYLE, left: panelPos.left, top: panelPos.top }}>
           <div
+            onMouseDown={(e) => startDrag('panel', e)}
             style={{
               padding: '12px 16px',
               background: '#001529',
@@ -205,6 +337,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onOpenSettings }) => {
               display: 'flex',
               alignItems: 'center',
               gap: 8,
+              cursor: 'move',
             }}
           >
             <RobotOutlined style={{ fontSize: 18 }} />

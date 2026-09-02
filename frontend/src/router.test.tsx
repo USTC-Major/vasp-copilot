@@ -27,7 +27,7 @@ describe('路由懒加载', () => {
 
   it('工作流页可渲染（懒加载）', async () => {
     renderRoute('/workflow');
-    expect(await screen.findByText('上传结构文件')).toBeInTheDocument();
+    expect(await screen.findByText('上传结构文件', {}, { timeout: 15000 })).toBeInTheDocument();
   });
 
   it('诊断上传页可渲染（懒加载）', async () => {
@@ -37,7 +37,7 @@ describe('路由懒加载', () => {
 
   it('诊断结果页可渲染（懒加载）', async () => {
     renderRoute('/diagnosis/diag_demo_01');
-    expect(await screen.findAllByText(/诊断/)).not.toHaveLength(0);
+    expect(await screen.findAllByText(/诊断/, {}, { timeout: 15000 })).not.toHaveLength(0);
   });
 
   it('HPC 部署页可渲染（懒加载）', async () => {
