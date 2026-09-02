@@ -2,6 +2,9 @@
 
 VASP 计算**诊断**（vasp-doctor）与**工作流生成**（vasp-copilot / Workflow Builder）一体化后端 + 前端源码包。
 
+> 开发分支在 v0.1.2 基础上新增了**智能模式（AI Mode）**与参赛部署链路（未发布，
+> 详见 [CHANGELOG.md](./CHANGELOG.md) `[Unreleased]` 与本文 2.0/2.4/2.5 节）。
+
 - 当前稳定版本：[v0.1.2](https://github.com/USTC-Major/vasp-copilot/releases/tag/v0.1.2)
 - 完整更新记录：[CHANGELOG.md](./CHANGELOG.md)
 
@@ -16,7 +19,8 @@ VASP 计算**诊断**（vasp-doctor）与**工作流生成**（vasp-copilot / Wo
 ```
 ./
 ├── backend/                     # 后端（Python/FastAPI，一体化：doctor + copilot）
-│   ├── app/                     #   main.py 与全部模块
+│   ├── app/                     #   工具箱主后端（诊断/工作流/结构/材料，端口 8000）
+│   ├── ai_mode/                 #   智能模式后端（自然语言驱动的 VASP 计算闭环，端口 8500）
 │   │   ├── api/v1/              #   接口路由（diagnosis/files/llm/chat/materials/structure/workflows/agent）
 │   │   ├── agent/  diagnostics/ #   诊断侧：Agent 编排、规则引擎与修复
 │   │   ├── parsers/ report/     #   解析器、Markdown 报告
@@ -37,10 +41,14 @@ VASP 计算**诊断**（vasp-doctor）与**工作流生成**（vasp-copilot / Wo
 │   └── .env.example             #   后端环境变量示例（无秘密）
 ├── frontend/                    # 前端（React 19 + TypeScript + Vite + Ant Design）
 │   ├── src/                     #   页面/组件/mocks/类型
+│   ├── src/components/ai/       #   智能模式 UI（聊天/规划/进度/设置）
 │   ├── public/                  #   静态资源与 mockServiceWorker
+│   ├── Dockerfile  nginx.conf   #   前端镜像：Node 构建 → nginx 托管 + API 反代
 │   ├── package.json  package-lock.json  vite.config.ts  tsconfig*.json
 │   └── README.md                #   Vite 模板默认说明（非本交付文档）
-├── docker-compose.yml           # 容器化一键部署（后端，含健康检查）
+├── docker-compose.yml           # 容器化一键部署（三服务：frontend + 8000 + 8500，含健康检查）
+├── start_services.ps1           # Windows 一键启动/守护（三服务）
+├── start_services.sh            # Linux/macOS 一键启动/守护（三服务）
 ├── .env.example                 # 根环境变量示例（Docker 用；无秘密）
 ├── README.md                    # 本文档
 └── SHA256SUMS.txt               # 包内全部文件校验和（格式：<sha256>  <路径>）
@@ -49,6 +57,37 @@ VASP 计算**诊断**（vasp-doctor）与**工作流生成**（vasp-copilot / Wo
 > 本包为**源码交付**：不含 `node_modules/`、`dist/`、虚拟环境与运行数据，安装依赖后即可运行。
 
 ## 2. 快速开始
+
+### 2.0 一键启动（推荐：三服务全起，智能模式开箱即用）
+
+| 服务 | 端口 | 说明 |
+|---|---|---|
+| 前端 | 5173 | 浏览器入口 http://127.0.0.1:5173 |
+| 工具箱主后端 | 8000 | 诊断 / 工作流 / 结构 / 材料 |
+| 智能模式后端 | 8500 | 自然语言驱动的 VASP 计算闭环（详见第 2.4 节） |
+
+```powershell
+# Windows（PowerShell，在仓库根目录）
+powershell -ExecutionPolicy Bypass -File .\start_services.ps1          # 缺哪个补哪个
+powershell -ExecutionPolicy Bypass -File .\start_services.ps1 -Status  # 查看状态
+powershell -ExecutionPolicy Bypass -File .\start_services.ps1 -Watch   # 守护：掉线自动拉起
+```
+
+```bash
+# Linux / macOS（在仓库根目录）
+bash start_services.sh             # 缺哪个补哪个
+bash start_services.sh --status    # 查看状态
+bash start_services.sh --watch     # 守护：掉线自动拉起
+```
+
+或用 Docker Compose 一条命令起完整三件套（前端为 nginx 托管的构建产物，已反代两个后端）：
+
+```bash
+docker compose up --build -d       # 健康检查通过后 frontend 才启动
+docker compose ps                  # 三个服务均 healthy/running
+```
+
+启动后浏览器打开 **http://127.0.0.1:5173** 即可使用全部功能（含智能模式）。
 
 ### 2.1 后端（本机）
 
@@ -101,7 +140,7 @@ npm run dev                          # Vite dev server，默认 http://localhost
 - dev server 已配置代理：`/api/v1/*` → `http://127.0.0.1:8000`，后端启动后即可直连；
 - 无后端时可加 `?mock=1` 使用内置 MSW mock 演示。
 
-### 2.3 Docker Compose（后端容器化）
+### 2.3 Docker Compose（容器化，三服务）
 
 ```bash
 # 仓库根目录；.env 为可选（不存在也能启动，仅使用默认值）
@@ -111,6 +150,28 @@ docker compose logs -f backend
 docker compose down                  # 停止（保留数据卷）
 docker compose down -v               # 彻底清理（连同全部数据）
 ```
+
+### 2.4 智能模式（AI Mode，本项目的核心亮点）
+
+智能模式让用户用**自然语言**驱动完整的 VASP 计算闭环：
+
+> 规划 → 建目录 → 预检 → 生成输入 → 确认 sbatch → 提交 → 后台监控/自动补提 → 查错 → 结果报告
+
+- 双工作区：本地工作区与超算工作区（SSH）同名对应，计算与提交都发生在超算侧；本地 Fake HPC 可离线演示全流程；
+- 依赖链：多作业（如 relax → relax/static → relax/static/dos）自动排序、前序完成自动补提，失败自动级联阻断；
+- 安全边界：本地绝不写提交脚本（*.sh 由用户提供或经确认写入超算）；sbatch 必须经用户确认卡片；AI 生成的命令经策略门卫分级（红线直接拒、高风险需确认、日常操作免打扰）；
+- 后台监控：提交后无需人工盯梢，按可配置间隔（默认 60s，设置页可改）自动推进，全部完成后自动生成报告；作业失败时报告开头点名失败作业与原因；
+- 进度页：「查看当前进度」实时展示作业依赖链、等待队列、预检问题与计算报告。
+
+无超算环境时智能模式内置本地 Fake HPC 适配器（默认开启），可完整演示从规划到报告的全流程。
+
+### 2.5 五分钟演示路径
+
+1. 启动三服务（2.0 节），打开 http://127.0.0.1:5173；
+2. **诊断链路**：进入诊断页，上传 `backend/examples/sample_run/` 打包的 zip（或用 `demo_cases/failed_runs/` 里的故障样例，如 `scf_reached_nelm`），查看规则诊断报告与修复建议；
+3. **智能模式**：进入智能模式 → 新建项目 → 新建任务 → 在设置里确认「本地 Fake HPC」开启 → 对话框输入目标（如「对 Si 做结构优化，然后算态密度」）→ 依次确认规划、输入文件与 sbatch 确认卡 → 之后无需操作，作业链自动推进直到报告生成；
+4. **进度页**：点击聊天区上方「查看当前进度」，查看作业依赖链与报告；
+5. **全链路冒烟**：`cd backend && python scripts/smoke_test.py`（上传 → 诊断 → 报告 → 预览 → 下载修复）。
 
 ## 3. 配置说明（.env.example）
 
@@ -153,6 +214,12 @@ v0.1.2 发布验证：
 - 前端测试：`30 passed`；
 - Vite production build 成功，并启用页面级代码分包（路由级懒加载）；
 - 完整性校验：`SHA256SUMS.txt` 共 394 项，0 项失败。
+
+当前开发分支测试基线（未发布，随代码演进）：
+
+- 智能模式后端（ai_mode）：`452 passed` + 1 已知环境失败；
+- 前端类型检查 `npx tsc -b` 通过；
+- docker-compose 三服务（frontend/8000/8500）一键启动，含健康检查。
 
 一键 CI（Windows / Linux）：
 
