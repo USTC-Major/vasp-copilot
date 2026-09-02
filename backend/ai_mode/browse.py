@@ -329,4 +329,3 @@ def pick_local_directory(initial_dir: str | None = None) -> str:
         raise BrowseDialogError(
             f"无法启动系统目录弹窗（{exc.__class__.__name__}）") from exc
     return (proc.stdout or "").strip()
-

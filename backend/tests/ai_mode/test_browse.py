@@ -333,4 +333,3 @@ def test_local_pick_route_dialog_error(enabled_client, monkeypatch):
     body = r.json()
     assert body["ok"] is False
     assert "headless" in body["notice"]
-

@@ -769,4 +769,3 @@ def create_ai_mode_app() -> FastAPI:
 
 #: uvicorn 入口：uvicorn ai_mode.server:app。创建对象无副作用（lifespan 才走 ensure_layout）。
 app = create_ai_mode_app()
-

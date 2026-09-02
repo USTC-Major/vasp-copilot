@@ -147,4 +147,3 @@ def has_unclosed_marker(text: str) -> bool:
                 return True
             idx += len(marker)
     return False
-
