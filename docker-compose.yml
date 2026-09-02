@@ -2,6 +2,8 @@
 #   docker compose up --build -d
 #   浏览器访问 http://127.0.0.1:5173（nginx 内已反代 /api/v1 -> 8000、/ai/v1 -> 8500）
 # .env 为可选（不存在也能启动，仅使用默认值；LLM API key 等自定义项写在这里）。
+# 安全默认：仅前端 5173 发布到宿主机且只绑 127.0.0.1；8000/8500 无用户级鉴权，
+# 仅在 Docker 内部网络供 nginx 反代访问，不对宿主机/局域网暴露。
 services:
   backend:
     build:
@@ -13,8 +15,10 @@ services:
     environment:
       DATA_DIR: /data/tmp
       TTL_SECONDS: 86400
-    ports:
-      - "8000:8000"
+    # 安全：8000 无鉴权，默认不发布到宿主机；前端经 Docker 内部网络反代访问。
+    # 如需本机调试可直接访问，可自行加回：
+    # ports:
+    #   - "127.0.0.1:8000:8000"
     volumes:
       - app_data:/data/app
       - temp_data:/data/tmp
@@ -35,13 +39,16 @@ services:
               "--host", "0.0.0.0", "--port", "8500", "--log-level", "info"]
     environment:
       ENABLE_AI_MODE: "true"
+      VASP_AI_HOME: /data/app/ai_mode   # 项目/设置/会话持久化到 app_data 卷，容器重建不丢数据
       DATA_DIR: /data/tmp
       TTL_SECONDS: 86400
     env_file:
       - path: .env
         required: false
-    ports:
-      - "8500:8500"
+    # 安全：8500（AI 对话/SSH 远程执行接口，无用户级鉴权）默认不发布到宿主机。
+    # 如需本机调试可直接访问，可自行加回：
+    # ports:
+    #   - "127.0.0.1:8500:8500"
     volumes:
       - app_data:/data/app
       - temp_data:/data/tmp
@@ -62,9 +69,9 @@ services:
       ai_mode:
         condition: service_healthy
     ports:
-      - "5173:80"
+      - "127.0.0.1:5173:80"
     restart: unless-stopped
 
 volumes:
-  app_data:   # /data/app  —— 预留 SQLite 元数据
+  app_data:   # /data/app —— ai_mode 持久化（VASP_AI_HOME=/data/app/ai_mode：config/项目/会话）
   temp_data:  # /data/tmp  —— TTL 临时数据：uploads / runs / reports
