@@ -685,7 +685,7 @@ const aiSettingsHandlers = [
         api_key: patch.llm_api_key !== undefined ? String(patch.llm_api_key) : mockAiSettings.llm.api_key,
       },
       materials_project: {
-        api_key: patch.mp_api_key !== undefined ? String(patch.mp_api_key)   : mockAiSettings.materials_project.api_key,  
+        api_key: patch.mp_api_key !== undefined ? String(patch.mp_api_key)   : mockAiSettings.materials_project.api_key, 
       },
       ssh: {
         ...mockAiSettings.ssh,
@@ -763,4 +763,3 @@ const aiSettingsHandlers = [
 ];
 
 handlers.push(...aiSettingsHandlers);
-
