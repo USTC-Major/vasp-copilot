@@ -80,7 +80,7 @@ async def lifespan(_app: FastAPI):
             pass
 
 
-app = FastAPI(title=settings.app_name, version="0.1.2",
+app = FastAPI(title=settings.app_name, version="0.2.0",
               openapi_url="/api/v1/openapi.json", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,

@@ -9,6 +9,50 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-03
+
+### Added
+
+- 新增独立的智能模式（AI Mode）FastAPI 服务，默认端口 8500。
+- 自然语言任务规划、项目/任务管理、聊天交互与流式响应。
+- 本地与超算双工作区浏览。
+- SSH/Slurm 作业提交、依赖链、状态监控与结果报告能力。
+- 高风险操作授权卡片（提交/取消/删除等需用户确认）。
+- Fake LLM / Fake HPC 离线演示模式，无真实凭据也可跑通全流程。
+- AI Mode 前端页面、设置页、进度页与作业时间线。
+- frontend + backend + ai_mode 三服务 Docker Compose 配置。
+- Windows PowerShell 与 Linux/macOS 一键启动/守护脚本。
+- Nginx SPA 托管及 `/api/v1`、`/ai/v1` 反向代理。
+
+### Changed
+
+- 前端增加 AI Mode 导航与相关页面。
+- requirements 增加 AI Mode 所需依赖。
+- README 与 .env.example 增加 AI Mode、部署及环境变量说明。
+- AI Mode 数据通过 `VASP_AI_HOME` 持久化。
+
+### Security
+
+- Compose 默认只发布 `127.0.0.1:5173`。
+- 主后端 8000 与 AI Mode 8500 默认仅在 Docker 内部网络访问。
+- 提交、取消、删除和高风险命令需用户授权。
+- LLM/Materials Project/SSH 凭据由用户提供，不进入仓库。
+- POTCAR 不由项目提供或下载。
+
+### Known limitations
+
+- 当前仍定位为单用户、本地或演示部署，没有用户登录、租户隔离和
+  公网安全防护。
+- 不应将 8000/8500 直接暴露到公网或不可信局域网。
+- 真实 HPC 使用前仍需完善/复核 SSH 主机指纹 TOFU、后端 scheduler
+  shell 字段校验和集群 profile。
+- AI Mode 当前是独立服务，尚未通过正式 HTTP adapter 完整复用原有
+  Recipe/Doctor 后端。
+- Docker Compose 已完成源码静态检查，但双方开发机均无 Docker，
+  尚未完成真实 docker compose build/up 验证。
+- Linux 无桌面容器中的 keyring/真实 SSH 凭据链尚需实机验证。
+- 高级科研流程和最终科研结论不由系统保证。
+
 ## [0.1.2] - 2026-08-23
 
 ### Fixed
@@ -85,7 +129,8 @@
 - 建立 Recipe Pack 驱动的 INCAR、KPOINTS、POSCAR 与提交脚本生成流程。
 - 建立 FastAPI 后端、React 前端、自动化测试、Docker 配置和演示用例。
 
-[Unreleased]: https://github.com/USTC-Major/vasp-copilot/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/USTC-Major/vasp-copilot/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/USTC-Major/vasp-copilot/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/USTC-Major/vasp-copilot/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/USTC-Major/vasp-copilot/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/USTC-Major/vasp-copilot/releases/tag/v0.1.0

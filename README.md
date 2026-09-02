@@ -1,11 +1,12 @@
-# VASP-Copilot v0.1.2（VASP-Doctor × Workflow Builder）
+# VASP-Copilot v0.2.0（VASP-Doctor × Workflow Builder）
 
 VASP 计算**诊断**（vasp-doctor）与**工作流生成**（vasp-copilot / Workflow Builder）一体化后端 + 前端源码包。
 
-> 开发分支在 v0.1.2 基础上新增了**智能模式（AI Mode）**与参赛部署链路（未发布，
-> 详见 [CHANGELOG.md](./CHANGELOG.md) `[Unreleased]` 与本文 2.0/2.4/2.5 节）。
+> v0.2.0 新增**智能模式（AI Mode）**与参赛部署链路（三服务 Compose、
+> 一键启动脚本、Nginx 反代），详见 [CHANGELOG.md](./CHANGELOG.md) `[0.2.0]`
+> 与本文 2.0/2.4/2.5 节。
 
-- 当前稳定版本：[v0.1.2](https://github.com/USTC-Major/vasp-copilot/releases/tag/v0.1.2)
+- 当前稳定版本：[v0.2.0](https://github.com/USTC-Major/vasp-copilot/releases/tag/v0.2.0)
 - 完整更新记录：[CHANGELOG.md](./CHANGELOG.md)
 
 - 上传一个 VASP 运行目录 zip，依次完成：`安全解压 → 文件识别 → 解析 → 规则诊断 → 修复建议 → Markdown 报告 → （可选）LLM 通俗解释与追问`；
@@ -208,18 +209,14 @@ python -B -m pytest tests -q              # 全量测试（doctor 诊断 + BE-A 
 python scripts/export_openapi.py          # 导出 backend/openapi.json（供前端 TS 类型）
 ```
 
-v0.1.2 发布验证：
+v0.2.0 发布验证：
 
-- 后端测试：`388 passed`；
-- 前端测试：`30 passed`；
-- Vite production build 成功，并启用页面级代码分包（路由级懒加载）；
-- 完整性校验：`SHA256SUMS.txt` 共 394 项，0 项失败。
+- 后端测试：`841 passed`（含工具箱主后端与 ai_mode）；
+- 前端测试：`37 passed`；
+- lint 0 errors（保留既有 Fast Refresh warnings）；Vite production build 成功，页面级代码分包；
+- 完整性校验：`SHA256SUMS.txt` 共 499 项，0 项失败。
 
-当前开发分支测试基线（未发布，随代码演进）：
-
-- 智能模式后端（ai_mode）：`452 passed` + 1 已知环境失败；
-- 前端类型检查 `npx tsc -b` 通过；
-- docker-compose 三服务（frontend/8000/8500）一键启动，含健康检查。
+Compose/YAML、端口和持久化映射已完成静态校验；真实 docker compose build/up 尚待具备 Docker 的环境验证。
 
 一键 CI（Windows / Linux）：
 
@@ -262,9 +259,9 @@ Get-FileHash -Algorithm SHA256 <file>   # 与清单逐项比对
 
 ## 8. 打包信息
 
-- 当前稳定版本：v0.1.2
-- 发布页面：https://github.com/USTC-Major/vasp-copilot/releases/tag/v0.1.2
+- 当前稳定版本：v0.2.0
+- 发布页面：https://github.com/USTC-Major/vasp-copilot/releases/tag/v0.2.0
 - GitHub 自动提供 Source code (zip) 与 Source code (tar.gz)
 - 当前 Git 工作目录为精简源码副本，不包含虚拟环境、`node_modules`、缓存或运行数据
-- `SHA256SUMS.txt` 已按当前源码快照重新生成，覆盖除自身外的源码、测试、前端与 demo case 文件，并通过 394 项校验
+- `SHA256SUMS.txt` 已按当前源码快照重新生成，覆盖除自身外的源码、测试、前端与 demo case 文件，并通过 499 项校验
 - 所有路径均为相对路径，无绝对路径/符号链接

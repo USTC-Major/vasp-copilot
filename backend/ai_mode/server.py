@@ -53,7 +53,7 @@ logger = logging.getLogger("ai_mode")
 _ACTIVE_STOPS: dict[tuple[str, str], bool] = {}
 
 APP_TITLE = "VASP-Doctor 智能模式"
-APP_VERSION = "0.1.0-m1"
+APP_VERSION = "0.2.0"
 
 
 def _mask(config) -> dict:
