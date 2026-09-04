@@ -9,6 +9,54 @@
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-09-05
+
+### Fixed
+
+- 修正自动 K 点网格的 KPPA 语义：目标总 K 点数现在按
+  `KPPA ÷ 原子数` 计算，并依据倒易晶格长度分配各方向网格。
+- 修正 band 工作流 KPOINTS 的 VASP Line-mode 格式和倒易坐标声明，
+  避免生成语义错误或不可识别的能带路径文件。
+- 诊断服务现在记录 CHGCAR/WAVECAR 的存在性、大小与哈希证据，供续算与
+  故障判断使用，但不会预览或向 LLM 暴露二进制内容。
+- 无 HPC 执行后端时不再生成看似可提交的授权卡；空提交脚本也会在预检前
+  fail closed。
+
+### Changed
+
+- AI Mode 的 INCAR 修改改为结构化参数提案，经确定性校验、序列化、差异预览
+  和精确哈希绑定后，必须由用户单次确认才会原子写入。
+- AI Mode 的 KPOINTS 只能由确定性生成器产生；提交脚本必须由用户提供，
+  并按路径、大小和 SHA-256 认领，LLM 不再代写脚本或自由执行命令。
+- 提交、上传和文件修改授权统一为一次性状态机；确认内容、预检快照或目标
+  变化后原确认立即失效，依赖作业也不再继承旧确认自动补提。
+- 前端明确显示实际执行环境（Real/Fake/None），不再用 LLM 状态冒充 HPC
+  运行模式。
+
+### Security
+
+- 禁用 LLM 可达的任意本地/远端命令执行、通用输入写入和远端脚本写入工具。
+- SSH 改为严格 known_hosts 校验，未知或变化的主机密钥会被拒绝，不再自动
+  信任首次连接。
+- SFTP 上传采用同目录临时文件、SHA-256 核对和原子重命名；提交前重新校验
+  输入、脚本、执行环境与预检摘要，降低确认后被替换和重复提交风险。
+- 密钥接口改为只写状态模型，不提供明文回显；环境变量来源的密钥不会写入
+  config.json，且前端不会错误显示为可清除的本地密钥。
+- scheduler 调用采用单任务锁和持久化执行状态，结果不确定时标记 unknown
+  且不自动重试，实现尽力而为的 at-most-once 语义。
+
+### Known limitations
+
+- 当前仍是单用户、本地/可信网络工具，没有登录、租户隔离和公网安全防护。
+- 本版本没有在真实 Docker、SSH、HPC 或 Slurm 环境执行端到端测试；上线真实
+  集群前仍需按目标集群配置 known_hosts、队列与提交脚本并人工验收。
+- 本地 LLM 与 Materials Project 密钥仍可保存在用户目录的 config.json；
+  SSH 密码继续使用系统 keyring，后续可统一迁移密钥存储。
+- 结构化 INCAR 使用保守标签白名单，高级或站点特有标签可能被拒绝，需要扩展
+  白名单并增加测试后才能启用。
+- scheduler 的 at-most-once 为进程与持久化状态层面的尽力保证，无法替代
+  Slurm 侧幂等键或人工核对未知提交结果。
+
 ## [0.2.0] - 2026-09-03
 
 ### Added
@@ -129,7 +177,8 @@
 - 建立 Recipe Pack 驱动的 INCAR、KPOINTS、POSCAR 与提交脚本生成流程。
 - 建立 FastAPI 后端、React 前端、自动化测试、Docker 配置和演示用例。
 
-[Unreleased]: https://github.com/USTC-Major/vasp-copilot/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/USTC-Major/vasp-copilot/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/USTC-Major/vasp-copilot/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/USTC-Major/vasp-copilot/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/USTC-Major/vasp-copilot/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/USTC-Major/vasp-copilot/compare/v0.1.0...v0.1.1

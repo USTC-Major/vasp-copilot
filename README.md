@@ -1,12 +1,12 @@
-# VASP-Copilot v0.2.0（VASP-Doctor × Workflow Builder）
+# VASP-Copilot v0.2.1（VASP-Doctor × Workflow Builder）
 
 VASP 计算**诊断**（vasp-doctor）与**工作流生成**（vasp-copilot / Workflow Builder）一体化后端 + 前端源码包。
 
-> v0.2.0 新增**智能模式（AI Mode）**与参赛部署链路（三服务 Compose、
-> 一键启动脚本、Nginx 反代），详见 [CHANGELOG.md](./CHANGELOG.md) `[0.2.0]`
-> 与本文 2.0/2.4/2.5 节。
+> v0.2.1 修正 KPOINTS 科学语义并收紧**智能模式（AI Mode）**的授权、
+> 文件写入、SSH、密钥与 Slurm 提交边界；v0.2.0 引入的三服务部署方式保持
+> 兼容。详见 [CHANGELOG.md](./CHANGELOG.md) `[0.2.1]` 与本文 2.4/6 节。
 
-- 当前稳定版本：[v0.2.0](https://github.com/USTC-Major/vasp-copilot/releases/tag/v0.2.0)
+- 当前稳定版本：[v0.2.1](https://github.com/USTC-Major/vasp-copilot/releases/tag/v0.2.1)
 - 完整更新记录：[CHANGELOG.md](./CHANGELOG.md)
 
 - 上传一个 VASP 运行目录 zip，依次完成：`安全解压 → 文件识别 → 解析 → 规则诊断 → 修复建议 → Markdown 报告 → （可选）LLM 通俗解释与追问`；
@@ -156,11 +156,11 @@ docker compose down -v               # 彻底清理（连同全部数据）
 
 智能模式让用户用**自然语言**驱动完整的 VASP 计算闭环：
 
-> 规划 → 建目录 → 预检 → 生成输入 → 确认 sbatch → 提交 → 后台监控/自动补提 → 查错 → 结果报告
+> 规划 → 建目录 → 生成/准备输入 → 预检 → 单次确认 sbatch → 提交 → 后台监控 → 下游重新预检/确认 → 查错 → 结果报告
 
 - 双工作区：本地工作区与超算工作区（SSH）同名对应，计算与提交都发生在超算侧；本地 Fake HPC 可离线演示全流程；
-- 依赖链：多作业（如 relax → relax/static → relax/static/dos）自动排序、前序完成自动补提，失败自动级联阻断；
-- 安全边界：本地绝不写提交脚本（*.sh 由用户提供或经确认写入超算）；sbatch 必须经用户确认卡片；AI 生成的命令经策略门卫分级（红线直接拒、高风险需确认、日常操作免打扰）；
+- 依赖链：多作业（如 relax → relax/static → relax/static/dos）自动排序；前序完成后下游作业重新预检并等待新的单次确认，失败则级联阻断；
+- 安全边界：LLM 不可自由执行本地/远端命令，也不能代写提交脚本；用户提供的 `*.sh` 必须按路径、大小和 SHA-256 认领；INCAR 仅接受结构化提案并经差异预览与精确确认；每次 `sbatch` 都需要与当前预检快照绑定的一次性确认；
 - 后台监控：提交后无需人工盯梢，按可配置间隔（默认 60s，设置页可改）自动推进，全部完成后自动生成报告；作业失败时报告开头点名失败作业与原因；
 - 进度页：「查看当前进度」实时展示作业依赖链、等待队列、预检问题与计算报告。
 
@@ -170,7 +170,7 @@ docker compose down -v               # 彻底清理（连同全部数据）
 
 1. 启动三服务（2.0 节），打开 http://127.0.0.1:5173；
 2. **诊断链路**：进入诊断页，上传 `backend/examples/sample_run/` 打包的 zip（或用 `demo_cases/failed_runs/` 里的故障样例，如 `scf_reached_nelm`），查看规则诊断报告与修复建议；
-3. **智能模式**：进入智能模式 → 新建项目 → 新建任务 → 在设置里确认「本地 Fake HPC」开启 → 对话框输入目标（如「对 Si 做结构优化，然后算态密度」）→ 依次确认规划、输入文件与 sbatch 确认卡 → 之后无需操作，作业链自动推进直到报告生成；
+3. **智能模式**：进入智能模式 → 新建项目 → 新建任务 → 确认页面显示的实际运行环境为 Fake/Real → 输入目标（如「对 Si 做结构优化，然后算态密度」）→ 审核结构化输入提案、用户提交脚本及预检摘要 → 对每次写入/上传/`sbatch` 分别作一次性确认；依赖作业完成后需重新预检并确认；
 4. **进度页**：点击聊天区上方「查看当前进度」，查看作业依赖链与报告；
 5. **全链路冒烟**：`cd backend && python scripts/smoke_test.py`（上传 → 诊断 → 报告 → 预览 → 下载修复）。
 
@@ -209,12 +209,13 @@ python -B -m pytest tests -q              # 全量测试（doctor 诊断 + BE-A 
 python scripts/export_openapi.py          # 导出 backend/openapi.json（供前端 TS 类型）
 ```
 
-v0.2.0 发布验证：
+v0.2.1 发布验证：
 
-- 后端测试：`841 passed`（含工具箱主后端与 ai_mode）；
-- 前端测试：`37 passed`；
+- 后端测试：`985 passed`（含工具箱主后端与 ai_mode）；
+- AI Mode 定向测试：`495 passed`；
+- 前端测试：`38 passed`；
 - lint 0 errors（保留既有 Fast Refresh warnings）；Vite production build 成功，页面级代码分包；
-- 完整性校验：`SHA256SUMS.txt` 共 499 项，0 项失败。
+- 完整性校验：`SHA256SUMS.txt` 共 501 项，0 项失败。
 
 Compose/YAML、端口和持久化映射已完成静态校验；真实 docker compose build/up 尚待具备 Docker 的环境验证。
 
@@ -230,6 +231,8 @@ powershell -ExecutionPolicy Bypass -File backend\run_ci.ps1   # Windows
 - **诊断链路**：上传 zip → 安全解压（防路径逃逸/zip bomb）→ 文件识别（INCAR/OUTCAR/OSZICAR/POSCAR/CONTCAR/CIF/KPOINTS/日志）→ 规则诊断（证据+严重度）→ 修复建议 → Markdown 报告 → 下一步门控；
 - **CIF 转换**：通过 pymatgen 保留真实晶格与原子坐标；无效、缺坐标、无序、部分占据及多结构 CIF 采用 fail-closed 处理，不生成占位坐标；
 - **OSZICAR 诊断**：区分真实电子迭代与离子步汇总，支持 DAV/RMM/CG/DMP/SDA，并为 NELM、NSW 与 SCF 震荡提供对应文件证据；
+- **KPOINTS 科学语义**：自动网格按标准 KPPA÷原子数确定目标总 K 点数，并依据倒易晶格分配各方向网格；band 路径使用合法的 VASP Line-mode/Reciprocal 格式；
+- **续算文件证据**：诊断记录 CHGCAR/WAVECAR 的存在性、大小与哈希，但不读取其二进制正文或交给 LLM；
 - **工作流生成**：`POST /api/v1/workflows/plan|generate`，支持 AI 规划（自然语言→DAG，LLM 不稳定自动降级）与手工确认；产物含 workflow_plan.json / workflow_manifest.json / README_run_order.md / INPUT_CHECK_REPORT.md / POTCAR_REQUIRED.md 与各 step 输入文件，zip 字节级可复现；
 - **DFT+U 参数确认**：DFT+U 默认关闭；U/J/L 由用户填写并逐条明确确认；用户修改 element/L/U/J 后原有确认自动失效，必须重新确认；生成前展示最终参数摘要，摘要与实际 API payload 使用同一快照；
 - **scheduler 参数一致性**：scheduler 参数从 plan 到 generate replay 保持一致（节点数、每节点任务数、墙钟时间、VASP 可执行文件提示）；
@@ -237,6 +240,7 @@ powershell -ExecutionPolicy Bypass -File backend\run_ci.ps1   # Windows
 - **HPC 桥接**：P1 Fake 适配器完整状态机（plan → preflight → 授权部署 → 提交 → 回收），只生成不执行、argv 白名单、幂等防重放；
 - **LLM 解释与对话**：`POST /api/v1/chat` 通用多轮对话（模型设置界面配置，默认关闭）；agent/handle 自然语言映射为诊断工具；
 - **plots 输出**：SCF 曲线只使用真实电子迭代能量；证据不足时返回空序列、不伪造曲线；磁矩以结构化序列供前端直接绘图。
+- **AI Mode 受控写入与提交**：INCAR/KPOINTS 分别走结构化校验器与确定性生成器；提交脚本必须由用户提供并认领；授权卡单次有效且绑定目标、内容哈希、预检摘要和实际运行环境。
 
 ## 6. 安全边界与已知限制
 
@@ -244,7 +248,11 @@ powershell -ExecutionPolicy Bypass -File backend\run_ci.ps1   # Windows
 - 存储为**内存 + TTL 临时文件**，单用户本地/演示定位；公网/多人使用前必须补认证、CSRF 与租户隔离；
 - 二进制文件（WAVECAR/CHGCAR/POTCAR 等）预览一律拒绝；OUTCAR 预览限 500 行；
 - `vasp_binary_hint` 已有前端 token 白名单（仅允许安全的可执行文件名或 POSIX 路径，拒绝 shell 运算符）；后端 SchedulerSettings 的 shell 字段统一服务端校验仍是启用真实 HPC 自动提交前的阻塞项；
-- 生成链路零 LLM、零 HPC、零网络，可离线完整运行。
+- AI Mode 禁止 LLM 任意执行命令、通用写文件或代写 shell 脚本；INCAR/KPOINTS、上传和提交分别受结构化校验、哈希绑定与一次性确认约束；
+- SSH 只接受系统或用户明确配置的 known_hosts，未知/变化主机密钥 fail closed；密钥 API 不提供明文回显，环境变量秘密不会持久化到 config.json；
+- `Real`/`Fake`/`None` 表示实际 HPC 执行后端，不表示 LLM 类型；`None` 不会生成提交确认卡；
+- 主工作流的确定性生成链路仍为零 LLM、零 HPC、零网络，可离线运行；AI Mode 的自然语言规划可调用用户配置的 LLM，但所有副作用由确定性边界控制；
+- 当前仍是单用户、本地/可信网络定位；真实 Docker、SSH、HPC、Slurm 尚未在本版本环境完成端到端实机验证。
 
 ## 7. 完整性校验（SHA256SUMS.txt）
 
@@ -259,9 +267,9 @@ Get-FileHash -Algorithm SHA256 <file>   # 与清单逐项比对
 
 ## 8. 打包信息
 
-- 当前稳定版本：v0.2.0
-- 发布页面：https://github.com/USTC-Major/vasp-copilot/releases/tag/v0.2.0
+- 当前稳定版本：v0.2.1
+- 发布页面：https://github.com/USTC-Major/vasp-copilot/releases/tag/v0.2.1
 - GitHub 自动提供 Source code (zip) 与 Source code (tar.gz)
 - 当前 Git 工作目录为精简源码副本，不包含虚拟环境、`node_modules`、缓存或运行数据
-- `SHA256SUMS.txt` 已按当前源码快照重新生成，覆盖除自身外的源码、测试、前端与 demo case 文件，并通过 499 项校验
+- `SHA256SUMS.txt` 已按当前源码快照重新生成，覆盖除自身外的源码、测试、前端与 demo case 文件，并通过 501 项校验
 - 所有路径均为相对路径，无绝对路径/符号链接
