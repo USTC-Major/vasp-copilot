@@ -356,10 +356,12 @@ class WorkflowGenerationPipeline:
         lattice: Dict[str, Any] = {}
         if structure.lattice is not None:
             info = structure.lattice
+            # matrix 与 abc/angles 并行传入：派生层以 matrix 为唯一几何真值，
+            # abc/angles 仅作容差内一致性交叉校验（矛盾则 fail closed）。
+            if info.matrix:
+                lattice["matrix"] = [list(row) for row in info.matrix]
             if info.a is not None and info.b is not None and info.c is not None:
                 lattice["abc"] = [info.a, info.b, info.c]
-            elif info.matrix:
-                lattice["matrix"] = [list(row) for row in info.matrix]
             if info.alpha is not None and info.beta is not None and info.gamma is not None:
                 lattice["angles"] = [info.alpha, info.beta, info.gamma]
         return {
@@ -387,7 +389,11 @@ class WorkflowGenerationPipeline:
         if task == TaskType.BAND:
             return KpointsSpec(mode="line_mode", line_density=int(kppa))
         derived_inputs = self._derived_inputs(request, task)
-        grid_info = generate_kpoint_grid({"kppa": kppa, "lattice": derived_inputs["lattice"]})
+        grid_info = generate_kpoint_grid({
+            "kppa": kppa,
+            "atom_count": request.structure.atom_count,
+            "lattice": derived_inputs["lattice"],
+        })
         return KpointsSpec(
             mode="automatic_density",
             kppa=kppa,

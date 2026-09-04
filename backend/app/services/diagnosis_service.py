@@ -147,6 +147,15 @@ def _load_parsed(base_dir: Path, job_log: Optional[str]) -> ParsedRunData:
     if kpoints_text is not None:
         parsed.kpoints = parse_kpoints(kpoints_text)
         parsed.source_files.append("KPOINTS")
+    # CHGCAR/WAVECAR：仅存在性证据（供 ICHARG=11 / line-mode 规则使用），
+    # 只调 is_file，不调 _read/read_text 也不交给任何 parser；以规范名写入，
+    # 磁盘大小写变体（如 chgcar）归一为规范名且每规范名至多一条；
+    # WAVECAR.1 / CHGCAR.old / CHGCAR_sum 等变体不算主文件证据。
+    for _canonical in ("CHGCAR", "WAVECAR"):
+        for _cand in sorted(base_dir.iterdir()):
+            if _cand.is_file() and _cand.name.upper() == _canonical:
+                parsed.source_files.append(_canonical)
+                break
     # CIF is an accepted structure format (design 13.4: POSCAR, CIF).
     cif_path = None
     for _cand in sorted(base_dir.iterdir()):

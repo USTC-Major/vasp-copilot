@@ -130,4 +130,42 @@ class TestRequestValidation:
         band = result.steps[-1]
         assert band.step_id == "04_band"
         kpoints = result.bundle.files["04_band/KPOINTS"].decode("utf-8")
-        assert kpoints.splitlines()[2] == "Reciprocal"
+        # VASP Line-mode 官方四行头：comment / divisions / Line-mode / Reciprocal。
+        # 旧断言 splitlines()[2] == "Reciprocal" 固化了缺失 Line-mode 行的非法格式。
+        lines = kpoints.splitlines()
+        assert lines[2] == "Line-mode"
+        assert lines[3] == "Reciprocal"
+
+    def test_band_kpoints_line_mode_end_to_end(self, nacl_request):
+        """端到端：pipeline 生成的 04_band/KPOINTS 必须是合法 Line-mode 端点对格式。"""
+
+        from backend.app.parsers.kpoints import parse_kpoints
+
+        nacl_request.requested_tasks.append(TaskType.BAND)
+        nacl_request.enable_band_workflow = True
+        result = WorkflowGenerationPipeline().generate(nacl_request)
+        text = result.bundle.files["04_band/KPOINTS"].decode("utf-8")
+        lines = text.splitlines()
+        assert len(lines) >= 6
+        assert lines[2] == "Line-mode"
+        assert lines[3] == "Reciprocal"
+        divisions = int(lines[1])
+        assert divisions >= 1
+        assert text.endswith("\n") and not text.endswith("\n\n")
+        body = text.split("Reciprocal\n", 1)[1]
+        pairs = body.rstrip("\n").split("\n\n")
+        assert pairs, "04_band/KPOINTS 必须列出高对称路径端点对"
+        endpoint_count = 0
+        for pair in pairs:
+            endpoints = pair.split("\n")
+            assert len(endpoints) == 2, f"每段必须恰为起点/终点两行，实际 {endpoints}"
+            for line in endpoints:
+                assert "!" in line
+                assert len(line.split("!")[0].split()) == 3
+                assert line.split("!")[1].strip()
+            endpoint_count += 2
+        assert endpoint_count == 2 * len(pairs)
+        parsed = parse_kpoints(text)
+        assert parsed.line_mode is True
+        assert parsed.mode == "Line-mode"
+        assert parsed.nkpts == divisions

@@ -1,5 +1,5 @@
 {
-  "bundle_sha256": "46b3b753e697270be9adc53051cb17b6c9f26cc27e47b46d0c64dd6e0a88c1cd",
+  "bundle_sha256": "56df1320551f097b7022c6e43dc9699f7dcdc2267e60527982d4846637b10917",
   "created_at": "2026-08-10T00:00:00Z",
   "files": [
     {
@@ -9,8 +9,8 @@
     },
     {
       "path": "01_relax/KPOINTS",
-      "sha256": "320dcbe1e8c36d603caff2d38b53675a902099e8098ba5a4534b41bfa235f8c2",
-      "size_bytes": 72
+      "sha256": "66125fe661af94555069b29625b9b5fe597483c3de44f05b1a28b42b7ccae98e",
+      "size_bytes": 71
     },
     {
       "path": "01_relax/POSCAR",
@@ -29,8 +29,8 @@
     },
     {
       "path": "02_static/KPOINTS",
-      "sha256": "54d18b14e318ed6d310f4baafc282e1a29b832f6713645f1a83ce36b7ea30b8f",
-      "size_bytes": 73
+      "sha256": "61f8ea8bbbd2811eebb436f5855c0cf039f5b660c7fcaefc42edf609b96c7872",
+      "size_bytes": 72
     },
     {
       "path": "02_static/POSCAR",
@@ -49,8 +49,8 @@
     },
     {
       "path": "03_dos/KPOINTS",
-      "sha256": "ca90b18e0ed40e40553b8a27e026649fb1896d35db4e85ffbe81ac2626ee68a2",
-      "size_bytes": 70
+      "sha256": "269b2eac31b81ca4f5383038a32339981098d2836a8ebbac6f46cb82374dd477",
+      "size_bytes": 71
     },
     {
       "path": "03_dos/POSCAR",
