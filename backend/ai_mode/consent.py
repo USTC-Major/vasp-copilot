@@ -1,154 +1,296 @@
-"""授权卡片 ↔ 任务流程的中转层（M47）。
+"""Persistent, single-use consent actions for AI-mode mutations.
 
-卡片 / 同意 / 拒绝状态持久化在 ``task.flow.consent``：
-    {
-      "cards":   {card_id: CardPayload},
-      "grants":  [batch_key, ...],
-      "denials": [batch_key, ...],
-    }
-
-- 工具（run_exec / hpc_exec）命中 HOLD 时：生成卡片并抛 PendingConsentError 暂停本轮对话；
-- 用户在 UI 点「同意/拒绝」→ ``POST /messages/consent`` 调 resolve_card() 写入 grants/denials；
-- 续跑时工具用 grants/denials 重新评估：granted -> ALLOW+permits 带提权执行；denied -> 不再弹卡。
-- 真实提交确认卡片（confirm_submit）由 chat 层生成，同意后直接驱动 orchestrator 提交（红线不变）。
+Consent is an action state machine, not a reusable permission grant. Every
+card binds one exact operation payload with a SHA-256 digest and a short
+expiry. Approval only advances that action to ``approved``; an executor must
+atomically claim it before performing the bound operation.
 """
 from __future__ import annotations
 
+import hashlib
+import json
+import threading
 import uuid
-from datetime import datetime, timezone
-from typing import Any
+from datetime import datetime, timedelta, timezone
 
 __all__ = [
-    "PendingConsentError",
-    "consent_of",
-    "list_cards",
-    "get_card",
-    "save_card",
-    "resolve_card",
-    "grants_of",
-    "denials_of",
-    "card_payload",
-    "spawn_submit_card",
+    "PendingConsentError", "consent_of", "list_cards", "get_card",
+    "save_card", "resolve_card", "claim_action", "finish_action",
+    "grants_of", "denials_of", "card_payload", "spawn_submit_card",
+    "task_lock",
 ]
 
-_CARDS_KEY = "cards"
-_GRANTS_KEY = "grants"
-_DENIALS_KEY = "denials"
+_ACTIONS_KEY = "actions"
+_CARDS_KEY = "cards"  # compatibility projection; never authoritative
+_LOCKS: dict[tuple[str, str], threading.RLock] = {}
+_LOCKS_GUARD = threading.Lock()
 
 
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _iso(value: datetime | None = None) -> str:
+    return (value or _now()).replace(microsecond=0).isoformat()
+
+
+def task_lock(project_id: str, task_id: str) -> threading.RLock:
+    """Return the shared re-entrant lock for all state changes on one task."""
+    key = (project_id, task_id)
+    with _LOCKS_GUARD:
+        return _LOCKS.setdefault(key, threading.RLock())
+
+
+_lock_for = task_lock
+
+
+def _canonical(value: object) -> bytes:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True,
+                      separators=(",", ":")).encode("utf-8")
+
+
+def _binding_hash(binding: dict) -> str:
+    return hashlib.sha256(_canonical(binding)).hexdigest()
+
+
+def _expired(action: dict) -> bool:
+    raw = str(action.get("expires_at") or "")
+    try:
+        return datetime.fromisoformat(raw) <= _now()
+    except (TypeError, ValueError):
+        return True
+
+
+def _valid_binding(action: dict) -> bool:
+    binding = action.get("binding")
+    return (isinstance(binding, dict)
+            and action.get("binding_hash") == _binding_hash(binding))
 
 
 def consent_of(flow: dict) -> dict:
-    """归一化读取 flow['consent'] 缺省字典。"""
     cons = flow.get("consent")
     if not isinstance(cons, dict):
         cons = {}
+    cons.setdefault(_ACTIONS_KEY, {})
     cons.setdefault(_CARDS_KEY, {})
-    cons.setdefault(_GRANTS_KEY, [])
-    cons.setdefault(_DENIALS_KEY, [])
+    # Old batch grants are deliberately discarded. They must never authorize
+    # a new or replayed operation.
+    cons["grants"] = []
+    cons["denials"] = []
     return cons
+
+
+def _sync_cards(cons: dict) -> None:
+    cons[_CARDS_KEY] = {
+        aid: action for aid, action in cons[_ACTIONS_KEY].items()
+        if action.get("state") == "pending"
+    }
 
 
 def _save_flow(store, project_id: str, task_id: str, flow: dict,
                cons: dict) -> None:
+    _sync_cards(cons)
     flow["consent"] = cons
-    flow["updated_at"] = _now_iso()
+    flow["updated_at"] = _iso()
+    task = store.get_task(project_id, task_id) or {}
     store.update_task(project_id, task_id, flow=dict(flow),
-                      status=(flow.get("status") or store.get_task(project_id,
-                                                                   task_id)
-                              or {}).get("status", "planned"))
+                      status=flow.get("status") or task.get("status", "planned"))
 
 
-def list_cards(store, project_id: str, task_id: str) -> list[dict]:
+def _load(store, project_id: str, task_id: str) -> tuple[dict, dict]:
     flow = (store.get_task(project_id, task_id) or {}).get("flow") or {}
-    cons = consent_of(flow)
-    return list(cons.get(_CARDS_KEY, {}).values())
-
-
-def get_card(store, project_id: str, task_id: str,
-             card_id: str) -> dict | None:
-    flow = (store.get_task(project_id, task_id) or {}).get("flow") or {}
-    cons = consent_of(flow)
-    return cons.get(_CARDS_KEY, {}).get(card_id)
+    flow = dict(flow)
+    return flow, consent_of(flow)
 
 
 def card_payload(*, tool: str, args: dict, risk: str, reason: str,
                  batch_key: str, kind: str, summary: str,
-                 options: list[str] | None = None) -> dict:
-    """构造给前端/事件的卡片载荷（不含时间，保持可预测）。"""
+                 options: list[str] | None = None,
+                 binding: dict | None = None,
+                 expires_seconds: int = 600) -> dict:
+    """Construct a hash-bound action and its user-visible card payload."""
+    action_id = uuid.uuid4().hex
+    created = _now()
+    expires_at = _iso(created + timedelta(seconds=max(1, expires_seconds)))
+    exact = dict(binding or {
+        "operation": tool,
+        "args": dict(args or {}),
+        "kind": kind,
+    })
+    exact["action_id"] = action_id
+    exact["expires_at"] = expires_at
     return {
-        "card_id": uuid.uuid4().hex,
+        "action_id": action_id,
+        "card_id": action_id,
         "tool": tool,
         "args": dict(args or {}),
         "risk": risk,
         "reason": reason,
-        "options": options or ["同意本次", "同意本批", "拒绝"],
-        "batch_key": batch_key,
-        "kind": kind,          # workspace（本地/远端操作提权） | submit（提交确认）
+        "options": list(options or ["同意本次", "拒绝"]),
+        "batch_key": batch_key,  # display/dedup hint only; never a grant key
+        "kind": kind,
         "summary": summary,
+        "execution_mode": str(exact.get("execution_mode") or "None"),
+        "state": "pending",
+        "binding": exact,
+        "binding_hash": _binding_hash(exact),
+        "created_at": _iso(created),
+        "expires_at": expires_at,
     }
 
 
 def save_card(store, project_id: str, task_id: str, flow: dict,
               payload: dict) -> dict:
-    """把一张卡片写入任务 flow.consent 并返回卡片。"""
-    load = consent_of(flow)
-    # 同 batch_key 的旧卡先清（不重复弹卡）
-    cards = {cid: c for cid, c in load[_CARDS_KEY].items()
-             if c.get("batch_key") != payload.get("batch_key")}
-    payload.setdefault("at", _now_iso())
-    cards[payload["card_id"]] = payload
-    load[_CARDS_KEY] = cards
-    _save_flow(store, project_id, task_id, flow, load)
-    return payload
+    """Persist one immutable pending action; identical pending actions dedupe."""
+    del flow  # always reload under the task lock to avoid stale-flow overwrite
+    with _lock_for(project_id, task_id):
+        current, cons = _load(store, project_id, task_id)
+        if not _valid_binding(payload) or payload.get("state") != "pending":
+            raise ValueError("invalid consent action binding")
+        for action in cons[_ACTIONS_KEY].values():
+            if action.get("state") == "pending" and _expired(action):
+                action["state"] = "expired"
+                action["resolved_at"] = _iso()
+                action["result"] = "操作确认已过期，未执行"
+                continue
+            if (action.get("state") == "pending"
+                    and action.get("batch_key")
+                    and action.get("batch_key") == payload.get("batch_key")):
+                return dict(action)
+        cons[_ACTIONS_KEY][payload["action_id"]] = dict(payload)
+        _save_flow(store, project_id, task_id, current, cons)
+        return dict(payload)
 
 
-def _key_lists(cons: dict) -> tuple[list[str], list[str]]:
-    return (cons.get(_GRANTS_KEY, []), cons.get(_DENIALS_KEY, []))
+def _expire_locked(store, project_id: str, task_id: str,
+                   flow: dict, cons: dict, action: dict) -> bool:
+    if action.get("state") in {"pending", "approved"} and _expired(action):
+        action["state"] = "expired"
+        action["resolved_at"] = _iso()
+        action["result"] = "操作确认已过期，未执行"
+        _save_flow(store, project_id, task_id, flow, cons)
+        return True
+    return False
+
+
+def list_cards(store, project_id: str, task_id: str) -> list[dict]:
+    with _lock_for(project_id, task_id):
+        flow, cons = _load(store, project_id, task_id)
+        changed = False
+        for action in cons[_ACTIONS_KEY].values():
+            if action.get("state") == "pending" and _expired(action):
+                action["state"] = "expired"
+                action["resolved_at"] = _iso()
+                action["result"] = "操作确认已过期，未执行"
+                changed = True
+        if changed:
+            _save_flow(store, project_id, task_id, flow, cons)
+        return [dict(a) for a in cons[_ACTIONS_KEY].values()
+                if a.get("state") == "pending"]
+
+
+def get_card(store, project_id: str, task_id: str,
+             card_id: str) -> dict | None:
+    with _lock_for(project_id, task_id):
+        flow, cons = _load(store, project_id, task_id)
+        action = cons[_ACTIONS_KEY].get(card_id)
+        if action is None:
+            return None
+        _expire_locked(store, project_id, task_id, flow, cons, action)
+        return dict(action)
 
 
 def grants_of(store, project_id: str, task_id: str) -> list[str]:
-    flow = (store.get_task(project_id, task_id) or {}).get("flow") or {}
-    return list(consent_of(flow).get(_GRANTS_KEY, []))
+    """Compatibility API: reusable consent grants no longer exist."""
+    return []
 
 
 def denials_of(store, project_id: str, task_id: str) -> list[str]:
-    flow = (store.get_task(project_id, task_id) or {}).get("flow") or {}
-    return list(consent_of(flow).get(_DENIALS_KEY, []))
+    """Compatibility API: decisions are recorded on individual actions."""
+    return []
 
 
 def resolve_card(store, project_id: str, task_id: str, card_id: str, *,
                  approved: bool, note: str = "") -> dict:
-    """处理一张卡片并落库：同意 -> 记入 grants；拒绝 -> 记入 denials；同时移除该卡。
+    """CAS a pending action to approved/rejected; terminal actions stay terminal."""
+    with _lock_for(project_id, task_id):
+        flow, cons = _load(store, project_id, task_id)
+        action = cons[_ACTIONS_KEY].get(card_id)
+        if action is None:
+            return {"approved": approved, "missing": True, "card_id": card_id}
+        if not _valid_binding(action):
+            action["state"] = "failed"
+            action["result"] = "确认绑定校验失败，未执行"
+            _save_flow(store, project_id, task_id, flow, cons)
+            return {"approved": False, "missing": False, "tampered": True,
+                    "card_id": card_id, "state": "failed"}
+        if _expire_locked(store, project_id, task_id, flow, cons, action):
+            return {"approved": False, "missing": False, "expired": True,
+                    "card_id": card_id, "state": "expired"}
+        if action.get("state") != "pending":
+            return {
+                "approved": action.get("state") in {"approved", "executing", "executed"},
+                "missing": False, "conflict": True, "card_id": card_id,
+                "state": action.get("state"),
+            }
+        action["state"] = "approved" if approved else "rejected"
+        action["resolved_at"] = _iso()
+        action["note"] = str(note or "")[:500]
+        _save_flow(store, project_id, task_id, flow, cons)
+        return {"approved": approved, "missing": False, "card_id": card_id,
+                "tool": action.get("tool", ""), "state": action["state"]}
 
-    返回 (approved, batch_key, tool, note) 相关信息字典。
-    """
-    flow = (store.get_task(project_id, task_id) or {}).get("flow") or {}
-    cons = consent_of(flow)
-    cards = cons[_CARDS_KEY]
-    card = cards.get(card_id)
-    if card is None:
-        return {"approved": approved, "batch_key": "", "tool": "",
-                "note": note or "", "missing": True}
-    batch_key = card.get("batch_key") or ""
-    tool = card.get("tool") or ""
-    if approved:
-        if batch_key and batch_key not in cons[_GRANTS_KEY]:
-            cons[_GRANTS_KEY].append(batch_key)
-    else:
-        if batch_key and batch_key not in cons[_DENIALS_KEY]:
-            cons[_DENIALS_KEY].append(batch_key)
-    cards.pop(card_id, None)
-    _save_flow(store, project_id, task_id, flow, cons)
-    return {"approved": approved, "batch_key": batch_key, "tool": tool,
-            "note": note or "", "missing": False, "card_id": card_id}
+
+def claim_action(store, project_id: str, task_id: str,
+                 action_id: str) -> dict | None:
+    """Atomically claim exactly one approved, unexpired, untampered action."""
+    with _lock_for(project_id, task_id):
+        flow, cons = _load(store, project_id, task_id)
+        action = cons[_ACTIONS_KEY].get(action_id)
+        if action is None or action.get("state") != "approved":
+            return None
+        inflight = [other for key, other in cons[_ACTIONS_KEY].items()
+                    if key != action_id and other.get("state") == "executing"]
+        if inflight:
+            for other in inflight:
+                other["state"] = "unknown"
+                other["finished_at"] = _iso()
+                other["result"] = "上次执行被中断，结果未知；未自动重试"
+            action["state"] = "failed"
+            action["finished_at"] = _iso()
+            action["result"] = "存在结果未知的先前操作；本次未执行"
+            _save_flow(store, project_id, task_id, flow, cons)
+            return None
+        if not _valid_binding(action):
+            action["state"] = "failed"
+            action["result"] = "确认绑定校验失败，未执行"
+            _save_flow(store, project_id, task_id, flow, cons)
+            return None
+        if _expire_locked(store, project_id, task_id, flow, cons, action):
+            return None
+        action["state"] = "executing"
+        action["executing_at"] = _iso()
+        _save_flow(store, project_id, task_id, flow, cons)
+        return dict(action)
+
+
+def finish_action(store, project_id: str, task_id: str, action_id: str, *,
+                  state: str, result: str = "") -> dict | None:
+    if state not in {"executed", "failed", "unknown"}:
+        raise ValueError("invalid terminal action state")
+    with _lock_for(project_id, task_id):
+        flow, cons = _load(store, project_id, task_id)
+        action = cons[_ACTIONS_KEY].get(action_id)
+        if action is None or action.get("state") != "executing":
+            return None
+        action["state"] = state
+        action["finished_at"] = _iso()
+        action["result"] = str(result or "")[:2000]
+        _save_flow(store, project_id, task_id, flow, cons)
+        return dict(action)
 
 
 class PendingConsentError(Exception):
-    """工具执行中命中 HOLD：带着已持久化的卡片中止本轮对话，等待用户同意/拒绝。"""
-
     def __init__(self, card: dict):
         self.card = card
         self.card_id = card.get("card_id", "")
@@ -158,41 +300,46 @@ class PendingConsentError(Exception):
 
 
 def _stable_key(text: str) -> str:
-    """生成稳定作用域键（同一批草稿/远端目录只弹一张提交卡）。"""
     return uuid.uuid5(uuid.NAMESPACE_URL, str(text)).hex
 
 
 def spawn_submit_card(store, project_id: str, task_id: str) -> dict:
-    """await_submit 环节 -> 生成「确认提交」授权卡片。
-
-    只有用户通过卡片点「确认提交」才真正驱动 sbatch；「取消」则把流程置为已取消。
-    """
     flow = (store.get_task(project_id, task_id) or {}).get("flow") or {}
     jobs = (flow.get("plan") or {}).get("jobs") or []
-    active = [j for j in jobs
-              if j.get("status") not in
-              ("completed", "failed", "canceled", "skipped")]
-    dir_by_job: dict[str, str] = {}
-    for d in flow.get("draft") or []:
-        if isinstance(d, dict) and d.get("job_key") and d.get("dir"):
-            dir_by_job[str(d["job_key"])] = str(d["dir"])
+    active = [j for j in jobs if j.get("status") not in
+              ("completed", "failed", "not_converged", "canceled",
+               "skipped", "blocked", "unknown")]
+    dir_by_job = {str(d["job_key"]): str(d["dir"])
+                  for d in flow.get("draft") or []
+                  if isinstance(d, dict) and d.get("job_key") and d.get("dir")}
     lines = "\n".join(
         f"- {j.get('key')}（{j.get('label') or j.get('key')}）"
-        + (f"→ `{dir_by_job[j.get('key')]}`"
-           if j.get("key") in dir_by_job else "")
+        + (f"→ `{dir_by_job[j.get('key')]}`" if j.get("key") in dir_by_job else "")
         for j in active) or "（无待提交作业）"
-    remote = (flow.get("hpc_dir") or flow.get("local_dir") or "").strip()
-    drafts = sorted(str(d) for d in flow.get("draft") or [])
-    sig = _stable_key(f"{remote}|{drafts}")
+    remote = str(flow.get("hpc_dir") or flow.get("local_dir") or "").strip()
+    mode = str(flow.get("execution_mode") or "None")
+    precheck = flow.get("precheck") or {}
+    digest = str(precheck.get("digest") or "").lower()
+    if (mode not in {"Fake", "Real", "None"}
+            or not precheck.get("ok") or not precheck.get("hard")
+            or len(digest) != 64
+            or any(ch not in "0123456789abcdef" for ch in digest)):
+        raise ValueError("[AI_PRECHECK_REQUIRED] 必须先完成当前 HPC 环境的不可变硬预检")
+    binding = {
+        "operation": "submit",
+        "project_id": project_id,
+        "task_id": task_id,
+        "execution_kind": "slurm_sbatch",
+        "remote_root": remote,
+        "drafts": flow.get("draft") or [],
+        "execution_mode": mode,
+        "precheck_digest": digest,
+    }
     payload = card_payload(
-        tool="confirm_submit", args={},
-        risk="high",
-        reason=("这是真实的提交动作：确认后系统才会把草稿写入目标目录并执行 sbatch。"
-                "提交前请先核对作业内容与目标工作区。"),
-        batch_key=f"submit|{sig}",
-        kind="submit",
-        summary=f"确认提交到超算工作区 `{remote}`？\n{lines}",
-        options=["确认提交", "取消"],
+        tool="confirm_submit", args={}, risk="high",
+        reason="这是真实的提交动作；确认只对当前绑定草稿生效。",
+        batch_key=f"submit|{_stable_key(json.dumps(binding, sort_keys=True, ensure_ascii=False))}",
+        kind="submit", summary=f"确认提交到超算工作区 `{remote}`？\n{lines}",
+        options=["确认提交", "取消"], binding=binding,
     )
-    save_card(store, project_id, task_id, dict(flow), payload)
-    return payload
+    return save_card(store, project_id, task_id, dict(flow), payload)

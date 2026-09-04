@@ -394,8 +394,8 @@ export const aiApi = {
     aiRequest<{ mode: string; provider: string; ok: boolean; message: string }>(`/settings/test/${encodeURIComponent(provider)}`, { method: "POST" }),
   getSecretStatus: () =>
     aiRequest<{ mode: string; enabled: boolean; secrets: import("../types/ai").AiSecretStatus }>("/settings/secret-status"),
-  revealSecret: (kind: "llm" | "mp" | "ssh") =>
-    aiRequest<import("../types/ai").AiSecretReveal>("/settings/reveal", { method: "POST", body: { kind } }),
+  updateSecret: (kind: "llm" | "mp" | "ssh", action: "replace" | "clear", value?: string) =>
+    aiRequest<{ mode: string; ok: boolean; kind: string; configured: boolean; source: string; manageable: boolean; secret: import("../types/ai").AiSecretState }>(`/settings/secrets/${kind}`, { method: "PUT", body: { action, ...(value ? { value } : {}) } }),
 
   getProjectSettings: (projectId: string) =>
     aiRequest<{ mode: string; project_id: string; settings: import("../types/ai").AiProjectSettings }>(`/projects/${encodeURIComponent(projectId)}/settings`),

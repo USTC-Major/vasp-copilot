@@ -151,20 +151,20 @@ export interface AiSettingsOut {
   poll_interval_seconds?: number;
   billing_estimate_enabled?: boolean;
   llm: AiSettingsLlm;
-  ssh: { name: string; host: string; port: number; username: string };
+  ssh: { name: string; host: string; port: number; username: string; known_hosts_path?: string };
   materials_project: { api_key: string };
 }
 
-export interface AiSecretStatus {
-  llm: boolean;
-  mp: boolean;
-  ssh: boolean;
+export interface AiSecretState {
+  configured: boolean;
+  source: 'environment' | 'local_config' | 'credential_store' | 'none';
+  manageable: boolean;
 }
 
-export interface AiSecretReveal {
-  mode: string;
-  kind: "llm" | "mp" | "ssh";
-  value: string;
+export interface AiSecretStatus {
+  llm: AiSecretState;
+  mp: AiSecretState;
+  ssh: AiSecretState;
 }
 
 export interface AiProject {
@@ -195,6 +195,7 @@ export interface AiTask {
   updated_at: string;
   context_ratio?: number;
   last_message?: string;
+  execution_mode?: 'Fake' | 'Real' | 'None';
 }
 
 export interface AiTaskPatch {
@@ -281,6 +282,7 @@ export interface AiFlowJob {
 }
 
 export interface AiFlowDetail {
+  execution_mode?: 'Fake' | 'Real' | 'None';
   phase: string;
   goal: string;
   strategy: string;

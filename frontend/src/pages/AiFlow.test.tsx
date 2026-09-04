@@ -9,6 +9,7 @@ import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { routes } from '../router';
 import { aiDemo } from '../mocks/aiStore';
+import SecretInput from '../components/ai/SecretInput';
 
 function renderPath(path: string) {
   const router = createMemoryRouter(routes, { initialEntries: [path] });
@@ -55,6 +56,7 @@ describe('AI 前端整合（M12）', () => {
     const user = userEvent.setup();
     renderPath('/ai/projects/prj_001');
     expect(await screen.findByText('结构优化 + 静态 + DOS')).toBeInTheDocument();
+    expect(await screen.findByText('运行环境: None')).toBeInTheDocument();
     await user.clear(await screen.findByPlaceholderText(/描述计算需求/));
     await user.type(screen.getByPlaceholderText(/描述计算需求/), '对 NaCl 结构做 relax → static → dos 计算');
     await user.click(screen.getByRole('button', { name: /发送/ }));
@@ -88,22 +90,24 @@ describe('AI 前端整合（M12）', () => {
     expect(screen.getByText('已提交')).toBeInTheDocument();
     expect(screen.getByText('Slurm 作业号 12001')).toBeInTheDocument();
     expect(screen.getAllByText('等待前置').length).toBe(2);
-    expect(screen.getByText(/依赖：relax（前序完成后自动补提）/)).toBeInTheDocument();
+    expect(screen.getByText(/依赖：relax（满足后需重新确认提交）/)).toBeInTheDocument();
+    expect(screen.getAllByText('运行环境: None').length).toBeGreaterThan(0);
     // 等待队列：依赖闸门未放行的作业
     expect(screen.getByText('等待队列')).toBeInTheDocument();
     // 左任务栏保留：任务标题仍可见
     expect(await screen.findByText('结构优化 + 静态 + DOS')).toBeInTheDocument();
   });
 
-  it('M47 弹卡：高风险命令先生成授权卡片，可拒绝', async () => {
+  it('结构化 INCAR 草稿在写入前生成单次授权卡片，可拒绝', async () => {
     const user = userEvent.setup();
     renderPath('/ai/projects/prj_001');
     expect(await screen.findByText('结构优化 + 静态 + DOS')).toBeInTheDocument();
     await user.clear(await screen.findByPlaceholderText(/描述计算需求/));
-    await user.type(screen.getByPlaceholderText(/描述计算需求/), '帮我 rm -rf 删除文件缓存');
+    await user.type(screen.getByPlaceholderText(/描述计算需求/), '请为 relax 生成 INCAR 草稿并弹卡确认');
     await user.click(screen.getByRole('button', { name: /发送/ }));
     expect(await screen.findByText('操作授权')).toBeInTheDocument();
-    expect(screen.getByText(/需你授权后才能执行/)).toBeInTheDocument();
+    expect(screen.getByText(/写入前需你确认本次精确内容/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '同意本批' })).not.toBeInTheDocument();
     const rejectButton = await screen.findByRole('button', { name: /拒\s*绝/ });
     expect(rejectButton).toBeInTheDocument();
     await user.click(rejectButton);
@@ -122,5 +126,17 @@ describe('AI 前端整合（M12）', () => {
     expect(screen.getByText('最大作业数')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /测试 LLM/ })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /保存设置/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /显示原文/ })).not.toBeInTheDocument();
+    expect(screen.getByText(/不可查看或复制/)).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /清\s*除/ })).toHaveLength(3);
+  });
+
+  it('环境变量管理的密钥不可在页面替换或清除', () => {
+    render(<SecretInput hasSecret manageable={false} source="environment"
+      value="" onChange={() => undefined} onClear={() => undefined}
+      placeholder="环境变量" />);
+    expect(screen.getByText(/由环境变量管理/)).toBeInTheDocument();
+    expect(screen.getByLabelText('输入新的密钥以整体替换')).toBeDisabled();
+    expect(screen.getByRole('button', { name: /清\s*除/ })).toBeDisabled();
   });
 });

@@ -3,12 +3,13 @@
 - 私人信息（MP/LLM/SSH 密码）只存本地（LLM key 落 config.json、SSH 密码走系统
   凭据管理器），绝不上传、不进回包。
 - 对外回包一律走 mask_config()，密钥只出现 <redacted>；另设「只读状态」接口
-  返回是否已配置的布尔态，以及「点眼睛」时按需提取原文的 reveal 接口（仅前端本地展示）。
+  只返回是否已配置的布尔态；密钥只能整体替换或清除，永不回显原文。
 - 真连通：llm 走 M3 工厂（auto->openai 时真正 ping）；mp 用最小 GET 验证 key 有效性；
   ssh 用 M6 SSHManager 建连 + whoami（读系统凭据管理器密码）。
 """
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import Callable, Mapping, Optional
 
@@ -80,6 +81,7 @@ SETTABLE_FIELDS: dict[str, Callable[[object], Optional[str]]] = {
     "ssh_host": _str,
     "ssh_port": _port,
     "ssh_username": _str,
+    "ssh_known_hosts_path": _str,
     "mp_api_key": _str,
 }
 
@@ -121,6 +123,7 @@ def mask_config(config: AiModeConfig) -> dict:
             "host": config.ssh_host,
             "port": config.ssh_port,
             "username": config.ssh_username,
+            "known_hosts_path": config.ssh_known_hosts_path,
         },
         "materials_project": {"api_key": MASK if config.mp_api_key else ""},
     }
@@ -161,8 +164,8 @@ def persist(config: AiModeConfig, config_path=None) -> None:
 
 
 def writable_fields() -> list[str]:
-    """设置页可写字段（含仅凭据管理器处理的 ssh_password）。"""
-    return sorted(set(SETTABLE_FIELDS) | SECRET_FIELDS)
+    """Generic settings endpoint fields; secrets use dedicated write routes."""
+    return sorted(set(SETTABLE_FIELDS) - {"llm_api_key", "mp_api_key"})
 
 
 def _default_credential_store():
@@ -186,7 +189,7 @@ def store_ssh_password(config: AiModeConfig, password, *,
 
 def get_ssh_password(config: AiModeConfig, *,
                      credential_store=None) -> Optional[str]:
-    """读回凭据管理器里的密码（仅「眼睛」点击时用于前端本地展示）。"""
+    """Internal status helper; callers must never return this value to clients."""
     if not config.ssh_host or not config.ssh_username:
         return None
     store = credential_store or _default_credential_store()
@@ -196,13 +199,60 @@ def get_ssh_password(config: AiModeConfig, *,
         return None
 
 
+def update_secret(config: AiModeConfig, kind: str, action: str, value=None, *,
+                  credential_store=None, env=None) -> AiModeConfig:
+    """Replace or clear one secret without ever returning the previous value."""
+    kind = str(kind or "").strip().lower()
+    action = str(action or "").strip().lower()
+    if kind not in {"llm", "mp", "ssh"}:
+        raise ValueError("未知密钥类型（llm|mp|ssh）")
+    if action not in {"replace", "clear"}:
+        raise ValueError("action 必须是 replace 或 clear")
+    environment = os.environ if env is None else env
+    variable = {"llm": "AI_MODE_LLM_API_KEY",
+                "mp": "AI_MODE_MP_API_KEY"}.get(kind)
+    if variable and environment.get(variable):
+        raise ValueError(f"{kind} 密钥由环境变量 {variable} 管理，不能在页面替换或清除")
+    if kind == "ssh":
+        if not config.ssh_host or not config.ssh_username:
+            raise ValueError("管理 SSH 密码需先填写主机地址与用户名")
+        store = credential_store or _default_credential_store()
+        if action == "clear":
+            store.delete_password(config.ssh_host, config.ssh_username)
+        else:
+            secret = str(value or "")
+            if not secret:
+                raise ValueError("replace 需要非空 value")
+            store.set_password(config.ssh_host, config.ssh_username, secret)
+        return config
+    secret = "" if action == "clear" else str(value or "")
+    if action == "replace" and not secret:
+        raise ValueError("replace 需要非空 value")
+    field = "llm_api_key" if kind == "llm" else "mp_api_key"
+    return config.model_copy(update={field: secret})
+
+
 def secret_status(config: AiModeConfig, *,
-                  credential_store=None) -> dict:
-    """返回密钥「是否已配置」的布尔态（不回明文、不泄密）。"""
+                  credential_store=None, env=None) -> dict:
+    """Return non-secret provenance and manageability for each credential."""
+    environment = os.environ if env is None else env
+    def local_state(configured: bool, source: str = "local_config") -> dict:
+        return {"configured": configured,
+                "source": source if configured else "none",
+                "manageable": True}
+
+    llm = ({"configured": True, "source": "environment", "manageable": False}
+           if environment.get("AI_MODE_LLM_API_KEY") else
+           local_state(bool(config.llm_api_key)))
+    mp = ({"configured": True, "source": "environment", "manageable": False}
+          if environment.get("AI_MODE_MP_API_KEY") else
+          local_state(bool(config.mp_api_key)))
+    ssh_configured = get_ssh_password(
+        config, credential_store=credential_store) is not None
     return {
-        "llm": bool(config.llm_api_key),
-        "mp": bool(config.mp_api_key),
-        "ssh": get_ssh_password(config, credential_store=credential_store) is not None,
+        "llm": llm,
+        "mp": mp,
+        "ssh": local_state(ssh_configured, "credential_store"),
     }
 
 
@@ -258,7 +308,8 @@ def _ssh_test(cfg: AiModeConfig) -> dict:
     from ..ssh.credentials import KeyringCredentialStore
     try:
         manager = SSHManager(credentials=KeyringCredentialStore(),
-                             connect_timeout=10)
+                             connect_timeout=10,
+                             known_hosts_path=cfg.ssh_known_hosts_path or None)
         try:
             ok, msg = manager.test_connection(host=cfg.ssh_host,
                                               username=cfg.ssh_username,

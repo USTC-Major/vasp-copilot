@@ -1,12 +1,20 @@
-// 全局设置页 — 对接真实 /ai/v1/settings（GET/PUT/test）+ 密钥回显（掩码 + 点眼睛取原文）
+// 全局设置页 — secrets are write-only: status + replace/clear, never reveal.
 import React, { useEffect, useState } from "react";
 import { Card, Typography, Space, Button, Input, Col, Row, Spin, Collapse, Switch, message } from "antd";
 import { LinkOutlined, SafetyCertificateOutlined, RocketOutlined } from "@ant-design/icons";
 import ErrorAlert from "../components/common/ErrorAlert";
 import SecretInput from "../components/ai/SecretInput";
-import { useAiSettings, useAiSettingsSave, useAiSettingsTest, useAiSecretStatus, useAiSecretReveal } from "../hooks/useApi";
+import type { AiSecretState } from "../types/ai";
+import { useAiSettings, useAiSettingsSave, useAiSettingsTest, useAiSecretStatus, useAiSecretUpdate } from "../hooks/useApi";
 
 const { Title, Text, Paragraph } = Typography;
+
+const normalizeSecret = (value: AiSecretState | boolean | undefined): AiSecretState => {
+  if (typeof value === "boolean") {
+    return { configured: value, source: value ? "local_config" : "none", manageable: true };
+  }
+  return value ?? { configured: false, source: "none", manageable: true };
+};
 
 interface Form {
   max_jobs: string;
@@ -21,6 +29,7 @@ interface Form {
   ssh_host: string;
   ssh_port: string;
   ssh_username: string;
+  ssh_known_hosts_path: string;
   ssh_password: string;
 }
 
@@ -29,10 +38,15 @@ const AiSettingsPage: React.FC = () => {
   const secretQuery = useAiSecretStatus(true);
   const saveMutation = useAiSettingsSave();
   const testMutation = useAiSettingsTest();
-  const revealMutation = useAiSecretReveal();
+  const secretMutation = useAiSecretUpdate();
 
   const settings = settingsQuery.data?.settings;
-  const secrets = secretQuery.data?.secrets ?? { llm: false, mp: false, ssh: false };
+  const rawSecrets = secretQuery.data?.secrets;
+  const secrets = {
+    llm: normalizeSecret(rawSecrets?.llm),
+    mp: normalizeSecret(rawSecrets?.mp),
+    ssh: normalizeSecret(rawSecrets?.ssh),
+  };
   const [form, setForm] = useState<Form>({} as Form);
 
   useEffect(() => {
@@ -50,27 +64,32 @@ const AiSettingsPage: React.FC = () => {
         ssh_host: settings.ssh.host ?? "",
         ssh_port: String(settings.ssh.port ?? 22),
         ssh_username: settings.ssh.username ?? "",
+        ssh_known_hosts_path: settings.ssh.known_hosts_path ?? "",
         ssh_password: "",
       });
     }
   }, [settings, settingsQuery.data]);
 
-  // 收集非空字段作为 PUT patch；密钥字段只在用户新填了内容时才覆盖，留空=不修改。
-  const patchFields = ["max_jobs", "poll_interval_seconds", "llm_base_url", "llm_model", "ssh_name", "ssh_host", "ssh_username", "ssh_port"]
-    .filter((k) => form[k as keyof Form] !== "")
+  // Non-secret fields are replaceable (including clearing strings). Secrets use
+  // the dedicated write-only endpoint and blank means "leave unchanged".
+  const patchFields = ["max_jobs", "poll_interval_seconds", "llm_provider", "llm_base_url", "llm_model", "ssh_name", "ssh_host", "ssh_username", "ssh_port", "ssh_known_hosts_path"]
     .reduce<Record<string, unknown>>((acc, k) => {
       if (k === "max_jobs" || k === "ssh_port" || k === "poll_interval_seconds") acc[k] = Number(form[k as keyof Form]);
       else acc[k] = (form[k as keyof Form] as unknown as string);
       return acc;
     }, {});
-  if (form.llm_api_key) patchFields.llm_api_key = form.llm_api_key;
   patchFields.llm_enable_thinking = form.llm_enable_thinking;
-  if (form.mp_api_key) patchFields.mp_api_key = form.mp_api_key;
-  if (form.ssh_password) patchFields.ssh_password = form.ssh_password;
 
   const onSubmit = async () => {
     try {
       await saveMutation.mutateAsync(patchFields);
+      const replacements = [
+        ["llm", form.llm_api_key], ["mp", form.mp_api_key], ["ssh", form.ssh_password],
+      ] as const;
+      for (const [kind, value] of replacements) {
+        if (value) await secretMutation.mutateAsync({ kind, action: "replace", value });
+      }
+      setForm((previous) => ({ ...previous, llm_api_key: "", mp_api_key: "", ssh_password: "" }));
       settingsQuery.refetch();
       secretQuery.refetch();
       message.success("设置已保存（仅本地）");
@@ -88,9 +107,14 @@ const AiSettingsPage: React.FC = () => {
     }
   };
 
-  const reveal = (kind: "llm" | "mp" | "ssh") => async () => {
-    const r = await revealMutation.mutateAsync(kind);
-    return r.value;
+  const clearSecret = (kind: "llm" | "mp" | "ssh") => async () => {
+    try {
+      await secretMutation.mutateAsync({ kind, action: "clear" });
+      await secretQuery.refetch();
+      message.success("密钥已清除");
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : "清除失败");
+    }
   };
 
   if (settingsQuery.isLoading) return <Spin style={{ display: "block", margin: "80px auto" }} />;
@@ -116,7 +140,7 @@ const AiSettingsPage: React.FC = () => {
         <div>
           <Title level={3} style={{ marginBottom: 4 }}>智能体设置</Title>
           <Paragraph type="secondary" style={{ margin: 0 }}>
-            所有私人信息（MP key、LLM 密钥、SSH 密码）仅本地保存，不上传、不进项目；已保存后只显示掩码，点眼睛才临时显示原文。
+            所有私人信息仅本地保存。已保存密钥不可查看或复制，只能整体替换或清除。
           </Paragraph>
         </div>
         <Button type="primary" size="large" onClick={onSubmit} loading={saveMutation.isPending}>保存设置</Button>
@@ -127,7 +151,7 @@ const AiSettingsPage: React.FC = () => {
           <Col span={24}><Text strong>接口地址</Text><Input value={form.llm_base_url} onChange={set("llm_base_url")} placeholder="https://api.openai.com/v1" /></Col>
           <Col span={12}><Text strong>模型名称</Text><Input value={form.llm_model} onChange={set("llm_model")} placeholder="gpt-4o" /></Col>
           <Col span={12}><Text strong>provider</Text><Input value={form.llm_provider} onChange={set("llm_provider")} placeholder="auto" /></Col>
-          <Col span={24}><Text strong>API Key</Text><SecretInput hasSecret={secrets.llm} value={form.llm_api_key} onChange={(v) => setForm((p) => ({ ...p, llm_api_key: v }))} onReveal={reveal("llm")} placeholder={secrets.llm ? "已保存（点击眼睛临时查看原文）" : "未配置 LLM key，填写后保存" } /></Col>
+          <Col span={24}><Text strong>API Key</Text><SecretInput hasSecret={secrets.llm.configured} manageable={secrets.llm.manageable} source={secrets.llm.source} value={form.llm_api_key} onChange={(v) => setForm((p) => ({ ...p, llm_api_key: v }))} onClear={clearSecret("llm")} placeholder={secrets.llm.configured ? "输入新值以整体替换" : "未配置 LLM key，填写后保存" } /></Col>
           <Col span={24}><Space><Switch checked={form.llm_enable_thinking} onChange={(v) => setForm((p) => ({ ...p, llm_enable_thinking: v }))} />
             <Text strong>深度思考</Text><Text type="secondary" style={{ fontSize: 12 }}>开启后请求体携带 thinking 参数，模型输出增量思考过程（是否支持以接入模型/网关为准）。</Text></Space></Col>
         </Row>
@@ -139,14 +163,15 @@ const AiSettingsPage: React.FC = () => {
           <Col span={8}><Text strong>主机地址</Text><Input value={form.ssh_host} onChange={set("ssh_host")} placeholder="如：login.hpc.example.com" /></Col>
           <Col span={8}><Text strong>端口</Text><Input value={form.ssh_port} onChange={set("ssh_port")} /></Col>
           <Col span={12}><Text strong>用户名</Text><Input value={form.ssh_username} onChange={set("ssh_username")} /></Col>
-          <Col span={12}><Text strong>密码</Text><SecretInput hasSecret={secrets.ssh} value={form.ssh_password} onChange={(v) => setForm((p) => ({ ...p, ssh_password: v }))} onReveal={reveal("ssh")} placeholder={secrets.ssh ? "已保存（点击眼睛临时查看原文）" : "未配置密码，填写后保存" } /></Col>
-          <Col span={24}><Text type="secondary" style={{ fontSize: 12 }}>说明：SSH 直连需要自建连接配置；密码经系统凭据管理器保存（不入项目），已保存后只显示掩码，点眼睛临时查看原文。</Text></Col>
+          <Col span={12}><Text strong>密码</Text><SecretInput hasSecret={secrets.ssh.configured} manageable={secrets.ssh.manageable} source={secrets.ssh.source} value={form.ssh_password} onChange={(v) => setForm((p) => ({ ...p, ssh_password: v }))} onClear={clearSecret("ssh")} placeholder={secrets.ssh.configured ? "输入新值以整体替换" : "未配置密码，填写后保存" } /></Col>
+          <Col span={24}><Text strong>known_hosts 路径</Text><Input value={form.ssh_known_hosts_path} onChange={set("ssh_known_hosts_path")} placeholder="留空则使用系统 known_hosts" /></Col>
+          <Col span={24}><Text type="secondary" style={{ fontSize: 12 }}>SSH 仅信任系统或指定 known_hosts 中的主机密钥；未知或不匹配会在认证前拒绝。密码只可替换/清除。</Text></Col>
         </Row>
       ))}
 
       {section("Materials Project & 作业数", <SafetyCertificateOutlined />, (
         <Row gutter={16}>
-          <Col span={12}><Text strong>MP API Key</Text><SecretInput hasSecret={secrets.mp} value={form.mp_api_key} onChange={(v) => setForm((p) => ({ ...p, mp_api_key: v }))} onReveal={reveal("mp")} placeholder={secrets.mp ? "已保存（点击眼睛临时查看原文）" : "未配置，填写后保存" } /></Col>
+          <Col span={12}><Text strong>MP API Key</Text><SecretInput hasSecret={secrets.mp.configured} manageable={secrets.mp.manageable} source={secrets.mp.source} value={form.mp_api_key} onChange={(v) => setForm((p) => ({ ...p, mp_api_key: v }))} onClear={clearSecret("mp")} placeholder={secrets.mp.configured ? "输入新值以整体替换" : "未配置，填写后保存" } /></Col>
           <Col span={12}><Text strong>最大作业数</Text><Input value={form.max_jobs} onChange={set("max_jobs")} /></Col>
           <Col span={24}><Text type="secondary" style={{ fontSize: 12 }}>最大作业数 = 同一超算账号「排队 + 运行中」总数上限，全局生效。</Text></Col>
           <Col span={12}><Text strong>监控轮询间隔（秒）</Text><Input value={form.poll_interval_seconds} onChange={set("poll_interval_seconds")} placeholder="60" /></Col>

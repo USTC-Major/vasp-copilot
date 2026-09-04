@@ -326,9 +326,10 @@ export function useAiSecretStatus(enabled: boolean) {
   });
 }
 
-export function useAiSecretReveal() {
+export function useAiSecretUpdate() {
   return useMutation({
-    mutationFn: (kind: "llm" | "mp" | "ssh") => aiApi.revealSecret(kind),
+    mutationFn: ({ kind, action, value }: { kind: "llm" | "mp" | "ssh"; action: "replace" | "clear"; value?: string }) =>
+      aiApi.updateSecret(kind, action, value),
   });
 }
 export function useAiProjectSettings(projectId: string, enabled: boolean) {

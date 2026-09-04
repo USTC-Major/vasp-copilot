@@ -4,6 +4,9 @@
 run 原语、test_connection、SFTP 传输原语、认证错误脱敏。
 """
 
+import hashlib
+from pathlib import Path
+
 import pytest
 
 from ai_mode.ssh import (
@@ -17,6 +20,9 @@ from ai_mode.ssh.errors import (
     SSHAuthError,
     SSHExecuteError,
     SSHSFTPError,
+    SSHHostKeyMismatchError,
+    SSHHostKeyUnknownError,
+    SSHKnownHostsError,
 )
 
 
@@ -133,6 +139,16 @@ class FakeSFTP:
             raise OSError("文件已存在")
         self.dirs.add(path)
 
+    def posix_rename(self, source, destination):
+        if source not in self.files:
+            raise FileNotFoundError(source)
+        self.files[destination] = self.files.pop(source)
+
+    def remove(self, path):
+        if path not in self.files:
+            raise FileNotFoundError(path)
+        del self.files[path]
+
     def close(self):
         pass
 
@@ -154,6 +170,7 @@ class FakeClient:
         self.exec_error = None
         self.connect_error = None
         self.connect_kwargs = None
+        self.executed_commands = []
         self._transport = _FakeTransport(self)
 
     def get_transport(self):
@@ -168,6 +185,7 @@ class FakeClient:
     def exec_command(self, command, **kw):
         if self.exec_error is not None:
             raise self.exec_error
+        self.executed_commands.append(command)
         last = command.rstrip()
         base = last.split("&&")[-1].strip() if "&&" in last else last.strip()
         code, out, err = self.command_results.get(base, (0, "", ""))
@@ -382,6 +400,16 @@ def test_run_with_cwd_prefixes_command():
     assert "ENCUT" in out
 
 
+def test_run_shell_quotes_cwd_before_fixed_command():
+    factory = FakeClientFactory()
+    mgr = SSHManager(client_factory=factory)
+    mgr.switch(host="hpc", username="alice", password="pw")
+    mgr.run("pwd", cwd="/calc path; touch /tmp/not-run")
+    assert factory.created[-1].executed_commands == [
+        "cd -- '/calc path; touch /tmp/not-run' && pwd"
+    ]
+
+
 def test_run_nonzero_exit():
     factory = FakeClientFactory()
     mgr = SSHManager(client_factory=factory)
@@ -441,6 +469,28 @@ def test_write_read_roundtrip():
     assert mgr.read_file("/calc/INCAR") == b"ENCUT=520\n"
 
 
+def test_atomic_write_verifies_temp_and_final_hash():
+    mgr, factory = _sftp_mgr()
+    data = b"ENCUT=520\n"
+    digest = hashlib.sha256(data).hexdigest()
+    assert mgr.atomic_write_file("/calc/INCAR", data,
+                                 expected_sha256=digest) == len(data)
+    assert mgr.read_file("/calc/INCAR") == data
+    assert not any(".vasp-doctor-" in path
+                   for path in factory.created[-1]._sftp.files)
+
+
+def test_atomic_write_hash_mismatch_preserves_existing_target():
+    mgr, factory = _sftp_mgr()
+    mgr.write_file("/calc/INCAR", b"old")
+    with pytest.raises(SSHSFTPError, match="哈希"):
+        mgr.atomic_write_file("/calc/INCAR", b"new",
+                              expected_sha256="0" * 64)
+    assert mgr.read_file("/calc/INCAR") == b"old"
+    assert not any(".vasp-doctor-" in path
+                   for path in factory.created[-1]._sftp.files)
+
+
 def test_list_and_stat():
     mgr, _ = _sftp_mgr()
     mgr.write_file("/calc/INCAR", b"x")
@@ -473,9 +523,8 @@ def test_list_dir_info_marks_dirs():
 # -------------------- 默认客户端工厂 --------------------
 
 
-def test_default_client_factory_host_key_policy(monkeypatch):
-    """默认工厂应为首次连接自动记录主机密钥（TOFU），避免因 known_hosts
-        缺失把可建立的连接误报为失败。"""
+def test_default_client_factory_host_key_policy(monkeypatch, tmp_path):
+    """Default SSH rejects unknown keys and never auto-adds trust."""
     pytest.importorskip("paramiko")
     import paramiko as _pk
     from ai_mode.ssh.connection import _default_client_factory
@@ -485,6 +534,62 @@ def test_default_client_factory_host_key_policy(monkeypatch):
     def fake_set_policy(self, policy):
         captured["policy"] = policy
 
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
     monkeypatch.setattr(_pk.SSHClient, "set_missing_host_key_policy", fake_set_policy)
     client = _default_client_factory()
-    assert captured["policy"].__class__.__name__ == "AutoAddPolicy"
+    assert captured["policy"].__class__.__name__ == "StrictRejectPolicy"
+    with pytest.raises(SSHHostKeyUnknownError):
+        captured["policy"].missing_host_key(client, "new.example", object())
+
+
+def test_default_client_factory_rejects_missing_known_hosts(tmp_path):
+    pytest.importorskip("paramiko")
+    from ai_mode.ssh.connection import _default_client_factory
+
+    missing = tmp_path / "does-not-exist"
+    with pytest.raises(SSHKnownHostsError):
+        _default_client_factory(str(missing))
+    assert not missing.exists()
+
+
+def test_default_client_factory_loads_user_known_hosts(monkeypatch, tmp_path):
+    pytest.importorskip("paramiko")
+    import paramiko as _pk
+    from ai_mode.ssh.connection import _default_client_factory
+
+    trusted = tmp_path / ".ssh" / "known_hosts"
+    trusted.parent.mkdir()
+    trusted.write_text("", encoding="utf-8")
+    loaded = []
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(_pk.SSHClient, "load_system_host_keys",
+                        lambda self: loaded.append("system"))
+    monkeypatch.setattr(_pk.SSHClient, "load_host_keys",
+                        lambda self, path: loaded.append(path))
+    monkeypatch.setattr(_pk.SSHClient, "set_missing_host_key_policy",
+                        lambda self, policy: None)
+
+    _default_client_factory()
+    assert loaded == ["system", str(trusted)]
+    assert trusted.read_text(encoding="utf-8") == ""
+
+
+def test_host_key_mismatch_is_typed_and_stops_before_any_operation():
+    class BadHostKeyException(Exception):
+        pass
+
+    factory = FakeClientFactory()
+    mgr = SSHManager(client_factory=factory)
+    mgr.switch(host="hpc", username="alice", password="secret")
+    client = factory.__call__()
+    client.connect_error = BadHostKeyException("mismatch")
+    factory.created.clear()
+    factory.__call__ = lambda: client
+    # Special-method lookup makes instance __call__ replacement ineffective;
+    # use a small explicit factory instead.
+    mgr.client_factory = lambda: client
+    with pytest.raises(SSHHostKeyMismatchError) as exc:
+        mgr.connect()
+    assert "secret" not in str(exc.value)
+    assert client._sftp is None
+    assert client.command_results == {}

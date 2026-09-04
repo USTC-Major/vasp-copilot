@@ -288,6 +288,9 @@ const AiProjectPage: React.FC = () => {
               <Space size={10} wrap style={{ minWidth: 0 }}>
                 <Title level={5} style={{ margin: 0 }}>{selectedTask.title}</Title>
                 {statusLabel && <Tag color={currentColor || 'default'} style={{ margin: 0 }}>{statusLabel}</Tag>}
+                <Tag color={selectedTask.execution_mode === 'Real' ? 'green' : selectedTask.execution_mode === 'Fake' ? 'gold' : 'default'}>
+                  运行环境: {selectedTask.execution_mode || 'None'}
+                </Tag>
                 <Text type="secondary" style={{ fontSize: 12, maxWidth: 'min(60vw, 460px)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selectedTask.goal}</Text>
               </Space>
               <Space size={8} wrap>
@@ -364,7 +367,9 @@ const AiProjectPage: React.FC = () => {
                     </Space>
                     <div style={{ fontSize: 13, color: '#8c6d1f', marginBottom: 10, whiteSpace: 'pre-wrap' }}>{card.reason}</div>
                     <Space>
-                      {(card.options && card.options.length ? card.options : ['同意本次', '同意本批', '拒绝']).map((opt) => (
+                      {(card.options && card.options.length
+                        ? card.options.filter((opt) => opt !== '同意本批' && opt !== 'allow_batch')
+                        : ['同意本次', '拒绝']).map((opt) => (
                         <Button
                           key={opt}
                           size="small"

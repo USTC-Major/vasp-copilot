@@ -5,7 +5,7 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-from ai_mode.config import load_settings
+from ai_mode.config import AiModeConfig, execution_mode, load_settings
 from ai_mode.server import create_ai_mode_app
 from ai_mode.settings import (
     ProjectSettingsError,
@@ -22,6 +22,7 @@ from ai_mode.settings import (
     render_accuracy_text,
     project_settings_path,
 )
+from ai_mode.settings.global_api import secret_status, update_secret
 
 GOOD_ACCURACY = [
     "relax 全流程：ENCUT=520，EDIFF 收敛到 1e-5",
@@ -31,7 +32,25 @@ GOOD_ACCURACY = [
 
 # ---------------- 全局设置逻辑 ----------------
 def _cfg():
-    return load_settings()
+    # Pure settings-unit tests must not inherit a developer machine's
+    # persisted config or environment overrides.
+    return AiModeConfig()
+
+
+def test_execution_mode_is_explicit_for_fake_real_and_unconfigured():
+    from ai_mode.ssh.connection import SSHManager
+
+    class ExplicitFake:
+        execution_mode = "Fake"
+
+    assert execution_mode(None) == "None"
+    assert execution_mode(ExplicitFake()) == "Fake"
+    assert execution_mode(SSHManager(client_factory=lambda: object())) == "Real"
+    with pytest.raises(ValueError, match="explicitly declare Fake"):
+        execution_mode(object())
+    # LLM selection and keys never affect the HPC provenance label.
+    assert execution_mode(None) == execution_mode(
+        None, explicit=None)
 
 
 def test_mask_config_redacts():
@@ -199,16 +218,78 @@ def test_route_settings_get_masked(client):
     body = r.json()
     assert body["settings"]["llm"]["api_key"] == ""  # 未配置时不返回任何密钥内容
     assert "max_jobs" in body["settings"]
+    assert "llm_api_key" not in body["writable"]
+    assert "mp_api_key" not in body["writable"]
+    assert "ssh_password" not in body["writable"]
 
 
 def test_route_settings_put_and_persist(client, tmp_path, monkeypatch):
-    r = client.put("/ai/v1/settings", json={"max_jobs": 12,
-                                            "llm_api_key": "sk-localsecret"})
+    r = client.put("/ai/v1/settings", json={"max_jobs": 12})
     assert r.status_code == 200
     data = r.json()["settings"]
     assert data["max_jobs"] == 12
-    assert data["llm"]["api_key"] == "<redacted>"
-    assert "sk-localsecret" not in r.text
+
+
+def test_route_secrets_are_write_only_replace_or_clear(client):
+    blocked = client.put("/ai/v1/settings", json={"llm_api_key": "sk-nope"})
+    assert blocked.status_code == 400
+    assert blocked.json()["error"]["code"] == "AI_MODE_SECRET_WRITE_ONLY"
+    replaced = client.put("/ai/v1/settings/secrets/llm", json={
+        "action": "replace", "value": "sk-localsecret",
+    })
+    assert replaced.status_code == 200 and replaced.json()["configured"] is True
+    assert "sk-localsecret" not in replaced.text
+    status = client.get("/ai/v1/settings/secret-status")
+    assert status.json()["secrets"]["llm"] == {
+        "configured": True, "source": "local_config", "manageable": True}
+    reveal = client.post("/ai/v1/settings/reveal", json={"kind": "llm"})
+    assert reveal.status_code == 403
+    assert reveal.json()["error"]["code"] == "AI_SECRET_REVEAL_DISABLED"
+    assert "sk-localsecret" not in reveal.text
+    cleared = client.put("/ai/v1/settings/secrets/llm", json={"action": "clear"})
+    assert cleared.status_code == 200 and cleared.json()["configured"] is False
+
+
+def test_environment_secret_is_unmanageable_and_never_persisted(
+        tmp_path, monkeypatch):
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({"llm_api_key": "local-behind-env",
+                                "mp_api_key": "local-mp"}), encoding="utf-8")
+    monkeypatch.setenv("AI_MODE_LLM_API_KEY", "environment-secret")
+    monkeypatch.setenv("AI_MODE_MP_API_KEY", "environment-mp-secret")
+    cfg = load_settings(config_path=path)
+    status = secret_status(cfg)
+    assert status["llm"] == {
+        "configured": True, "source": "environment", "manageable": False}
+    assert status["mp"]["source"] == "environment"
+    with pytest.raises(ValueError, match="环境变量"):
+        update_secret(cfg, "llm", "clear")
+
+    persist(update_from_patch(cfg, {"max_jobs": 7}), config_path=path)
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert saved["llm_api_key"] == "local-behind-env"
+    assert saved["mp_api_key"] == "local-mp"
+    assert "environment-secret" not in path.read_text(encoding="utf-8")
+    assert "environment-mp-secret" not in path.read_text(encoding="utf-8")
+
+
+def test_update_secret_ssh_uses_credential_store_without_reveal():
+    from ai_mode.ssh.credentials import MemoryCredentialStore
+
+    cfg = _cfg().model_copy(update={"ssh_host": "hpc", "ssh_username": "alice"})
+    store = MemoryCredentialStore()
+    same = update_secret(cfg, "ssh", "replace", "pw-secret",
+                         credential_store=store)
+    assert same is cfg
+    assert store.get_password("hpc", "alice") == "pw-secret"
+    update_secret(cfg, "ssh", "clear", credential_store=store)
+    assert store.get_password("hpc", "alice") is None
+
+
+def test_known_hosts_path_roundtrip_and_mask():
+    cfg = update_from_patch(_cfg(), {"ssh_known_hosts_path": "C:/trusted/known_hosts"})
+    assert cfg.ssh_known_hosts_path == "C:/trusted/known_hosts"
+    assert mask_config(cfg)["ssh"]["known_hosts_path"] == "C:/trusted/known_hosts"
 
 
 def test_route_settings_put_invalid(client):

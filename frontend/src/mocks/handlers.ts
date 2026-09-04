@@ -472,21 +472,21 @@ export const aiHandlers = [
     const key = aiStreamKey(projectId, taskId);
     aiStreamStops.add(key);
     const answer = aiDemo.sendMessage(projectId, taskId, body?.content || '');
-    const wantsCard = /(rm -rf|删除文件|弹卡)/.test(body?.content || '');
+    const wantsCard = /(修改\s*INCAR|INCAR\s*草稿|弹卡)/i.test(body?.content || '');
     await delay(120);
     const emit = (ev: unknown) => `data: ${JSON.stringify(ev)}\n\n`;
     const sse = async function* () {
       if (wantsCard) {
         yield emit({ type: "card", card: {
           card_id: "card_m47_demo",
-          tool: "run_exec",
-          args: { command: "rm -rf cache/" },
-          risk: "high",
-          reason: "rm 属破坏性删除，需你授权后才能执行。",
-          options: ["同意本次", "同意本批", "拒绝"],
-          batch_key: "ws|rm|demo",
+          tool: "propose_incar",
+          args: { job_key: "relax", entries: [{ tag: "ENCUT", value: 520 }] },
+          risk: "medium",
+          reason: "INCAR 变更已生成确定性预览，写入前需你确认本次精确内容。",
+          options: ["同意本次", "拒绝"],
+          batch_key: "incar|relax|demo",
           kind: "workspace",
-          summary: "本地计算目录内的高风险命令（rm -rf cache/），需你授权后执行。",
+          summary: "relax/INCAR 的结构化参数草稿（ENCUT = 520），确认后原子写入。",
         } });
         yield emit({ type: "done", answer: "已生成授权请求，等待你确认。" });
         aiStreamStops.delete(key);
@@ -662,12 +662,18 @@ let mockAiSettings = {
 let mockSshPassword = "";
 let mockProjectSettings: Record<string, { project_id: string; accuracy: string[] }> = {};
 
+const mockPublicAiSettings = () => ({
+  ...mockAiSettings,
+  llm: { ...mockAiSettings.llm, api_key: "" },
+  materials_project: { api_key: "" },
+});
+
 const AI_SETTINGS_BASE = "/ai/v1";
 
 const aiSettingsHandlers = [
   http.get(`${AI_SETTINGS_BASE}/settings`, async () => {
     await delay(250);
-    return HttpResponse.json({ mode: "ai", enabled: true, settings: mockAiSettings, writable: ["max_jobs", "llm_provider", "llm_base_url", "llm_model", "mp_api_key", "llm_api_key", "ssh_name", "ssh_host", "ssh_port", "ssh_username"] });
+    return HttpResponse.json({ mode: "ai", enabled: true, settings: mockPublicAiSettings(), writable: ["max_jobs", "llm_provider", "llm_base_url", "llm_model", "ssh_name", "ssh_host", "ssh_port", "ssh_username"] });
   }),
 
   http.put(`${AI_SETTINGS_BASE}/settings`, async ({ request }) => {
@@ -682,10 +688,10 @@ const aiSettingsHandlers = [
         base_url: pick("llm_base_url", mockAiSettings.llm.base_url),
         model: pick("llm_model", mockAiSettings.llm.model),
         provider: pick("llm_provider", mockAiSettings.llm.provider),
-        api_key: patch.llm_api_key !== undefined ? String(patch.llm_api_key) : mockAiSettings.llm.api_key,
+        api_key: mockAiSettings.llm.api_key,
       },
       materials_project: {
-        api_key: patch.mp_api_key !== undefined ? String(patch.mp_api_key)   : mockAiSettings.materials_project.api_key,
+        api_key: mockAiSettings.materials_project.api_key,
       },
       ssh: {
         ...mockAiSettings.ssh,
@@ -695,8 +701,7 @@ const aiSettingsHandlers = [
         port: pick("ssh_port", mockAiSettings.ssh.port),
       },
     };
-    mockSshPassword = patch.ssh_password !== undefined ? String(patch.ssh_password) : mockSshPassword;
-    return HttpResponse.json({ mode: "ai", ok: true, settings: mockAiSettings });
+    return HttpResponse.json({ mode: "ai", ok: true, settings: mockPublicAiSettings() });
   }),
 
   http.post(`${AI_SETTINGS_BASE}/settings/test/:provider`, async ({ params }) => {
@@ -714,21 +719,35 @@ const aiSettingsHandlers = [
       mode: "ai",
       enabled: true,
       secrets: {
-        llm: mockAiSettings.llm.api_key !== "",
-        mp: mockAiSettings.materials_project.api_key !== "",
-        ssh: mockSshPassword !== "",
+        llm: { configured: mockAiSettings.llm.api_key !== "", source: mockAiSettings.llm.api_key ? "local_config" : "none", manageable: true },
+        mp: { configured: mockAiSettings.materials_project.api_key !== "", source: mockAiSettings.materials_project.api_key ? "local_config" : "none", manageable: true },
+        ssh: { configured: mockSshPassword !== "", source: mockSshPassword ? "credential_store" : "none", manageable: true },
       },
     });
   }),
 
-  http.post(`${AI_SETTINGS_BASE}/settings/reveal`, async ({ request }) => {
-    const body = (await request.json().catch(() => ({}))) as { kind?: string };
+  http.put(`${AI_SETTINGS_BASE}/settings/secrets/:kind`, async ({ params, request }) => {
+    const kind = String(params.kind || "").trim().toLowerCase();
+    const body = (await request.json().catch(() => ({}))) as { action?: string; value?: string };
     await delay(200);
-    const kind = String(body.kind || "").trim().toLowerCase();
-    if (kind === "llm") return HttpResponse.json({ mode: "ai", kind, value: mockAiSettings.llm.api_key || "" });
-    if (kind === "mp") return HttpResponse.json({ mode: "ai", kind, value: mockAiSettings.materials_project.api_key || "" });
-    if (kind === "ssh") return HttpResponse.json({ mode: "ai", kind, value: mockSshPassword });
-    return HttpResponse.json({ mode: "ai", error: { code: "AI_MODE_UNKNOWN_SECRET", message: "未知密钥类型", retryable: false } }, { status: 400 });
+    if (!["llm", "mp", "ssh"].includes(kind)) {
+      return HttpResponse.json({ mode: "ai", error: { code: "AI_MODE_UNKNOWN_SECRET", message: "未知密钥类型", retryable: false } }, { status: 400 });
+    }
+    const action = String(body.action || "");
+    if (!["replace", "clear"].includes(action) || (action === "replace" && !body.value)) {
+      return HttpResponse.json({ mode: "ai", error: { code: "AI_MODE_BAD_SECRET_ACTION", message: "只能整体替换或清除密钥", retryable: false } }, { status: 400 });
+    }
+    const value = action === "clear" ? "" : String(body.value);
+    if (kind === "llm") mockAiSettings.llm.api_key = value;
+    if (kind === "mp") mockAiSettings.materials_project.api_key = value;
+    if (kind === "ssh") mockSshPassword = value;
+    const source = value ? (kind === "ssh" ? "credential_store" : "local_config") : "none";
+    return HttpResponse.json({ mode: "ai", ok: true, kind, configured: value !== "", source, manageable: true, secret: { configured: value !== "", source, manageable: true } });
+  }),
+
+  http.post(`${AI_SETTINGS_BASE}/settings/reveal`, async () => {
+    await delay(200);
+    return HttpResponse.json({ mode: "ai", error: { code: "AI_SECRET_REVEAL_DISABLED", message: "已保存密钥不可查看、复制或取回；只能整体替换或清除", retryable: false } }, { status: 403 });
   }),
 
   http.get(`${AI_SETTINGS_BASE}/projects/:projectId/settings`, async ({ params }) => {

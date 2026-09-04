@@ -32,8 +32,7 @@ from .settings.global_api import (
     persist as _persist_settings,
     check_connection as _run_settings_test,
     update_from_patch as _apply_settings_patch,
-    store_ssh_password as _store_ssh_password,
-    get_ssh_password as _get_ssh_password,
+    update_secret as _update_secret,
     secret_status as _secret_status,
     writable_fields as _writable_fields,
 )
@@ -44,6 +43,7 @@ from .settings.project import (
 from . import chat as _chat
 from .consent import get_card as _get_consent_card
 from .consent import resolve_card as _resolve_consent_card
+from .consent import task_lock as _task_state_lock
 from .projects import get_project_store as _get_project_store
 from .storage import ensure_layout
 
@@ -201,20 +201,18 @@ def create_ai_mode_app() -> FastAPI:
         resp = _require_enabled(cfg)
         if resp is not None:
             return resp
+        secret_keys = {"llm_api_key", "mp_api_key", "ssh_password"}
+        if isinstance(payload, dict) and secret_keys.intersection(payload):
+            return JSONResponse(status_code=400, content={"mode": "ai", "error": {
+                "code": "AI_MODE_SECRET_WRITE_ONLY",
+                "message": "密钥只能通过 replace/clear 专用接口整体替换或清除",
+                "retryable": False}})
         try:
             updated = _apply_settings_patch(cfg, payload)
         except ValueError as exc:
             return JSONResponse(status_code=400, content={"mode": "ai", "error": {
                 "code": "AI_MODE_BAD_SETTINGS", "message": str(exc),
                 "retryable": False}})
-        ssh_pw = payload.get("ssh_password") if isinstance(payload, dict) else None
-        if ssh_pw is not None:
-            try:
-                _store_ssh_password(updated, ssh_pw)
-            except ValueError as exc:
-                return JSONResponse(status_code=400, content={"mode": "ai", "error": {
-                    "code": "AI_MODE_BAD_SETTINGS", "message": str(exc),
-                    "retryable": False}})
         _persist_settings(updated)
         return {"mode": "ai", "ok": True, "settings": _mask_settings(updated)}
 
@@ -242,14 +240,9 @@ def create_ai_mode_app() -> FastAPI:
                 "retryable": False,
             }})
 
-    def _404_secret(message: str) -> JSONResponse:
-        return JSONResponse(status_code=404, content={"mode": "ai", "error": {
-            "code": "AI_MODE_SECRET_NOT_FOUND", "message": message,
-            "retryable": False}})
-
     @app.get("/ai/v1/settings/secret-status")
     async def settings_secret_status():
-        """密钥是否已配置（只回布尔态，不回明文）——设置页回显掩码用。"""
+        """Return non-secret credential status, provenance, and manageability."""
         cfg = load_settings()
         resp = _require_enabled(cfg)
         if resp is not None:
@@ -258,30 +251,39 @@ def create_ai_mode_app() -> FastAPI:
 
     @app.post("/ai/v1/settings/reveal")
     async def settings_reveal(payload: dict):
-        """按需取回已存密钥原文（前端「点眼睛」才调用；仅本机展示，不写入日志）。"""
+        """Legacy endpoint is permanently disabled; secrets are non-revealable."""
+        del payload
         cfg = load_settings()
         resp = _require_enabled(cfg)
         if resp is not None:
             return resp
-        kind = ""
-        if isinstance(payload, dict):
-            kind = str(payload.get("kind", "")).strip().lower()
-        if kind == "llm":
-            if not cfg.llm_api_key:
-                return _404_secret("未配置 LLM API key")
-            return {"mode": "ai", "kind": kind, "value": cfg.llm_api_key}
-        if kind == "mp":
-            if not cfg.mp_api_key:
-                return _404_secret("未配置 Materials Project API key")
-            return {"mode": "ai", "kind": kind, "value": cfg.mp_api_key}
-        if kind == "ssh":
-            value = _get_ssh_password(cfg)
-            if not value:
-                return _404_secret("未配置 SSH 密码")
-            return {"mode": "ai", "kind": kind, "value": value}
-        return JSONResponse(status_code=400, content={"mode": "ai", "error": {
-            "code": "AI_MODE_UNKNOWN_SECRET", "message": "未知密钥类型（llm|mp|ssh）",
+        return JSONResponse(status_code=403, content={"mode": "ai", "error": {
+            "code": "AI_SECRET_REVEAL_DISABLED",
+            "message": "已保存密钥不可查看、复制或取回；只能整体替换或清除",
             "retryable": False}})
+
+    @app.put("/ai/v1/settings/secrets/{kind}")
+    async def settings_update_secret(kind: str, payload: dict):
+        cfg = load_settings()
+        resp = _require_enabled(cfg)
+        if resp is not None:
+            return resp
+        try:
+            updated = _update_secret(
+                cfg, kind, str(payload.get("action") or ""),
+                payload.get("value") if isinstance(payload, dict) else None,
+            )
+            if kind.strip().lower() in {"llm", "mp"}:
+                _persist_settings(updated)
+        except ValueError as exc:
+            return JSONResponse(status_code=400, content={"mode": "ai", "error": {
+                "code": "AI_MODE_BAD_SECRET_UPDATE", "message": str(exc),
+                "retryable": False}})
+        normalized_kind = kind.strip().lower()
+        status = _secret_status(updated).get(normalized_kind) or {
+            "configured": False, "source": "none", "manageable": False}
+        return {"mode": "ai", "ok": True, "kind": normalized_kind,
+                **status, "secret": status}
     @app.get("/ai/v1/projects/{project_id}/settings")
     async def get_project_settings(project_id: str):
         cfg = load_settings()
@@ -371,7 +373,17 @@ def create_ai_mode_app() -> FastAPI:
         store = _get_project_store()
         if store.get_project(project_id) is None:
             return _project_404("项目不存在或被删除")
-        return {"mode": "ai", "tasks": store.list_tasks(project_id)}
+        from .orchestrator import Orchestrator
+        current_mode = Orchestrator.from_settings(cfg).execution_mode
+        tasks = store.list_tasks(project_id)
+        for task in tasks:
+            flow = dict(task.get("flow") or {})
+            if flow and flow.get("execution_mode") != current_mode:
+                flow["execution_mode"] = current_mode
+                store.update_task(project_id, task["id"], flow=flow)
+                task["flow"] = flow
+            task["execution_mode"] = current_mode
+        return {"mode": "ai", "tasks": tasks}
 
     @app.post("/ai/v1/projects/{project_id}/tasks")
     async def create_task(project_id: str, payload: dict):
@@ -404,7 +416,12 @@ def create_ai_mode_app() -> FastAPI:
         task = store.get_task(project_id, task_id)
         if task is None:
             return _project_404("计算任务不存在或被删除")
+        from .orchestrator import Orchestrator
+        current_mode = Orchestrator.from_settings(cfg).execution_mode
         flow = dict(task.get("flow") or {})
+        if flow and flow.get("execution_mode") != current_mode:
+            flow["execution_mode"] = current_mode
+            store.update_task(project_id, task_id, flow=flow)
         plan = dict(flow.get("plan") or {})
         jobs = []
         for j in (plan.get("jobs") or []):
@@ -420,6 +437,7 @@ def create_ai_mode_app() -> FastAPI:
                 "description": str(j.get("description") or ""),
             })
         detail = {
+            "execution_mode": current_mode,
             "phase": str(flow.get("phase") or ""),
             "goal": str(flow.get("goal") or task.get("goal") or ""),
             "strategy": str(plan.get("strategy") or ""),
@@ -462,7 +480,8 @@ def create_ai_mode_app() -> FastAPI:
             fields["hpc_workspace"] = str(payload.get("hpc_workspace") or "").strip() or None
         if not fields:
             return _bad("没有可更新的字段（title/goal/local_workspace/hpc_workspace）")
-        task = store.update_task(project_id, task_id, **fields)
+        with _task_state_lock(project_id, task_id):
+            task = store.update_task(project_id, task_id, **fields)
         return {"mode": "ai", "task": task}
 
     @app.delete("/ai/v1/projects/{project_id}/tasks/{task_id}")
@@ -474,7 +493,8 @@ def create_ai_mode_app() -> FastAPI:
         store = _get_project_store()
         if store.get_project(project_id) is None:
             return _project_404("项目不存在或被删除")
-        deleted = store.delete_task(project_id, task_id)
+        with _task_state_lock(project_id, task_id):
+            deleted = store.delete_task(project_id, task_id)
         if deleted is None:
             return _project_404("计算任务不存在或被删除")
         return {"mode": "ai", "deleted": True, "task_id": task_id}
@@ -704,7 +724,7 @@ def create_ai_mode_app() -> FastAPI:
 
     @app.post("/ai/v1/projects/{project_id}/tasks/{task_id}/messages/consent")
     async def resolve_consent(project_id: str, task_id: str, payload: dict):
-        """处理授权卡片：workspace 类写入 grants/denials；submit 类驱动真实提交/取消。"""
+        """Resolve one hash-bound action; approval is never reusable."""
         cfg = load_settings()
         resp = _require_enabled(cfg)
         if resp is not None:
@@ -735,8 +755,9 @@ def create_ai_mode_app() -> FastAPI:
                                          approved=approved, note=note)
         return {"mode": "ai", "ok": True, "kind": kind,
                 "approved": resolved.get("approved", approved),
-                "result": ("已授权本批操作，后续同类操作将直接执行" if approved
-                           else "已拒绝本批操作，后续同类操作不再弹卡")}
+                "state": resolved.get("state"),
+                "result": ("已确认本次操作；仅当前绑定动作可执行一次" if approved
+                           else "已拒绝本次操作；未执行任何变更")}
 
     @app.get("/ai/v1/projects/{project_id}/tasks/{task_id}/context")
     async def get_task_context(project_id: str, task_id: str):

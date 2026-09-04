@@ -3,6 +3,7 @@
 
 import json
 from types import SimpleNamespace
+import hashlib
 
 import pytest
 
@@ -11,6 +12,7 @@ from ai_mode.agent.runner import _strip_receipt_wait
 from ai_mode.agent.protocol import INTENT_MARK, TOOL_MARK
 from ai_mode.agent.tools import _CONSENT_PENDING, ToolExecutor
 from ai_mode.config import AiModeConfig
+from ai_mode.consent import claim_action, get_card, resolve_card
 from ai_mode.llm.fake import FakeLLM
 from ai_mode.projects import ProjectStore
 
@@ -23,6 +25,22 @@ def _tool(name: str, **args) -> str:
     payload = json.dumps({"name": name, "args": args, "reason": "r"},
                          ensure_ascii=False)
     return TOOL_MARK + payload
+
+
+def _approve_pending(executor: ToolExecutor, pending: str) -> str:
+    assert pending.startswith(_CONSENT_PENDING)
+    action_id = pending[len(_CONSENT_PENDING):]
+    action = resolve_card(executor.store, executor.project_id,
+                          executor.task_id, action_id, approved=True)
+    assert action["state"] == "approved"
+    return executor.execute_action(action_id)
+
+
+def _write_complete_local_job(directory, *, script: str = "run.sh"):
+    directory.mkdir(parents=True, exist_ok=True)
+    for name in ("INCAR", "POSCAR", "KPOINTS", "POTCAR"):
+        (directory / name).write_text(f"{name} test\n", encoding="utf-8")
+    (directory / script).write_text("#!/bin/bash\n", encoding="utf-8")
 
 
 @pytest.fixture
@@ -108,7 +126,7 @@ def test_agent_compute_plans_and_runs(ctx):
     assert flow["phase"] == "running"
     assert flow["plan"]["jobs"][0]["label"] == "结构优化"
     local_dir = ctx.cfg.data_dir / "workspace" / f"{ctx.pid}__{ctx.tid}"
-    assert local_dir.is_dir()
+    assert not local_dir.exists()  # planning persists metadata only
 
 
 def test_agent_write_input_persists(ctx):
@@ -120,45 +138,238 @@ def test_agent_write_input_persists(ctx):
     llm.enqueue("输入文件已准备好。")
     answer = run_agent(ctx.store, ctx.pid, ctx.tid, "帮我生成 INCAR",
                        cfg=ctx.cfg, llm_factory=lambda c: llm)
-    assert "已写入" in answer
+    assert "输入文件已准备好" in answer
     local_dir = ctx.cfg.data_dir / "workspace" / f"{ctx.pid}__{ctx.tid}"
     incar = local_dir / "INCAR"
-    assert incar.is_file()
-    assert "ENCUT = 520" in incar.read_text(encoding="utf-8")
+    assert not incar.exists()
+
+
+def test_propose_incar_requires_one_hash_bound_confirmation(ctx):
+    ex = ToolExecutor(store=ctx.store, project_id=ctx.pid, task_id=ctx.tid,
+                      cfg=ctx.cfg)
+    out = ex.handle("propose_incar", {"entries": [
+        {"tag": "SYSTEM", "value": "relax"},
+        {"tag": "ENCUT", "value": 520},
+        {"tag": "LWAVE", "value": False},
+        {"tag": "MAGMOM", "value": [2, 2, 0]},
+    ]})
+    assert out.startswith(_CONSENT_PENDING)
+    assert not (ex.local_dir() / "INCAR").exists()
+    action = get_card(ctx.store, ctx.pid, ctx.tid,
+                      out[len(_CONSENT_PENDING):])
+    assert action["state"] == "pending"
+    assert action["options"] == ["同意本次", "拒绝"]
+    assert action["binding"]["relative_path"] == "INCAR"
+    assert action["binding"]["content"] == (
+        "SYSTEM = relax\nENCUT = 520\nLWAVE = .FALSE.\nMAGMOM = 2*2 0\n"
+    )
+    assert "proposal_sha256" in action["binding"]
+    assert "+++ INCAR (proposal)" in action["summary"]
+
+
+def test_propose_incar_rejects_duplicates_without_action(ctx):
+    ex = ToolExecutor(store=ctx.store, project_id=ctx.pid, task_id=ctx.tid,
+                      cfg=ctx.cfg)
+    out = ex.handle("propose_incar", {"entries": [
+        {"tag": "encut", "value": 400},
+        {"tag": "ENCUT", "value": 520},
+    ]})
+    assert "AI_INCAR_DRAFT_INVALID" in out and "重复" in out
+    flow = ctx.store.get_task(ctx.pid, ctx.tid).get("flow") or {}
+    assert not ((flow.get("consent") or {}).get("actions"))
+    assert not (ex.local_dir() / "INCAR").exists()
+
+
+def test_propose_incar_rejects_binary_existing_file_without_preview(ctx):
+    ex = ToolExecutor(store=ctx.store, project_id=ctx.pid, task_id=ctx.tid,
+                      cfg=ctx.cfg)
+    target = ex.local_dir() / "INCAR"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    sentinel = b"PRIVATE_SENTINEL"
+    target.write_bytes(b"ENCUT=400\x00" + sentinel)
+
+    out = ex.handle("propose_incar", {"entries": [
+        {"tag": "ENCUT", "value": 520},
+    ]})
+
+    assert "AI_INCAR_DRAFT_INVALID" in out
+    assert sentinel.decode() not in out
+    assert target.read_bytes().endswith(sentinel)
+    flow = ctx.store.get_task(ctx.pid, ctx.tid).get("flow") or {}
+    assert not ((flow.get("consent") or {}).get("actions"))
+
+
+def test_propose_incar_rejects_unknown_tag_without_action(ctx):
+    ex = ToolExecutor(store=ctx.store, project_id=ctx.pid, task_id=ctx.tid,
+                      cfg=ctx.cfg)
+    out = ex.handle("propose_incar", {"entries": [
+        {"tag": "NOT_A_REAL_VASP_TAG", "value": 1},
+    ]})
+    assert "AI_INCAR_UNKNOWN_TAG" in out
+    flow = ctx.store.get_task(ctx.pid, ctx.tid).get("flow") or {}
+    assert not ((flow.get("consent") or {}).get("actions"))
+
+
+@pytest.mark.parametrize("value", [
+    float("nan"), float("inf"), float("-inf"),
+    [520, float("nan")], "safe\nENCUT = 1", "safe; ENCUT = 1",
+    "safe # hidden", "safe ! hidden", "safe\rENCUT = 1",
+])
+def test_propose_incar_rejects_nonfinite_and_injected_values(ctx, value):
+    ex = ToolExecutor(store=ctx.store, project_id=ctx.pid, task_id=ctx.tid,
+                      cfg=ctx.cfg)
+    out = ex.handle("propose_incar", {"entries": [
+        {"tag": "ENCUT", "value": value},
+    ]})
+    assert "AI_INCAR_DRAFT_INVALID" in out
+    flow = ctx.store.get_task(ctx.pid, ctx.tid).get("flow") or {}
+    assert not ((flow.get("consent") or {}).get("actions"))
+
+
+def test_incar_confirmation_is_single_use_and_atomic(ctx):
+    ex = ToolExecutor(store=ctx.store, project_id=ctx.pid, task_id=ctx.tid,
+                      cfg=ctx.cfg)
+    pending = ex.handle("propose_incar", {"entries": [
+        {"tag": "ENCUT", "value": 520},
+        {"tag": "EDIFF", "value": 1e-6},
+    ]})
+    action_id = pending[len(_CONSENT_PENDING):]
+    resolved = resolve_card(ctx.store, ctx.pid, ctx.tid, action_id,
+                            approved=True)
+    assert resolved["state"] == "approved"
+    result = ex.execute_action(action_id)
+    assert "已原子写入" in result
+    target = ex.local_dir() / "INCAR"
+    assert target.read_text(encoding="utf-8") == "ENCUT = 520\nEDIFF = 1e-06\n"
+    assert get_card(ctx.store, ctx.pid, ctx.tid, action_id)["state"] == "executed"
+    before = target.stat().st_mtime_ns
+    assert "已原子写入" in ex.execute_action(action_id)
+    assert target.stat().st_mtime_ns == before
+    again = resolve_card(ctx.store, ctx.pid, ctx.tid, action_id, approved=True)
+    assert again["conflict"] is True
+
+
+def test_interrupted_action_blocks_a_second_execution(ctx):
+    ex = ToolExecutor(store=ctx.store, project_id=ctx.pid, task_id=ctx.tid,
+                      cfg=ctx.cfg)
+    args = {"entries": [{"tag": "ENCUT", "value": 520}]}
+    first_id = ex.handle("propose_incar", args)[len(_CONSENT_PENDING):]
+    resolve_card(ctx.store, ctx.pid, ctx.tid, first_id, approved=True)
+    assert claim_action(ctx.store, ctx.pid, ctx.tid, first_id)["state"] == "executing"
+
+    second_id = ex.handle("propose_incar", args)[len(_CONSENT_PENDING):]
+    resolve_card(ctx.store, ctx.pid, ctx.tid, second_id, approved=True)
+    result = ex.execute_action(second_id)
+
+    assert "存在结果未知" in result
+    assert get_card(ctx.store, ctx.pid, ctx.tid, first_id)["state"] == "unknown"
+    assert get_card(ctx.store, ctx.pid, ctx.tid, second_id)["state"] == "failed"
+    assert not (ex.local_dir() / "INCAR").exists()
+
+
+def test_incar_confirmation_fails_closed_if_binding_or_base_changes(ctx):
+    ex = ToolExecutor(store=ctx.store, project_id=ctx.pid, task_id=ctx.tid,
+                      cfg=ctx.cfg)
+    target = ex.local_dir() / "INCAR"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("ENCUT = 400\n", encoding="utf-8")
+    pending = ex.handle("propose_incar", {"entries": [
+        {"tag": "ENCUT", "value": 520},
+    ]})
+    action_id = pending[len(_CONSENT_PENDING):]
+    resolve_card(ctx.store, ctx.pid, ctx.tid, action_id, approved=True)
+    target.write_text("ENCUT = 450\n", encoding="utf-8")
+    assert "changed after preview" in ex.execute_action(action_id)
+    assert target.read_text(encoding="utf-8") == "ENCUT = 450\n"
+    assert get_card(ctx.store, ctx.pid, ctx.tid, action_id)["state"] == "failed"
+
+    pending2 = ex.handle("propose_incar", {"entries": [
+        {"tag": "ENCUT", "value": 600},
+    ]})
+    action2 = pending2[len(_CONSENT_PENDING):]
+    flow = ctx.store.get_task(ctx.pid, ctx.tid)["flow"]
+    flow["consent"]["actions"][action2]["binding"]["content"] = "ENCUT = 999\n"
+    ctx.store.update_task(ctx.pid, ctx.tid, flow=flow)
+    result2 = resolve_card(ctx.store, ctx.pid, ctx.tid, action2, approved=True)
+    assert result2["tampered"] is True
+    assert target.read_text(encoding="utf-8") == "ENCUT = 450\n"
 
 
 def test_agent_dangerous_command_requires_consent(ctx):
-    # M47：目录内破坏性操作（rm 等）不再静默放行，而是「弹卡授权」。
-    # rm -rf / 命中 HOLD -> 卡片落库 flow.consent，命令不执行。
+    # 自由命令在解析后立即拒绝，不得生成任何可批准卡片。
     llm = FakeLLM()
     llm.enqueue(_tool("run_exec", command="rm -rf /") + "\n我尝试清理。")
+    llm.enqueue("AI_FREEFORM_EXEC_DISABLED：自由命令执行已禁用。")
     answer = run_agent(ctx.store, ctx.pid, ctx.tid, "帮我清理一下",
                        cfg=ctx.cfg, llm_factory=lambda c: llm,
                        auto_resume=False)
-    assert "我尝试清理。" in answer
-    flow = ctx.store.get_task(ctx.pid, ctx.tid)["flow"]
+    assert "AI_FREEFORM_EXEC_DISABLED" in answer
+    flow = ctx.store.get_task(ctx.pid, ctx.tid).get("flow") or {}
     cards = (flow.get("consent") or {}).get("cards") or {}
-    assert cards, "rm -rf / 应生成待授权的门禁卡片"
-    card = list(cards.values())[0]
-    assert card["tool"] == "run_exec"
-    assert card["args"]["command"] == "rm -rf /"
-    assert card["kind"] == "workspace"
-    assert card["batch_key"]
+    assert not cards, "自由命令必须直接拒绝，不能生成可批准卡片"
+    assert "AI_FREEFORM_EXEC_DISABLED" in answer
 
 
 def test_agent_stream_dangerous_command_yields_card(ctx):
-    # M47：流式渲染时，HOLD 命中要在流里产出 card 事件（前端据此弹卡）。
+    # 流式路径也必须拒绝自由命令，并且不得产出授权卡片。
     llm = FakeLLM()
     llm.enqueue(_tool("run_exec", command="rm -rf /") + "\n我尝试清理。")
+    llm.enqueue("AI_FREEFORM_EXEC_DISABLED：自由命令执行已禁用。")
     events = list(run_agent_stream(ctx.store, ctx.pid, ctx.tid, "帮我清理一下",
                                    cfg=ctx.cfg, llm_factory=lambda c: llm,
                                    auto_resume=False))
     cards = [e["card"] for e in events if e["type"] == "card"]
-    assert cards and cards[0]["args"]["command"] == "rm -rf /"
+    assert not cards
+    assert any("AI_FREEFORM_EXEC_DISABLED" in str(e) for e in events)
     assert events[-1]["type"] == "done"
-    flow = ctx.store.get_task(ctx.pid, ctx.tid)["flow"]
+    flow = ctx.store.get_task(ctx.pid, ctx.tid).get("flow") or {}
     cons = flow.get("consent") or {}
-    assert cons.get("cards")
+    assert not cons.get("cards")
+
+
+def test_kpoints_generator_is_deterministic_confirmed_and_single_use(ctx):
+    ex = ToolExecutor(store=ctx.store, project_id=ctx.pid, task_id=ctx.tid,
+                      cfg=ctx.cfg)
+    ex.handle("plan", {"jobs": [{"key": "relax", "label": "结构优化",
+                                  "kind": "relax"}]})
+    target = ex.local_dir() / "relax" / "KPOINTS"
+    pending = ex.handle("generate_kpoints", {
+        "job_key": "relax", "grid": [6, 6, 4], "centering": "Gamma"})
+    assert pending.startswith(_CONSENT_PENDING) and not target.exists()
+    action_id = pending[len(_CONSENT_PENDING):]
+    action = get_card(ctx.store, ctx.pid, ctx.tid, action_id)
+    assert action["binding"]["execution_kind"] == "deterministic_kpoints_generator"
+    assert "6 6 4" in action["summary"]
+    assert "已原子写入" in _approve_pending(ex, pending)
+    expected = "Generated by VASP-Doctor\n0\nGamma\n6 6 4\n0 0 0\n"
+    assert target.read_text(encoding="utf-8") == expected
+    before = target.read_bytes()
+    assert "已原子写入" in ex.execute_action(action_id)
+    assert target.read_bytes() == before
+
+
+def test_script_attestation_fails_if_script_changes_before_execution(ctx):
+    ex = ToolExecutor(store=ctx.store, project_id=ctx.pid, task_id=ctx.tid,
+                      cfg=ctx.cfg)
+    ex.handle("plan", {"jobs": [{"key": "relax", "label": "结构优化",
+                                  "kind": "relax"}]})
+    job_dir = ex.local_dir() / "relax"
+    _write_complete_local_job(job_dir)
+    script = job_dir / "run.sh"
+    script.write_text("#!/bin/bash\nSECRET_COMMAND_SHOULD_NOT_RENDER\n",
+                      encoding="utf-8")
+    pending = ex.handle("draft", {})
+    action_id = pending[len(_CONSENT_PENDING):]
+    action = get_card(ctx.store, ctx.pid, ctx.tid, action_id)
+    assert "SECRET_COMMAND_SHOULD_NOT_RENDER" not in action["summary"]
+    resolve_card(ctx.store, ctx.pid, ctx.tid, action_id, approved=True)
+    script.write_text("#!/bin/bash\nchanged-after-confirmation\n", encoding="utf-8")
+    result = ex.execute_action(action_id)
+    assert "操作失败且未重试" in result
+    failed = get_card(ctx.store, ctx.pid, ctx.tid, action_id)
+    assert failed["state"] == "failed"
+    flow = ctx.store.get_task(ctx.pid, ctx.tid)["flow"]
+    assert not flow.get("script_attestations") and not flow.get("draft")
 def test_agent_submit_stops_at_await_submit(ctx):
     llm = FakeLLM()
     llm.enqueue(_tool("plan", jobs=[{"key": "r1", "label": "结构优化",
@@ -167,17 +378,19 @@ def test_agent_submit_stops_at_await_submit(ctx):
     llm.enqueue("草稿已停在待确认；真实提交需你确认。")
     local_dir = ctx.cfg.data_dir / "workspace" / f"{ctx.pid}__{ctx.tid}"
     relax = local_dir / "relax"
-    relax.mkdir(parents=True, exist_ok=True)
-    (relax / "run.sh").write_text("#!/bin/bash\n", encoding="utf-8")
+    _write_complete_local_job(relax)
     answer = run_agent(ctx.store, ctx.pid, ctx.tid, "帮我算结构优化",
-                       cfg=ctx.cfg, llm_factory=lambda c: llm)
+                       cfg=ctx.cfg, llm_factory=lambda c: llm,
+                       auto_resume=False)
     flow = ctx.store.get_task(ctx.pid, ctx.tid)["flow"]
-    assert flow["phase"] == "await_submit"
-    assert flow.get("draft")
+    assert "我生成了提交草稿" in answer
+    assert flow["phase"] == "running"
+    assert not flow.get("draft")
+    actions = (flow.get("consent") or {}).get("actions") or {}
+    assert list(actions.values())[-1]["kind"] == "script_attestation"
 
 
 def test_agent_stream_auto_submit_card(ctx):
-    # 问题3：draft 后不再停在文字等待，流式自动产出「确认提交」确认卡。
     llm = FakeLLM()
     llm.enqueue(
         _tool("plan", jobs=[{"key": "r1", "label": "结构优化", "kind": "relax"}])
@@ -185,17 +398,18 @@ def test_agent_stream_auto_submit_card(ctx):
     llm.enqueue(_tool("draft") + "\n草稿已生成，等待确认。")
     local_dir = ctx.cfg.data_dir / "workspace" / f"{ctx.pid}__{ctx.tid}"
     relax = local_dir / "relax"
-    relax.mkdir(parents=True, exist_ok=True)
-    (relax / "run.sh").write_text("#!/bin/bash\n", encoding="utf-8")
+    _write_complete_local_job(relax)
     events = list(run_agent_stream(ctx.store, ctx.pid, ctx.tid, "帮我算结构优化",
-                                   cfg=ctx.cfg, llm_factory=lambda c: llm))
+                                   cfg=ctx.cfg, llm_factory=lambda c: llm,
+                                   auto_resume=False))
     cards = [e["card"] for e in events if e["type"] == "card"]
     assert cards
-    assert cards[-1]["kind"] == "submit"
-    assert "确认提交" in cards[-1]["summary"]
+    assert cards[-1]["kind"] == "script_attestation"
+    assert "认领" in cards[-1]["summary"]
     assert events[-1]["type"] == "done"
     flow = ctx.store.get_task(ctx.pid, ctx.tid)["flow"]
-    assert flow["phase"] == "await_submit"
+    assert flow["phase"] == "running"
+    assert not flow.get("draft")
 
 
 def test_agent_llm_unavailable_no_flow(ctx):
@@ -245,8 +459,10 @@ def test_executor_draft_persists_await_submit(ctx):
     ex.handle("plan", {"jobs": [{"key": "r1", "label": "结构优化",
                                  "kind": "relax"}]})
     relax = ex.local_dir() / "relax"
-    relax.mkdir(parents=True, exist_ok=True)
-    (relax / "run.sh").write_text("#!/bin/bash\n", encoding="utf-8")
+    _write_complete_local_job(relax)
+    pending = ex.handle("draft", {})
+    assert not ctx.store.get_task(ctx.pid, ctx.tid)["flow"].get("draft")
+    assert "已认领" in _approve_pending(ex, pending)
     out = ex.handle("draft", {})
     assert "已生成提交草稿" in out
     flow = ctx.store.get_task(ctx.pid, ctx.tid)["flow"]
@@ -258,7 +474,7 @@ def test_executor_unknown_tool_returns_help(ctx):
     ex = ToolExecutor(store=ctx.store, project_id=ctx.pid, task_id=ctx.tid,
                       cfg=ctx.cfg)
     out = ex.handle("no_such_tool", {})
-    assert "未知工具" in out
+    assert "AI_TOOL_NOT_ALLOWED" in out
 
 
 def test_executor_monitor_without_ssh_degrades(ctx):
@@ -272,7 +488,7 @@ def test_executor_run_exec_safe_command_allowed(ctx):
     ex = ToolExecutor(store=ctx.store, project_id=ctx.pid, task_id=ctx.tid,
                       cfg=ctx.cfg)
     out = ex.handle("run_exec", {"command": "pwd"})
-    assert "拒绝" not in out
+    assert "AI_FREEFORM_EXEC_DISABLED" in out
 
 
 def test_stream_cleaner_strips_marks_across_chunks():
@@ -474,8 +690,7 @@ def test_agent_stream_receipt_stall_stops_with_note(ctx):
 
 
 def test_agent_writes_into_user_workspace(ctx):
-    """M42.5 回归：任务设了 local_workspace 时，AI 写操作必须落在该工作区，
-    而不是私有草稿目录；flow.local_dir 也指向该工作区。"""
+    """Legacy generic writes remain side-effect free even in a user workspace."""
     ws = ctx.tmp / "myws"
     ws.mkdir(parents=True, exist_ok=True)
     tk = ctx.store.create_task(ctx.pid, goal="structure relax",
@@ -493,10 +708,9 @@ def test_agent_writes_into_user_workspace(ctx):
     llm.enqueue("Input file is ready in the user workspace.")
     answer = run_agent(local.store, local.pid, local.tid, "write INCAR",
                        cfg=local.cfg, llm_factory=lambda c: llm)
-    assert "已写入" in answer
+    assert "Input file is ready" in answer
     incar = ws / "INCAR"
-    assert incar.is_file()
-    assert "ENCUT = 520" in incar.read_text(encoding="utf-8")
+    assert not incar.exists()
     private = local.cfg.data_dir / "workspace" / f"{local.pid}__{local.tid}"
     assert not (private / "INCAR").exists()
     flow = local.store.get_task(local.pid, local.tid)["flow"]
@@ -513,9 +727,14 @@ def test_copy_inputs_same_workspace_no_self_copy(ctx):
                                local_workspace=str(ws))
     exec_ = ToolExecutor(store=ctx.store, project_id=ctx.pid, task_id=tk["id"],
                          cfg=ctx.cfg)
-    result = exec_.tool_copy_inputs({"filenames": ["POSCAR"]})
-    assert "已复制" in result and "缺失" not in result
+    exec_.handle("get_state", {})
+    flow = ctx.store.get_task(ctx.pid, tk["id"])["flow"]
+    artifact_id = next(iter(flow["artifacts"]))
+    result = exec_.handle("copy_inputs", {"artifact_ids": [artifact_id],
+                                          "job_key": ""})
+    assert "本来就在目标目录" in result
     assert (ws / "POSCAR").is_file()
+    assert not ((flow.get("consent") or {}).get("actions"))
 
 def test_plan_remaps_opaque_keys_to_semantic(ctx):
     """M46：plan 里晦涩的 r1/s1 key 会被归一为可读语义名（relax/static）。"""
@@ -545,14 +764,15 @@ def test_executor_select_jobs_skip_and_reactivate(ctx):
         {"key": "s1", "label": "静态自洽", "kind": "static"},
     ]})
     relax = ex.local_dir() / "relax"
-    relax.mkdir(parents=True, exist_ok=True)
-    (relax / "run.sh").write_text("#!/bin/bash\n", encoding="utf-8")
+    _write_complete_local_job(relax)
     out = ex.handle("select_jobs",
                     {"submit": ["relax"], "skip": ["static"]})
     assert "本次提交" in out and "跳过" in out
     flow = ctx.store.get_task(ctx.pid, ctx.tid)["flow"]
     statuses = {j["key"]: j["status"] for j in flow["plan"]["jobs"]}
     assert statuses == {"relax": "draft", "static": "skipped"}
+    pending = ex.handle("draft", {})
+    assert "已认领" in _approve_pending(ex, pending)
     out = ex.handle("draft", {})
     assert "已跳过：static" in out
     flow = ctx.store.get_task(ctx.pid, ctx.tid)["flow"]
@@ -576,91 +796,53 @@ def test_executor_select_jobs_by_label(ctx):
     assert statuses == {"relax_step": "draft", "static_step": "skipped"}
 
 def test_agent_stream_consent_approve_resumes(ctx):
-    """问题「同意后继续」：授权卡被同意后，当前运行继续执行，不再中断等用户下一句。"""
-    import threading
-    import time
-
-    from ai_mode.consent import resolve_card
-
+    """A disabled free-form command creates no approval surface or side effect."""
     llm = FakeLLM()
     llm.enqueue(_tool("run_exec", command="mkdir -p ../consented_out")
                 + "\n我把目录写到工作区外。")
-    llm.enqueue("已在授权下完成，继续收尾。")
-    events: list[dict] = []
-    found = {"id": None}
-
-    def _consume():
-        for ev in run_agent_stream(ctx.store, ctx.pid, ctx.tid, "帮我执行越界写",
-                                   cfg=ctx.cfg, llm_factory=lambda c: llm):
-            if ev["type"] == "card":
-                found["id"] = ev["card"]["card_id"]
-            events.append(ev)
-
-    thread = threading.Thread(target=_consume, daemon=True)
-    thread.start()
-    deadline = time.monotonic() + 5
-    while found["id"] is None and time.monotonic() < deadline:
-        time.sleep(0.02)
-    assert found["id"] is not None, "等待授权期间应产出卡片"
-    resolve_card(ctx.store, ctx.pid, ctx.tid, found["id"], approved=True)
-    thread.join(timeout=10)
-    assert not thread.is_alive(), "同意后运行应自行完成，无需外部打断"
+    llm.enqueue("AI_FREEFORM_EXEC_DISABLED：自由命令执行已禁用。")
+    events = list(run_agent_stream(
+        ctx.store, ctx.pid, ctx.tid, "帮我执行越界写",
+        cfg=ctx.cfg, llm_factory=lambda c: llm,
+    ))
     kinds = [e["type"] for e in events]
-    assert "card" in kinds and "status" in kinds
+    assert "card" not in kinds
     assert events[-1]["type"] == "done"
-    assert (ctx.cfg.data_dir / "workspace" / "consented_out").is_dir()
+    assert "AI_FREEFORM_EXEC_DISABLED" in str(events)
+    assert not (ctx.cfg.data_dir / "workspace" / "consented_out").exists()
 
 
 def test_agent_stream_consent_deny_ends(ctx):
-    """问题「拒绝才中断」：用户拒绝授权后运行结束，给出终止说明，不再继续。"""
-    import threading
-    import time
-
-    from ai_mode.consent import resolve_card
-
+    """Stable denial terminates normally without creating a consent action."""
     llm = FakeLLM()
     llm.enqueue(_tool("run_exec", command="mkdir -p ../evil") + "\n越界写。")
-    llm.enqueue("已写入。")
-    events: list[dict] = []
-    found = {"id": None}
-
-    def _consume():
-        for ev in run_agent_stream(ctx.store, ctx.pid, ctx.tid, "帮我越界写",
-                                   cfg=ctx.cfg, llm_factory=lambda c: llm):
-            if ev["type"] == "card":
-                found["id"] = ev["card"]["card_id"]
-            events.append(ev)
-
-    thread = threading.Thread(target=_consume, daemon=True)
-    thread.start()
-    deadline = time.monotonic() + 5
-    while found["id"] is None and time.monotonic() < deadline:
-        time.sleep(0.02)
-    assert found["id"] is not None
-    resolve_card(ctx.store, ctx.pid, ctx.tid, found["id"], approved=False)
-    thread.join(timeout=10)
-    assert not thread.is_alive()
+    llm.enqueue("AI_FREEFORM_EXEC_DISABLED：未写入。")
+    events = list(run_agent_stream(
+        ctx.store, ctx.pid, ctx.tid, "帮我越界写",
+        cfg=ctx.cfg, llm_factory=lambda c: llm,
+    ))
     kinds = [e["type"] for e in events]
     assert kinds.count("done") == 1
     assert events[-1]["type"] == "done"
-    assert "拒绝" in (events[-1].get("answer") or "")
+    assert "AI_FREEFORM_EXEC_DISABLED" in str(events)
+    assert not any(e["type"] == "card" for e in events)
     tail_idx = next(i for i, e in enumerate(events) if e["type"] == "done")
     assert not [e for e in events[tail_idx + 1:]]
 def test_agent_write_input_and_draft_per_job_dir(ctx):
-    """写输入到作业子目录（dir=作业 key），draft 把该作业目录记为提交目录，
-    保证「输入文件与提交脚本在同一路径」。"""
+    """Legacy generic input writing cannot mutate a planned job directory."""
     ex = ToolExecutor(store=ctx.store, project_id=ctx.pid, task_id=ctx.tid,
                       cfg=ctx.cfg)
     ex.handle("plan", {"jobs": [{"key": "relax", "label": "结构优化",
                                  "kind": "relax"}]})
     out = ex.handle("write_input", {
         "filename": "INCAR", "content": "SYSTEM = x\n", "dir": "relax"})
-    assert "已写入" in out and "relax" in out
+    assert "AI_TOOL_NOT_ALLOWED" in out
     local = ex.local_dir() / "relax" / "INCAR"
-    assert local.is_file()
+    assert not local.exists()
     relax = ex.local_dir() / "relax"
-    relax.mkdir(parents=True, exist_ok=True)
-    (relax / "run.sh").write_text("#!/bin/bash\n", encoding="utf-8")
+    _write_complete_local_job(relax)
+    pending = ex.handle("draft", {})
+    assert "已认领" in _approve_pending(ex, pending)
     out2 = ex.handle("draft", {})
     assert "已生成提交草稿" in out2
     flow = ctx.store.get_task(ctx.pid, ctx.tid)["flow"]
@@ -676,8 +858,7 @@ def test_write_input_rejects_sh_script(ctx):
                       cfg=ctx.cfg)
     out = ex.handle("write_input", {"filename": "run.sh",
                                     "content": "#!/bin/bash\nsrun vasp_std\n"})
-    assert "拒绝写入提交脚本" in out
-    assert "用户自己提供" in out
+    assert "AI_TOOL_NOT_ALLOWED" in out
     assert not (ex.local_dir() / "run.sh").exists()
 
 
@@ -689,9 +870,28 @@ def test_draft_without_user_script_blocks_with_prompt(ctx):
                                  "kind": "relax"}]})
     out = ex.handle("draft", {})
     assert "无法生成提交草稿" in out
-    assert "超算作业目录" in out and "hpc_write_script" in out
+    assert "超算作业目录" in out and "系统不会代写" in out
     flow = ctx.store.get_task(ctx.pid, ctx.tid)["flow"]
     assert flow["phase"] == "blocked"
+
+
+def test_draft_rejects_empty_user_script(ctx):
+    """空 *.sh 不能被当作用户已提供且已认领的提交脚本。"""
+    ex = ToolExecutor(store=ctx.store, project_id=ctx.pid, task_id=ctx.tid,
+                      cfg=ctx.cfg)
+    ex.handle("plan", {"jobs": [{"key": "relax", "label": "结构优化",
+                                   "kind": "relax"}]})
+    relax = ex.local_dir() / "relax"
+    _write_complete_local_job(relax)
+    (relax / "run.sh").write_bytes(b"")
+
+    out = ex.handle("draft", {})
+
+    assert "提交脚本为空" in out
+    flow = ctx.store.get_task(ctx.pid, ctx.tid)["flow"]
+    assert flow["phase"] == "blocked"
+    assert not flow.get("draft")
+    assert not ((flow.get("consent") or {}).get("actions"))
     assert not flow.get("draft")
 
 
@@ -699,10 +899,13 @@ def test_draft_without_user_script_blocks_with_prompt(ctx):
 class _FakeHpc:
     """同签名假 SSHManager（list_dir_info/read_file/run/write_file）。"""
 
+    execution_mode = "Fake"
+
     def __init__(self, dirs, files):
         self._dirs = dirs
         self._files = dict(files)
         self.written: dict[str, bytes] = {}
+        self.write_calls: list[str] = []
         self.mkdir_calls: list[str] = []
         self.runs: list[str] = []
 
@@ -724,19 +927,41 @@ class _FakeHpc:
         return 0, "", ""
 
     def write_file(self, remote, data):
+        self.write_calls.append(remote)
         self.written[remote] = bytes(data)
         return len(data)
+
+    def atomic_write_file(self, remote, data, *, expected_sha256):
+        payload = bytes(data)
+        if hashlib.sha256(payload).hexdigest() != expected_sha256:
+            raise RuntimeError("hash mismatch")
+        self.write_calls.append(remote)
+        self.written[remote] = payload
+        self._files[remote] = payload
+        return len(payload)
+
+    def sha256_file(self, remote):
+        return hashlib.sha256(self._files[remote]).hexdigest()
+
+    def mkdir(self, remote):
+        self.mkdir_calls.append(remote)
+        self._dirs.setdefault(remote, [])
 
     def stat(self, remote):
         # 对齐真实 SFTP stat：目录、_files 里的文件、
         # 以及目录列表条目里的文件均返回 dict
         p = str(remote).replace("\\", "/").rstrip("/")
-        if p in self._dirs or p in self._files:
-            return {}
+        if p in self._dirs:
+            return {"size": 0, "is_dir": True, "is_file": False}
+        if p in self._files:
+            return {"size": len(self._files[p]), "is_dir": False,
+                    "is_file": True}
         parent, _, name = p.rpartition("/")
         for info in self._dirs.get(parent, []):
             if info.get("name") == name:
-                return {}
+                return {"size": int(info.get("size") or 0),
+                        "is_dir": bool(info.get("is_dir")),
+                        "is_file": not bool(info.get("is_dir"))}
         return None
 
 
@@ -748,6 +973,11 @@ def _hpc_task(ctx, tmp_path):
                                local_workspace=str(ws),
                                hpc_workspace="/remote/work")
     return tk, ws
+
+
+def _remote_vasp_inputs(root: str, job_key: str) -> dict[str, bytes]:
+    return {f"{root}/{job_key}/{name}": f"{name} input\n".encode()
+            for name in ("INCAR", "POSCAR", "KPOINTS", "POTCAR")}
 
 
 def test_executor_hpc_list_and_read(ctx, tmp_path):
@@ -795,9 +1025,61 @@ def test_executor_hpc_tools_report_honestly_when_unavailable(ctx, tmp_path):
     assert ex2.hpc_snapshot() == ""
 
 
+def test_sensitive_and_non_text_local_reads_fail_closed(ctx):
+    ws = ctx.tmp / "sensitive-ws"
+    ws.mkdir()
+    ctx.store.update_task(ctx.pid, ctx.tid, local_workspace=str(ws))
+    ex = ToolExecutor(store=ctx.store, project_id=ctx.pid, task_id=ctx.tid,
+                      cfg=ctx.cfg)
+    sentinel = b"TOP_SECRET_SENTINEL"
+    denied = ("POTCAR", "POTCAR.gz", "WAVECAR", "CHGCAR.1", "id_rsa",
+              ".env.local", "config.json", "cluster.pem", "mystery.dat")
+    for name in denied:
+        (ws / name).write_bytes(sentinel)
+        out = ex.handle("ws_read", {"path": name})
+        assert "DENIED" in out
+        assert sentinel.decode() not in out
+    listing = ex.handle("ws_list", {})
+    assert "POTCAR" in listing
+    assert sentinel.decode() not in listing
+    (ws / "OUTCAR").write_bytes(b"ok\x00" + sentinel)
+    binary = ex.handle("ws_read", {"path": "OUTCAR"})
+    assert "AI_BINARY_FILE_DENIED" in binary and sentinel.decode() not in binary
+    (ws / "OUTCAR").write_bytes(b"x" * 12001 + sentinel)
+    large = ex.handle("ws_read", {"path": "OUTCAR"})
+    assert "AI_FILE_TOO_LARGE" in large and sentinel.decode() not in large
+
+
+def test_sensitive_and_non_text_remote_reads_fail_closed(ctx, tmp_path):
+    tk, _ws = _hpc_task(ctx, tmp_path)
+    root = "/remote/work"
+    sentinel = b"REMOTE_SECRET_SENTINEL"
+    denied_names = (
+        "POTCAR.spec", "WAVECAR", "CHGCAR.old", "id_ed25519",
+        ".env", "credentials.json", "token.key", "unknown.bin")
+    files = {f"{root}/{name}": sentinel for name in denied_names}
+    files[f"{root}/OUTCAR"] = b"text\x01" + sentinel
+    hpc = _FakeHpc(dirs={root: [
+        {"name": name, "is_dir": False, "size": len(sentinel)}
+        for name in denied_names
+    ]}, files=files)
+    ex = ToolExecutor(store=ctx.store, project_id=ctx.pid, task_id=tk["id"],
+                      cfg=ctx.cfg, orch=SimpleNamespace(hpc=hpc))
+    for name in ("POTCAR.spec", "WAVECAR", "CHGCAR.old", "id_ed25519",
+                 ".env", "credentials.json", "token.key", "unknown.bin"):
+        out = ex.handle("hpc_read", {"path": name})
+        assert "DENIED" in out and sentinel.decode() not in out
+    binary = ex.handle("hpc_read", {"path": "OUTCAR"})
+    assert "AI_BINARY_FILE_DENIED" in binary
+    assert sentinel.decode() not in binary
+    snapshot = ex.hpc_snapshot()
+    assert "POTCAR.spec" in snapshot
+    assert sentinel.decode() not in snapshot
+
+
 # ---------------- M50/M57：受限上传 hpc_upload（SFTP，免弹卡） --------
 def test_executor_hpc_upload_direct_without_card(ctx, tmp_path):
-    """M57 用户政策：上传免弹卡（通道本身受控），直接上传不生成卡片。"""
+    """Raw model-supplied source paths cannot initiate an upload."""
     tk, ws = _hpc_task(ctx, tmp_path)
     (ws / "extra.bin").write_bytes(b"\x00\x01POSCAR-ish")
     root = "/remote/work"
@@ -805,11 +1087,61 @@ def test_executor_hpc_upload_direct_without_card(ctx, tmp_path):
     ex = ToolExecutor(store=ctx.store, project_id=ctx.pid, task_id=tk["id"],
                       cfg=ctx.cfg, orch=SimpleNamespace(hpc=hpc))
     out = ex.handle("hpc_upload", {"source": "extra.bin"})
-    assert "已上传" in out
-    assert hpc.written[f"{root}/extra.bin"] == b"\x00\x01POSCAR-ish"
-    assert any("mkdir -p" in c for c in hpc.mkdir_calls)
+    assert "AI_ARTIFACT_REQUIRED" in out
+    assert not hpc.written
+    assert not hpc.mkdir_calls
     flow = (ctx.store.get_task(ctx.pid, tk["id"]) or {}).get("flow") or {}
     assert not ((flow.get("consent") or {}).get("cards"))
+
+
+def test_registered_artifact_upload_is_confirmed_and_single_use(ctx, tmp_path):
+    tk, ws = _hpc_task(ctx, tmp_path)
+    root = "/remote/work"
+    hpc = _FakeHpc(dirs={root: []}, files={})
+    ex = ToolExecutor(store=ctx.store, project_id=ctx.pid, task_id=tk["id"],
+                      cfg=ctx.cfg, orch=SimpleNamespace(hpc=hpc))
+    ex.handle("plan", {"jobs": [{"key": "relax", "label": "结构优化",
+                                  "kind": "relax"}]})
+    ex.handle("get_state", {})
+    flow = ctx.store.get_task(ctx.pid, tk["id"])["flow"]
+    artifact_id = next(aid for aid, item in flow["artifacts"].items()
+                       if item["name"] == "INCAR")
+    pending = ex.handle("hpc_upload", {"artifact_id": artifact_id,
+                                        "job_key": "relax"})
+    assert pending.startswith(_CONSENT_PENDING)
+    assert not hpc.written and not hpc.write_calls
+    action_id = pending[len(_CONSENT_PENDING):]
+    action = get_card(ctx.store, ctx.pid, tk["id"], action_id)
+    assert action["binding"]["source_sha256"] == ex._sha256_file(ws / "INCAR")
+    assert action["binding"]["execution_mode"] == "Fake"
+    assert action["options"] == ["同意本次", "拒绝"]
+    assert "已通过 SFTP 上传" in _approve_pending(ex, pending)
+    assert hpc.written[f"{root}/relax/INCAR"] == (ws / "INCAR").read_bytes()
+    assert hpc.write_calls == [f"{root}/relax/INCAR"]
+    assert hpc.sha256_file(f"{root}/relax/INCAR") == \
+        action["binding"]["source_sha256"]
+    ex.execute_action(action_id)
+    assert hpc.write_calls == [f"{root}/relax/INCAR"]
+
+
+def test_registered_artifact_copy_waits_for_confirmation(ctx):
+    ws = ctx.tmp / "copy-ws"
+    ws.mkdir()
+    (ws / "POSCAR").write_text("POSCAR source\n", encoding="utf-8")
+    tk = ctx.store.create_task(ctx.pid, goal="copy", local_workspace=str(ws))
+    ex = ToolExecutor(store=ctx.store, project_id=ctx.pid, task_id=tk["id"],
+                      cfg=ctx.cfg)
+    ex.handle("plan", {"jobs": [{"key": "relax", "label": "结构优化",
+                                  "kind": "relax"}]})
+    ex.handle("get_state", {})
+    flow = ctx.store.get_task(ctx.pid, tk["id"])["flow"]
+    artifact_id = next(iter(flow["artifacts"]))
+    pending = ex.handle("copy_inputs", {"artifact_ids": [artifact_id],
+                                        "job_key": "relax"})
+    target = ws / "relax" / "POSCAR"
+    assert pending.startswith(_CONSENT_PENDING) and not target.exists()
+    assert "已原子复制" in _approve_pending(ex, pending)
+    assert target.read_text(encoding="utf-8") == "POSCAR source\n"
 
 
 def test_executor_hpc_upload_rejects_unsafe_and_missing(ctx, tmp_path):
@@ -820,16 +1152,18 @@ def test_executor_hpc_upload_rejects_unsafe_and_missing(ctx, tmp_path):
     ex = ToolExecutor(store=ctx.store, project_id=ctx.pid, task_id=tk["id"],
                       cfg=ctx.cfg, orch=SimpleNamespace(hpc=hpc))
     out_esc = ex.handle("hpc_upload", {"source": "../escape.txt"})
-    assert ("拒绝" in out_esc) or ("非法" in out_esc)
-    assert "非法" in ex.handle("hpc_upload", {"source": "a.txt",
-                                              "dest": "/abs/dest"})
-    assert "缺少参数" in ex.handle("hpc_upload", {})
-    assert "不存在" in ex.handle("hpc_upload", {"source": "missing.txt"})
+    assert "AI_ARTIFACT_REQUIRED" in out_esc
+    assert "AI_ARTIFACT_REQUIRED" in ex.handle(
+        "hpc_upload", {"source": "a.txt", "dest": "/abs/dest"})
+    assert "AI_ARTIFACT_REQUIRED" in ex.handle("hpc_upload", {})
+    assert "AI_ARTIFACT_REQUIRED" in ex.handle(
+        "hpc_upload", {"source": "missing.txt"})
     assert hpc.written == {}
     # 未连超算：如实说明
     ex2 = ToolExecutor(store=ctx.store, project_id=ctx.pid, task_id=tk["id"],
                        cfg=ctx.cfg, orch=SimpleNamespace(hpc=None))
-    assert "未连接超算" in ex2.handle("hpc_upload", {"source": "INCAR"})
+    assert "AI_ARTIFACT_REQUIRED" in ex2.handle(
+        "hpc_upload", {"source": "INCAR"})
 
 
 def test_upload_classified_deny_but_scp_always_denied(ctx, tmp_path):
@@ -840,28 +1174,37 @@ def test_upload_classified_deny_but_scp_always_denied(ctx, tmp_path):
                       cfg=ctx.cfg, orch=SimpleNamespace(hpc=hpc))
     out = ex.handle("run_exec",
                     {"command": "scp INCAR user@hpc:/remote/work/"})
-    assert "拒绝" in out
-    assert "不放行" in out
+    assert "AI_FREEFORM_EXEC_DISABLED" in out
     out2 = ex.handle("hpc_exec", {"command": "scp a.txt b.txt"})
-    assert "拒绝" in out2
+    assert "AI_FREEFORM_EXEC_DISABLED" in out2
     assert hpc.written == {}
 
 
 # ---------------- M51：超算为主（远端脚本优先 + hpc_write_script） ------
 def test_draft_uses_remote_script_when_local_missing(ctx, tmp_path):
-    """超算作业目录里已有唯一 *.sh、本地没有：draft 直接用远端脚本，不再阻塞。"""
     tk, _ws = _hpc_task(ctx, tmp_path)
     root = "/remote/work"
     hpc = _FakeHpc(
         dirs={root: [{"name": "sub_vasp.sh", "is_dir": False, "size": 88}],
               f"{root}/relax": [
                   {"name": "INCAR", "is_dir": False, "size": 20},
+                  {"name": "POSCAR", "is_dir": False, "size": 30},
+                  {"name": "KPOINTS", "is_dir": False, "size": 10},
+                  {"name": "POTCAR", "is_dir": False, "size": 40},
                   {"name": "sub_vasp.sh", "is_dir": False, "size": 88}]},
-        files={f"{root}/relax/sub_vasp.sh": b"#!/bin/bash\nsbatch vasp\n"})
+        files={**_remote_vasp_inputs(root, "relax"),
+               f"{root}/relax/sub_vasp.sh": b"#!/bin/bash\nsbatch vasp\n"})
     ex = ToolExecutor(store=ctx.store, project_id=ctx.pid, task_id=tk["id"],
                       cfg=ctx.cfg, orch=SimpleNamespace(hpc=hpc))
     ex.handle("plan", {"jobs": [{"key": "relax", "label": "结构优化",
                                  "kind": "relax"}]})
+    pending = ex.handle("draft", {})
+    assert pending.startswith(_CONSENT_PENDING)
+    assert not ctx.store.get_task(ctx.pid, tk["id"])["flow"].get("draft")
+    action = get_card(ctx.store, ctx.pid, tk["id"],
+                      pending[len(_CONSENT_PENDING):])
+    assert "sbatch vasp" not in action["summary"]
+    assert "已认领" in _approve_pending(ex, pending)
     out = ex.handle("draft", {})
     assert "已生成提交草稿" in out and "超算作业目录" in out
     flow = ctx.store.get_task(ctx.pid, tk["id"])["flow"]
@@ -870,44 +1213,42 @@ def test_draft_uses_remote_script_when_local_missing(ctx, tmp_path):
     assert draft["script_source"] == "remote"
     assert draft["script_name"] == "sub_vasp.sh"
     assert draft["dir"] == f"{root}/relax"
-    assert "sbatch vasp" in draft["script_text"]
+    assert "script_text" not in draft
+    assert len(draft["script_sha256"]) == 64
 
 
 def test_hpc_write_script_direct_without_card(ctx, tmp_path):
-    """M57 用户政策：hpc_write_script 免弹卡直接写入（M51 逐次弹卡废止）。"""
+    """LLM must never be able to create arbitrary remote scripts."""
     tk, _ws = _hpc_task(ctx, tmp_path)
     root = "/remote/work"
     hpc = _FakeHpc(dirs={root: []}, files={})
     ex = ToolExecutor(store=ctx.store, project_id=ctx.pid, task_id=tk["id"],
                       cfg=ctx.cfg, orch=SimpleNamespace(hpc=hpc))
     script = "#!/bin/bash\n#SBATCH -N 1\nsrun vasp_std\n"
-    # 非法 filename 直接拒（红线不变）
     out_bad = ex.handle("hpc_write_script", {"filename": "x.txt",
                                              "content": script})
-    assert "非法" in out_bad
+    assert "AI_TOOL_NOT_ALLOWED" in out_bad
     out = ex.handle("hpc_write_script", {"dir": "relax",
                                          "filename": "sub_vasp.sh",
                                          "content": script})
-    assert "已把提交脚本写入超算" in out
-    assert hpc.written[f"{root}/relax/sub_vasp.sh"] == script.encode()
+    assert "AI_TOOL_NOT_ALLOWED" in out
+    assert not hpc.written
+    assert not hpc.runs
     flow = (ctx.store.get_task(ctx.pid, tk["id"]) or {}).get("flow") or {}
     assert not ((flow.get("consent") or {}).get("cards"))
 
 
 def test_hpc_exec_cleans_vaspkit_temp_files(ctx, tmp_path):
-    """M57：vaspkit 命令执行后自动清理 *.err/*.log；非 vaspkit 不清理。"""
+    """The legacy remote command tool is a stable, side-effect-free denial."""
     tk, _ws = _hpc_task(ctx, tmp_path)
     hpc = _FakeHpc(dirs={"/remote/work": []}, files={})
     ex = ToolExecutor(store=ctx.store, project_id=ctx.pid, task_id=tk["id"],
                       cfg=ctx.cfg, orch=SimpleNamespace(hpc=hpc))
     out = ex.handle("hpc_exec", {"command": "vaspkit -task 301"})
-    assert "远端命令已执行" in out
-    assert any("-delete" in c and "'*.err'" in c and "'*.log'" in c
-               for c in hpc.runs)
-    n_after_vaspkit = len(hpc.runs)
-    ex.handle("hpc_exec", {"command": "squeue -u me"})
-    assert len(hpc.runs) == n_after_vaspkit + 1   # 无额外清理命令
-    assert "-delete" not in hpc.runs[-1]
+    assert "AI_FREEFORM_EXEC_DISABLED" in out
+    out_again = ex.handle("hpc_exec", {"command": "squeue -u me"})
+    assert "AI_FREEFORM_EXEC_DISABLED" in out_again
+    assert not hpc.runs
 
 
 def test_precheck_sees_remote_script_and_files(ctx, tmp_path):
@@ -921,21 +1262,24 @@ def test_precheck_sees_remote_script_and_files(ctx, tmp_path):
             {"name": "KPOINTS", "is_dir": False, "size": 10},
             {"name": "POTCAR", "is_dir": False, "size": 40},
             {"name": "sub_vasp.sh", "is_dir": False, "size": 88}]},
-        files={})
+        files={**_remote_vasp_inputs(root, "relax"),
+               f"{root}/relax/sub_vasp.sh": b"#!/bin/bash\nsrun vasp_std\n"})
     ex = ToolExecutor(store=ctx.store, project_id=ctx.pid, task_id=tk["id"],
                       cfg=ctx.cfg, orch=SimpleNamespace(hpc=hpc))
     ex.handle("plan", {"jobs": [{"key": "relax", "label": "结构优化",
                                  "kind": "relax"}]})
+    pending = ex.handle("draft", {})
+    assert "已认领" in _approve_pending(ex, pending)
     out = ex.handle("precheck", {})
     assert "（超算）" in out
-    assert "INCAR 存在（超算）" in out
+    assert "INCAR 非空且哈希已绑定（超算）" in out
     assert "提交脚本 sub_vasp.sh 存在（超算）" in out
     flow = ctx.store.get_task(ctx.pid, tk["id"])["flow"]
     assert flow["precheck"]["ok"] is True
 
 
 def test_build_messages_distinguishes_two_workspaces(ctx, tmp_path):
-    """系统提示同时注入本地与超算快照，并明确指示两者不要混活。"""
+    """Prompt inventories both workspaces without implicitly reading contents."""
     from ai_mode.agent.runner import build_messages
 
     tk, ws = _hpc_task(ctx, tmp_path)
@@ -954,7 +1298,9 @@ def test_build_messages_distinguishes_two_workspaces(ctx, tmp_path):
     assert "【任务本地工作区只读快照 · 紧凑版】" in system
     assert "【超算工作区只读快照 · 实时经 SSH 生成】" in system
     assert "[超算工作区快照] /remote/work" in system
-    assert "SYSTEM = remote" in system
+    assert "INCAR（20 B）" in system
+    assert "SYSTEM = local" not in system
+    assert "SYSTEM = remote" not in system
     # 未提供 hpc 快照时不得出现该段落
     messages2 = build_messages(ctx.store, task, [], "你好")
     assert "【超算工作区只读快照" not in messages2[0]["content"]
@@ -1019,21 +1365,20 @@ def test_plan_rejects_cyclic_and_unknown_requires(ctx):
 
 
 def test_write_input_supports_nested_dir(ctx):
-    """write_input 的 dir 支持嵌套路径（relax/static），父目录自动创建。"""
+    """Nested paths do not bypass the generic-write denial."""
     ex = ToolExecutor(store=ctx.store, project_id=ctx.pid, task_id=ctx.tid,
                       cfg=ctx.cfg)
     out = ex.handle("write_input", {"filename": "INCAR",
                                     "content": "ICHARG = 11",
                                     "dir": "relax/static"})
-    assert "relax/static" in out
+    assert "AI_TOOL_NOT_ALLOWED" in out
     target = ex.local_dir() / "relax" / "static" / "INCAR"
-    assert target.is_file()
-    assert "ICHARG" in target.read_text(encoding="utf-8")
+    assert not target.exists()
 
 
 # ---------------- M54：作业目录白名单 + 等待不诊断 ----------------
 def test_write_input_rejects_off_plan_dir(ctx):
-    """多作业规划后，dir 不在规划内（如自创 relax/dos）被拒绝并列出合法目录。"""
+    """All legacy generic writes are rejected, on-plan or off-plan."""
     ex = ToolExecutor(store=ctx.store, project_id=ctx.pid, task_id=ctx.tid,
                       cfg=ctx.cfg)
     ex.handle("plan", {"strategy": "链式", "jobs": [
@@ -1044,18 +1389,18 @@ def test_write_input_rejects_off_plan_dir(ctx):
          "requires": ["relax/static"]}]})
     out = ex.handle("write_input", {"filename": "KPOINTS",
                                     "content": "Gamma\n", "dir": "relax/dos"})
-    assert "不是任何已规划作业的目录" in out
-    assert "relax/static/dos" in out
+    assert "AI_TOOL_NOT_ALLOWED" in out
     assert not (ex.local_dir() / "relax" / "dos").exists()
-    # 合法嵌套 key 仍放行
+    # Even a previously on-plan target must remain denied.
     ok = ex.handle("write_input", {"filename": "INCAR",
                                    "content": "ICHARG = 11",
                                    "dir": "relax/static/dos"})
-    assert "relax/static/dos" in ok
-    # 空 dir（写共享文件到工作区根）放行
+    assert "AI_TOOL_NOT_ALLOWED" in ok
+    # The workspace root is not a bypass either.
     shared = ex.handle("write_input", {"filename": "README.txt",
                                        "content": "x", "dir": ""})
-    assert (ex.local_dir() / "README.txt").is_file() or "README" in shared
+    assert "AI_TOOL_NOT_ALLOWED" in shared
+    assert not (ex.local_dir() / "README.txt").exists()
 
 
 def test_copy_inputs_rejects_off_plan_dir(ctx):
@@ -1070,7 +1415,10 @@ def test_copy_inputs_rejects_off_plan_dir(ctx):
         {"key": "relax", "label": "结构优化", "kind": "relax"},
         {"key": "relax/static", "label": "静态自洽", "kind": "static",
          "requires": ["relax"]}]})
-    out = ex.handle("copy_inputs", {"filenames": ["POSCAR"],
-                                    "dir": "static"})
+    ex.handle("get_state", {})
+    flow = ctx.store.get_task(ctx.pid, ctx.tid)["flow"]
+    artifact_id = next(iter(flow["artifacts"]))
+    out = ex.handle("copy_inputs", {"artifact_ids": [artifact_id],
+                                    "job_key": "static"})
     assert "不是任何已规划作业的目录" in out
     assert not (ex.local_dir() / "static").exists()

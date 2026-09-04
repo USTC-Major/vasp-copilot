@@ -22,9 +22,7 @@ from ..llm.factory import build_client
 from ..projects import ProjectStore
 from ..settings import ProjectSettingsStore, render_accuracy_text
 from ..workspace import snapshot_workspace
-from ..consent import denials_of as _denials_of
 from ..consent import get_card as _get_consent_card
-from ..consent import grants_of as _grants_of
 from ..consent import spawn_submit_card as _spawn_submit_card
 from .protocol import INTENT_MARK, TOOL_MARK, has_unclosed_marker, parse_turn
 from .tools import _CONSENT_PENDING, ToolExecutor, tool_schema_text
@@ -140,12 +138,14 @@ def _phase_guidance(phase: str) -> str:
         "\n\n【当前处在「待你确认提交」边界】\n"
         "提交草稿已生成、等待用户明确确认。用户在确认前可能要求补充/修改输入文件、"
         "提建议或临时干预（改参数、只提交部分作业、换思路等）。请直接响应用户："
-        "读取/修改工作区输入文件、重跑 precheck、重新生成 draft，然后再次停在"
+        "读取工作区输入，并通过受限工具提出修改、重跑 precheck、重新生成 draft，"
+        "然后再次停在"
         "「待确认」并请用户确认；没有用户要求不要擅自重启整条流程。"
-        "用户若明说「确认提交」或「取消」，由系统按原文处理，你无需也不得代执行 sbatch。"
+        "用户若明说「确认提交」，系统只会生成当前草稿的一次性确认卡；取消则按原文处理。"
+        "你无需也不得代执行 sbatch。"
         "流程到达「待确认」时系统会自动弹出确认卡片供用户点击，你只需简短说明已准备就绪即可。"
-        "除 sbatch 提交外的其他操作（上传/写脚本/vaspkit 后处理等）都不需要用户确认，"
-        "直接执行即可，不要因等待确认而停顿。"
+        "所有写入、复制、上传和脚本认领都必须等待各自一次性确认卡；不得生成或写入"
+        "提交脚本，也不得把一次确认复用于另一操作。只读检查可直接继续。"
     )
 
 
@@ -155,14 +155,19 @@ def build_messages(store: ProjectStore, task: dict, history: list[dict],
                    hpc_snapshot: str = "") -> list[Message]:
     """构造 agent 上下文：系统提示（方向参考+红线+工具+设置+双工作区快照）+ 历史 + 当前消息。"""
     goal = task.get("goal") or "（未填写）"
-    _found, snapshot = snapshot_workspace(task.get("local_workspace") or "")
+    # Prompt snapshots are metadata-only. File contents may enter the model
+    # only through the explicit, policy-checked ws_read/hpc_read tools.
+    _found, snapshot = snapshot_workspace(
+        task.get("local_workspace") or "",
+        max_preview_bytes=0, preview_total_cap=0,
+    )
     system = (
         "你是 VASP-Doctor 智能模式的中枢 AI。用户正在一个计算任务里与你对话，"
         "你负责端到端主导科学计算：从看懂需求到规划、准备输入、提交前检查、"
         "提交与监控、结果报告，一条龙由你决策并真实操作。\n"
         f"任务目标：{goal}\n\n"
         "【执行方式 · 全程由你决策驱动】\n"
-        "- 是否开启计算流程、何时规划、规划成什么、准备哪些输入、执行哪些本地命令、"
+        "- 是否开启计算流程、何时规划、规划成什么、准备哪些输入、"
         "做不做提交前检查、什么阶段转给用户确认……一切都由你判断并自主调用工具完成，"
         "系统不会替你做决定，也不会在你调用工具前替你推进。\n"
         f"- 下面 8 步只是「方向参考」（防止你的思维乱跑浪费资源），不是固定顺序、"
@@ -171,12 +176,11 @@ def build_messages(store: ProjectStore, task: dict, history: list[dict],
         "计算流程，是否需要计算由你判断。\n"
         "- 你同时面对两个工作区，务必分清、分别用对应工具查看：\n"
         "  ① 本地工作区（local_workspace）：你本机上的目录，存放初始结构/输入文件，"
-        "用 ws_list/ws_read 查看，用 write_input/copy_inputs/run_exec 操作；\n"
+        "用 ws_list/ws_read 查看；输入只能通过受限草稿、确定性生成和用户确认流程准备；\n"
         "  ② 超算工作区（hpc_dir）：计算真正发生的地方（SSH 远端目录），"
         "查看超算上有哪些文件/目录一律用 hpc_list，看文件内容用 hpc_read——"
-        "它们安全、有界、结构化；hpc_exec 是备用命令通道，仅当查看类工具"
-        "覆盖不了时才用（如 squeue/module/vaspkit），不要一上来就用它 ls/cat。"
-        "把本地文件传上去用 hpc_upload（SFTP 通道，免弹卡直接上传）；"
+        "它们安全、有界、结构化。系统不向你提供任何本地或远程自由命令通道。"
+        "把已登记文件传上去只能用 hpc_upload，并等待用户逐次确认；"
         "绝不要尝试用 scp/sftp/rsync 传文件——安全策略红线会直接拒绝。"
         "若收到「未连接超算」或「未设置超算工作区」的回执，说明 SSH 或 hpc_dir "
         "尚未配置：停止重试任何远端工具，转而引导用户完成配置。"
@@ -197,27 +201,26 @@ def build_messages(store: ProjectStore, task: dict, history: list[dict],
         "可用工具：\n"
         + tool_schema_text()
         + "\n\n【红线（不可逾越）】\n"
-        "1. 真实提交作业到超算必须等用户明确确认（可说「确认提交」），绝不代替用户执行 "
+        "1. 真实提交作业到超算必须由用户批准当前精确绑定的一次性确认卡，绝不代替用户执行 "
         "sbatch；你可以在确认前把规划/输入/预检/草稿全部准备好，并把流程停在「待确认」。\n"
         "2. 每步都基于真实工具回执如实汇报，绝不编造已完成的操作；操作失败如实说明。\n"
         "3. 不接触任何密钥/口令：SSH 密码、API key 等不会出现在你的上下文里，"
         "也不要向用户索要。\n"
-        "4. 提交脚本（*.sh）来源规则：本地计算目录里你绝不写 *.sh（write_input 拒收不变）；"
-        "超算上可以由你直接起草 sbatch 脚本并用 hpc_write_script 写入（免弹卡）；"
-        "两边都没有时同样由你直接起草写入即可。\n"
+        "4. 你不得生成、修改或写入提交脚本；只能列出已有候选，待用户核对路径与哈希后显式认领。\n"
     )
     system += (
         "\n【超算提交目录规范（重要 · 超算为主）】\n"
         "每个计算作业独占一个目录：在计算目录里用作业 key 作为子目录（如 relax/、"
         "static/），本地与超算两侧同名对应；计算与提交都发生在超算侧。\n"
         "提交脚本（*.sh）优先认超算作业目录里已有的唯一脚本——超算上文件已就绪时"
-        "绝不要要求用户在本地重复准备；本地目录的脚本会在提交时自动上传。"
-        "两边都没有时：可把脚本放进任一侧，或由你起草后直接用 hpc_write_script "
-        "写入超算。该作业的全部输入文件（INCAR/POSCAR/KPOINTS/POTCAR 等）也放同一"
+        "绝不要要求用户在本地重复准备；仅在本地存在时，必须先把该登记 artifact"
+        "通过逐次确认的 hpc_upload 放入对应远端作业目录，再重新校验和认领。"
+        "两边都没有时必须停止并请用户自行准备脚本。该作业的全部输入文件"
+        "（INCAR/POSCAR/KPOINTS/POTCAR 等）也放同一"
         "目录。sbatch 以该作业目录为工作目录执行（`sbatch run.sh` 在该作业目录内发起），"
         "绝不在作业目录的上一级（工作区根）发起。多作业时各作业文件互不混放。"
-        "写入/复制本地输入用 write_input / copy_inputs 并带 dir 参数（dir 支持嵌套路径）；"
-        "把文件传到超算用 hpc_upload；在超算上写提交脚本用 hpc_write_script。\n"
+        "复制用户输入只能引用已登记 artifact；INCAR/KPOINTS 只能走专用结构化流程；"
+        "把文件传到超算用 hpc_upload 并等待确认。\n"
     )
     system += (
         "\n【作业依赖与目录嵌套（重要）】\n"
@@ -225,22 +228,21 @@ def build_messages(store: ProjectStore, task: dict, history: list[dict],
         "static 的 CHGCAR 供 dos/band）：规划（plan）时必须用 requires 声明依赖，"
         "依赖链作业的 key/目录用嵌套路径依次往下建（relax → relax/static → "
         "relax/static/dos），后继作业目录在前序作业目录里面，不要并列；互相独立的"
-        "作业才并列。系统会在确认提交后只跑无依赖作业，前序 completed 后自动补提"
-        "后续，前序失败则后续自动阻断——不要试图一次提交有依赖的整条链。\n"
+        "作业才并列。前序 completed 后系统只提示下游已解锁，必须重新经用户确认后"
+        "才能提交；前序失败则后续阻断。\n"
         "作业目录名必须原样使用规划时声明的完整嵌套 key（如 relax/static/dos）；"
-        "write_input/copy_inputs/hpc_write_script 的 dir 不在规划内会被系统拒绝，"
+        "所有结构化文件操作的 job_key 不在规划内会被系统拒绝，"
         "绝不自创 relax/dos、dos 这类变体目录。\n"
         "依赖闸门产生的 waiting 与「暂不提交/等待前置」回执是计划内的正常状态："
         "收到后无需诊断「为什么它没跑」、无需反复检查，一句话说明在等哪个前序"
-        "即可；前序完成后下一条消息会自动补提，不需要用户催促也不需要你重试。\n"
+        "即可；前序完成后提示用户重新确认，不得自动补提。\n"
         "后台监控会持续自动推进直到全部结束。若用户明确表示终止/放弃/换思路"
         "（如「不做了」「算了」「换个方案」），立即调用 stop_monitor 终止流程，"
         "不要再补提或规划；已在超算运行的作业按回执里的 scancel 建议引导用户。\n"
         "产物交接：后继作业的提交脚本里必须包含复制上游产物的命令，例如 static 的 "
         "脚本里有 `cp ../CONTCAR POSCAR`，dos/band（ICHARG=10/11，需要读 CHGCAR）的 "
-        "脚本里有 `cp ../CHGCAR .`——ICHARG>10 的作业缺上游 CHGCAR 必然秒败。你起草"
-        "脚本（hpc_write_script）时务必检查并写入这一行；用户自带脚本时提交前提醒"
-        "确认存在该行。\n"
+        "脚本里有 `cp ../CHGCAR .`——ICHARG>10 的作业缺上游 CHGCAR 必然秒败。"
+        "你只能提醒用户检查其自有脚本，不得代为生成或修改。\n"
     )
     phase_note = _phase_guidance((task.get("flow") or {}).get("phase") or "")
     if phase_note:
@@ -337,24 +339,27 @@ def _submit_card_events(store, project_id: str, task_id: str,
 def _wait_card_decision(store, project_id: str, task_id: str, card_id: str,
                         req, *, executor: ToolExecutor,
                         should_stop) -> tuple[str, str]:
-    """等待用户对一张授权卡的决定；同意后重放工具并返回 (状态, 回执)。
+    """Wait for one action decision and execute its immutable binding once.
 
-    返回状态：granted（已重放，回执为工具执行结果）｜denied｜timeout｜stopped。
+    The original tool request is intentionally never replayed.
     """
-    card = _get_consent_card(store, project_id, task_id, card_id)
-    batch_key = (card or {}).get("batch_key") or ""
+    del req
     deadline = time.monotonic() + _CONSENT_TIMEOUT_SECONDS
     while time.monotonic() < deadline:
         if should_stop is not None and should_stop():
             return ("stopped", "")
-        if _get_consent_card(store, project_id, task_id, card_id) is None:
-            if batch_key and batch_key in _grants_of(store, project_id, task_id):
-                note = executor.handle(req.name, req.args)
-                if isinstance(note, str) and note.startswith(_CONSENT_PENDING):
-                    return ("timeout", "")
-                return ("granted", note)
-            if batch_key and batch_key in _denials_of(store, project_id, task_id):
-                return ("denied", "已拒绝该操作授权")
+        action = _get_consent_card(store, project_id, task_id, card_id)
+        if action is None:
+            return ("failed", "确认操作不存在，未执行")
+        state = action.get("state")
+        if state == "approved":
+            return ("executed", executor.execute_action(card_id))
+        if state == "executed":
+            return ("executed", str(action.get("result") or "操作已执行"))
+        if state == "rejected":
+            return ("denied", "已拒绝该操作授权")
+        if state in {"expired", "failed", "unknown"}:
+            return (state, str(action.get("result") or "操作未执行"))
         time.sleep(_CONSENT_POLL_INTERVAL)
     return ("timeout", "等待授权超时，已停止该操作")
 
@@ -467,7 +472,7 @@ def _decision_loop(executor: ToolExecutor, llm, messages: list[Message], *,
                     executor.store, executor.project_id, executor.task_id,
                     card_id, req, executor=executor,
                     should_stop=should_stop)
-                if state == "granted":
+                if state == "executed":
                     messages.append(_receipt_message(req.name, note2))
                     continue
                 abort_loop = True
@@ -692,7 +697,7 @@ def run_agent_stream(store, project_id, task_id, content, *,
                 state, note2 = _wait_card_decision(
                     store, project_id, task_id, card_id, req,
                     executor=executor, should_stop=should_stop)
-                if state == "granted":
+                if state == "executed":
                     note = note2
                     messages.append(_receipt_message(req.name, note))
                     yield {"type": "status", "text": note}
@@ -785,7 +790,7 @@ def run_agent_stream(store, project_id, task_id, content, *,
                     state, note2 = _wait_card_decision(
                         store, project_id, task_id, card_id, req,
                         executor=executor, should_stop=should_stop)
-                    if state == "granted":
+                    if state == "executed":
                         note = note2
                         messages.append(_receipt_message(req.name, note))
                         yield {"type": "status", "text": note}

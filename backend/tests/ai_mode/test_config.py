@@ -63,10 +63,14 @@ def test_save_round_trip(monkeypatch, tmp_path):
         "ENABLE_AI_MODE": "false",
         "AI_MODE_MAX_JOBS": "99",
     })
-    # enabled 永远来自开关（本次关）；env 优先于文件；未覆盖项走文件
+    # enabled 永远来自开关（本次关）；env 优先于文件。环境变量中的密钥
+    # 只参与本次运行，保存其他设置时绝不能被复制进 config.json。
     assert loaded.enabled is False
     assert loaded.max_jobs == 99
-    assert loaded.llm_api_key == "sekret"
+    assert loaded.llm_api_key == ""
+    persisted = json.loads(cfg_path.read_text(encoding="utf-8"))
+    assert persisted["llm_api_key"] == ""
+    assert "sekret" not in cfg_path.read_text(encoding="utf-8")
 
 
 def test_enabled_never_persisted(monkeypatch, tmp_path):

@@ -1,7 +1,8 @@
 ﻿"""M9 工具层：提交草稿链路（只生成不执行）。
 
 对齐 WORKFLOW.md v14 §2 步5、MODULE_INTERFACES v1.2 §2（工具调用请求/执行结果回执）：
-- 本层把「计算作业」转成「待审提交草稿」：脚本文本 + 提交命令（sbatch xx.sh）。
+- 早期 ``SubmissionDraftBuilder`` 仅供隔离的兼容测试/调用方，不暴露给 P0 LLM
+  工具或 orchestrator；P0 运行时只接受用户已有脚本并绑定路径、大小与 SHA-256。
 - **只生成不执行**：本层从不调用远端执行器/``sbatch``；发令归受限执行器，
   真正提交仍需过 M5 授权门与用户确认（产品红线不放松）。
 - 可注入为 M7 Scheduler 的 ``submitter``，实现「先出草稿、确认后再真提交」。
@@ -9,6 +10,8 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import posixpath
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -29,6 +32,49 @@ def _now_iso() -> str:
 def submit_command(script_name: str) -> list[str]:
     """提交命令（argv 形式，供执行器安全执行；从计算目录内发起）。"""
     return [SUBMIT_BIN, script_name]
+
+
+def input_fingerprint_local(path: Path) -> dict:
+    target = path.resolve()
+    if not target.is_file():
+        raise ValueError("required input is missing")
+    size = target.stat().st_size
+    if size <= 0:
+        raise ValueError("required input is empty")
+    digest = hashlib.sha256()
+    with target.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return {"normalized_path": str(target), "size": size,
+            "sha256": digest.hexdigest()}
+
+
+def input_fingerprint_remote(hpc, path: str) -> dict:
+    info = hpc.stat(path)
+    if (not isinstance(info, dict) or info.get("is_dir") is True
+            or int(info.get("size") or 0) <= 0):
+        raise ValueError("required remote input is missing or empty")
+    digest = str(hpc.sha256_file(path) or "").lower()
+    if len(digest) != 64 or any(ch not in "0123456789abcdef" for ch in digest):
+        raise ValueError("required remote input hash is unavailable")
+    return {"normalized_path": path, "size": int(info["size"]),
+            "sha256": digest}
+
+
+def precheck_snapshot(*, execution_mode: str, inputs: list[dict],
+                      scripts: list[dict]) -> tuple[dict, str]:
+    """Canonical immutable snapshot used by precheck and submit consent."""
+    snapshot = {
+        "execution_mode": execution_mode,
+        "inputs": sorted((dict(item) for item in inputs),
+                         key=lambda item: (str(item.get("job_key")),
+                                           str(item.get("name")))),
+        "scripts": sorted((dict(item) for item in scripts),
+                          key=lambda item: str(item.get("job_key"))),
+    }
+    encoded = json.dumps(snapshot, ensure_ascii=False, sort_keys=True,
+                         separators=(",", ":")).encode("utf-8")
+    return snapshot, hashlib.sha256(encoded).hexdigest()
 
 
 @dataclass
@@ -160,8 +206,8 @@ def find_remote_submit_script(hpc, remote_dir: str) -> str | None:
     """在超算作业目录里定位「用户自己提供」的唯一提交脚本（*.sh）。
 
     M51 起超算为主战场：脚本放在远端作业目录即可被 draft/提交直接使用。
-    红线不放松：脚本必须由用户提供，或经用户弹卡同意后由 AI 通过
-    ``hpc_write_script`` 写入；本函数只负责定位，不生成、不修改。
+    红线不放松：脚本必须由用户提供并经一次性确认 action 显式认领；本函数
+    只负责定位，不生成、不修改。
     - 恰有一个：返回脚本名（相对 remote_dir）；
     - 没有任何 *.sh：返回 None（调用方回退本地或进阻塞态）；
     - 多个：raise ``RuntimeError``（唯一性要求，避免提交歧义）；
@@ -180,3 +226,47 @@ def find_remote_submit_script(hpc, remote_dir: str) -> str | None:
             "超算作业目录里有多个提交脚本（" + "、".join(names)
             + "），请只保留唯一的一个 *.sh。")
     return names[0] if names else None
+
+
+def fingerprint_local_submit_script(path: Path | str) -> dict:
+    """Hash a user-owned local script without exposing its contents."""
+    script = Path(path).expanduser().resolve()
+    if not script.is_file() or script.suffix.lower() != ".sh":
+        raise RuntimeError("提交脚本不存在或不是 *.sh")
+    digest = hashlib.sha256()
+    size = 0
+    with script.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+            size += len(chunk)
+    if size <= 0:
+        raise RuntimeError("提交脚本为空")
+    return {"normalized_path": str(script), "sha256": digest.hexdigest(),
+            "size": size, "mtime": script.stat().st_mtime_ns}
+
+
+def fingerprint_remote_submit_script(hpc, remote_dir: str,
+                                     script_name: str) -> dict:
+    """Stream-hash the exact remote script selected for submission."""
+    if (not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}\.sh", script_name)
+            or "/" in script_name or "\\" in script_name):
+        raise RuntimeError("非法提交脚本名")
+    directory = posixpath.normpath("/" + str(remote_dir).lstrip("/"))
+    remote_path = posixpath.join(directory, script_name)
+    stat = hpc.stat(remote_path)
+    if stat is None:
+        raise RuntimeError("远端提交脚本不存在")
+    size = int(stat.get("size") or 0)
+    if size <= 0:
+        raise RuntimeError("远端提交脚本为空")
+    if hasattr(hpc, "sha256_file"):
+        digest = hpc.sha256_file(remote_path)
+    else:
+        read_cap = size + 1 if size > 0 else 1024 * 1024
+        data = bytes(hpc.read_file(remote_path, max_bytes=read_cap))
+        if len(data) != size and size:
+            raise RuntimeError("远端提交脚本读取不完整")
+        digest = hashlib.sha256(data).hexdigest()
+        size = len(data)
+    return {"normalized_path": remote_path, "sha256": digest,
+            "size": size, "mtime": int(stat.get("mtime") or 0)}

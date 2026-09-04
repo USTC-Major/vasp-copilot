@@ -19,6 +19,22 @@ class SSHConnectError(SSHError):
     """无法建立连接：网络不可达、超时、主机拒绝。"""
 
 
+class SSHHostKeyError(SSHConnectError):
+    """Host-key trust failed before authentication."""
+
+
+class SSHHostKeyUnknownError(SSHHostKeyError):
+    """The server is absent from the configured known_hosts sources."""
+
+
+class SSHHostKeyMismatchError(SSHHostKeyError):
+    """The server key differs from the trusted known_hosts entry."""
+
+
+class SSHKnownHostsError(SSHHostKeyError):
+    """The configured known_hosts file cannot be loaded safely."""
+
+
 class SSHUnavailableError(SSHError):
     """SSH 未配置或不可用——对应「整体瘫痪/等待恢复」提示。"""
 

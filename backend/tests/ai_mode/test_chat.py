@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+from concurrent.futures import ThreadPoolExecutor
+
 """中枢对话测试：路由（await_submit→真实提交入口）+ LLM 决策驱动 agent（全离线）。
 
 对话与计算统一走 agent 决策循环：LLM 通过正文内嵌 <<<INTENT>>> / <<<TOOL>>> 标记
@@ -8,7 +10,8 @@
 import pytest
 
 from ai_mode.agent.protocol import INTENT_MARK, TOOL_MARK
-from ai_mode.chat import classify, reply, reply_stream
+from ai_mode.chat import classify, perform_submit, reply, reply_stream
+from ai_mode.consent import get_card, list_cards, spawn_submit_card
 from ai_mode.llm.fake import FakeLLM
 from ai_mode.projects import ProjectStore
 
@@ -79,25 +82,98 @@ def test_compute_llm_unavailable_does_not_start_flow(task):
     assert updated.get("pending_flow") is None
 
 
-def test_await_submit_routes_to_real_submit_entry(task, monkeypatch):
-    import ai_mode.chat as chat_module
+def test_await_submit_without_hpc_backend_creates_no_card(task, monkeypatch):
     store, pid, tid = task
-    store.update_task(pid, tid, flow={"phase": "await_submit", "plan": {}})
+    store.update_task(pid, tid, flow={
+        "phase": "await_submit", "execution_mode": "None", "plan": {},
+        "precheck": {"ok": True, "hard": True, "digest": "a" * 64},
+    })
+    answer = reply(store, pid, tid, "确认提交")
+    assert "AI_HPC_BACKEND_UNAVAILABLE" in answer
+    assert "未执行 sbatch" in answer
+    assert list_cards(store, pid, tid) == []
+
+
+def test_submit_action_stays_executing_through_save_then_finishes_once(
+        task, monkeypatch):
+    from ai_mode.orchestrator import Orchestrator
+
+    store, pid, tid = task
+    flow = {"phase": "await_submit", "hpc_dir": "/remote/work",
+            "execution_mode": "None",
+            "precheck": {"ok": True, "hard": True,
+                         "digest": "a" * 64},
+            "draft": [{"job_key": "relax", "script_sha256": "abc"}],
+            "plan": {"jobs": [{"key": "relax", "status": "draft"}]}}
+    store.update_task(pid, tid, flow=flow)
+    card = spawn_submit_card(store, pid, tid)
+    calls = []
 
     class FakeOrchestrator:
-        def __init__(self, factory):
-            self.factory = factory
+        execution_mode = "None"
 
-        def handle(self, store_, p, t, content):
-            return f"推进:{content}"
+        def _submit(self, store_, project_id, task_id, current):
+            calls.append("sbatch")
+            action = get_card(store_, project_id, task_id, card["action_id"])
+            assert action["state"] == "executing"
+            current["phase"] = "monitoring"
+            current["plan"]["jobs"][0]["status"] = "submitted"
+            current["plan"]["jobs"][0]["submission_state"] = "submitted"
+            current["plan"]["jobs"][0]["submission_action_id"] = card["action_id"]
+            store_.update_task(project_id, task_id, flow=current)
+            return "submitted once"
 
-        def begin(self, *args, **kwargs):
-            raise AssertionError("执行态下不应 begin")
+    monkeypatch.setattr(
+        Orchestrator, "from_settings",
+        classmethod(lambda cls, cfg: FakeOrchestrator()))
+    assert perform_submit(store, pid, tid, card["action_id"], True) == \
+        "submitted once"
+    assert get_card(store, pid, tid, card["action_id"])["state"] == "executed"
+    assert "不会重复提交" in perform_submit(
+        store, pid, tid, card["action_id"], True)
+    assert calls == ["sbatch"]
 
-    monkeypatch.setattr(chat_module, "_make_orchestrator",
-                        lambda _f: FakeOrchestrator(_f))
-    answer = reply(store, pid, tid, "确认提交")
-    assert answer == "推进:确认提交"
+
+def test_concurrent_submit_confirmations_call_scheduler_at_most_once(
+        task, monkeypatch):
+    from ai_mode.orchestrator import Orchestrator
+
+    store, pid, tid = task
+    store.update_task(pid, tid, flow={
+        "phase": "await_submit", "hpc_dir": "/remote/work",
+        "execution_mode": "None",
+        "precheck": {"ok": True, "hard": True,
+                     "digest": "a" * 64},
+        "draft": [{"job_key": "relax", "script_sha256": "abc"}],
+        "plan": {"jobs": [{"key": "relax", "status": "draft"}]},
+    })
+    card = spawn_submit_card(store, pid, tid)
+    calls = []
+
+    class FakeOrchestrator:
+        execution_mode = "None"
+
+        def _submit(self, store_, project_id, task_id, current):
+            calls.append("sbatch")
+            current["phase"] = "monitoring"
+            job = current["plan"]["jobs"][0]
+            job.update(status="submitted", submission_state="submitted",
+                       submission_action_id=card["action_id"])
+            store_.update_task(project_id, task_id, flow=current)
+            return "submitted once"
+
+    monkeypatch.setattr(
+        Orchestrator, "from_settings",
+        classmethod(lambda cls, cfg: FakeOrchestrator()))
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(
+            lambda _n: perform_submit(store, pid, tid, card["action_id"], True),
+            range(2),
+        ))
+
+    assert calls == ["sbatch"]
+    assert results.count("submitted once") == 1
+    assert get_card(store, pid, tid, card["action_id"])["state"] == "executed"
 
 
 def test_monitoring_goes_to_agent(task):
@@ -165,7 +241,8 @@ def test_chat_context_includes_workspace_snapshot(tmp_path):
     merged = "\n".join(m["content"] for m in llm.calls[0])
     assert "任务本地工作区只读快照" in merged
     assert "[工作区快照]" in merged
-    assert "INCAR" in merged and "SYSTEM = fe2o3" in merged
+    assert "INCAR" in merged
+    assert "SYSTEM = fe2o3" not in merged
     assert "POSCAR" in merged
     assert "已收到你的计算需求" not in merged
 
@@ -304,7 +381,10 @@ def test_await_submit_free_text_goes_to_agent(task, monkeypatch):
     """M45：await_submit 阶段自由文本（补充输入/建议/干预）交还 LLM，不再被单选模板挡死。"""
     import ai_mode.chat as chat_module
     store, pid, tid = task
-    store.update_task(pid, tid, flow={"phase": "await_submit", "plan": {}})
+    store.update_task(pid, tid, flow={
+        "phase": "await_submit", "execution_mode": "None", "plan": {},
+        "precheck": {"ok": True, "hard": True, "digest": "a" * 64},
+    })
     seen = []
     monkeypatch.setattr(chat_module, "_make_orchestrator",
                         lambda _f: _no_orch_cls(seen))
@@ -322,20 +402,31 @@ def test_await_submit_free_text_goes_to_agent(task, monkeypatch):
 def test_await_submit_confirm_cancel_still_route_to_orchestrator(task, monkeypatch):
     import ai_mode.chat as chat_module
     store, pid, tid = task
-    store.update_task(pid, tid, flow={"phase": "await_submit", "plan": {}})
+    store.update_task(pid, tid, flow={
+        "phase": "await_submit", "execution_mode": "None", "plan": {},
+        "precheck": {"ok": True, "hard": True, "digest": "a" * 64},
+    })
     seen = []
 
     class FakeOrch:
+        execution_mode = "None"
+
+        def sync_execution_mode(self, store_, p, t):
+            del store_, p, t
+            return self.execution_mode
+
         def handle(self, store_, p, t, content):
             seen.append(content)
             return "推进:" + content
 
     monkeypatch.setattr(chat_module, "_make_orchestrator", lambda _f: FakeOrch())
-    assert reply(store, pid, tid, "确认提交",
-                 llm_factory=lambda _c: FakeLLM()) == "推进:确认提交"
+    answer = reply(store, pid, tid, "确认提交",
+                   llm_factory=lambda _c: FakeLLM())
+    assert "AI_HPC_BACKEND_UNAVAILABLE" in answer
+    assert list_cards(store, pid, tid) == []
     assert reply(store, pid, tid, "取消",
                  llm_factory=lambda _c: FakeLLM()) == "推进:取消"
-    assert seen == ["确认提交", "取消"]
+    assert seen == ["取消"]
 
 
 def test_reply_stream_await_submit_free_text_goes_to_agent(task, monkeypatch):

@@ -42,7 +42,7 @@ const JobChainList: React.FC<{ jobs: AiFlowJob[] }> = ({ jobs }) => (
           </Space>
           {deps && (
             <div style={{ marginTop: 6 }}>
-              <Text type="secondary" style={{ fontSize: 12 }}>依赖：{deps}{job.status === 'waiting' ? '（前序完成后自动补提）' : ''}</Text>
+              <Text type="secondary" style={{ fontSize: 12 }}>依赖：{deps}{job.status === 'waiting' ? '（满足后需重新确认提交）' : ''}</Text>
             </div>
           )}
           {job.description && (
@@ -113,6 +113,9 @@ const AiProgressPage: React.FC = () => {
         <Space size={12} wrap style={{ marginBottom: 4 }}>
           <Title level={4} style={{ margin: 0 }}>计算目标</Title>
           {phaseInfo && <Tag color={phaseInfo.color}>{phaseInfo.label}</Tag>}
+          <Tag color={flow?.execution_mode === 'Real' ? 'green' : flow?.execution_mode === 'Fake' ? 'gold' : 'default'}>
+            运行环境: {flow?.execution_mode || 'None'}
+          </Tag>
         </Space>
         <Text style={{ fontSize: 14, display: 'block', marginBottom: 20 }}>
           {flow?.goal || '（未开始计算流程）'}
@@ -145,7 +148,7 @@ const AiProgressPage: React.FC = () => {
             description={(
               <Space direction="vertical" size={2}>
                 {waiting.map((k) => (
-                  <Text key={k} style={{ fontSize: 12 }}>{k}：等待前置作业完成后自动补提</Text>
+                  <Text key={k} style={{ fontSize: 12 }}>{k}：满足条件后需重新预检并确认，不会自动补提</Text>
                 ))}
               </Space>
             )}

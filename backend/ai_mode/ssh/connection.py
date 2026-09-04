@@ -10,6 +10,11 @@
 
 from __future__ import annotations
 
+import hashlib
+import shlex
+import stat as stat_mode
+import uuid
+from pathlib import Path
 from typing import Callable, Optional
 
 from .credentials import CredentialStore, MemoryCredentialStore
@@ -18,6 +23,9 @@ from .errors import (
     SSHConnectError,
     SSHError,
     SSHExecuteError,
+    SSHHostKeyMismatchError,
+    SSHHostKeyUnknownError,
+    SSHKnownHostsError,
     SSHSFTPError,
     SSHUnavailableError,
 )
@@ -25,19 +33,46 @@ from .errors import (
 __all__ = ["SSHManager", "RemoteFileInfo"]
 
 
-def _default_client_factory():
+def _default_client_factory(known_hosts_path: str | None = None):
     """延迟 import paramiko，避免无 SSH 依赖环境直接炸导入。"""
     import paramiko
 
+    class StrictRejectPolicy(paramiko.RejectPolicy):
+        def missing_host_key(self, client, hostname, key):
+            del client, key
+            raise SSHHostKeyUnknownError(
+                f"SSH 主机密钥未受信任：{hostname}；请先由用户核验并写入 known_hosts"
+            )
+
     client = paramiko.SSHClient()
-    # TOFU：首次连接即信任并记录主机密钥，避免 known_hosts 缺失导致建连失败。
-    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    try:
+        client.load_system_host_keys()
+        if known_hosts_path:
+            trusted = Path(known_hosts_path).expanduser()
+            if not trusted.is_file():
+                raise SSHKnownHostsError("配置的 known_hosts 文件不存在或不可读")
+            client.load_host_keys(str(trusted))
+        else:
+            trusted = Path.home() / ".ssh" / "known_hosts"
+            if trusted.exists():
+                if not trusted.is_file():
+                    raise SSHKnownHostsError("默认 known_hosts 路径不是可读文件")
+                client.load_host_keys(str(trusted))
+    except SSHKnownHostsError:
+        raise
+    except Exception as exc:
+        raise SSHKnownHostsError("无法读取 known_hosts 信任库") from exc
+    client.set_missing_host_key_policy(StrictRejectPolicy())
     return client
 
 
 def _guess_error_type(exc: BaseException) -> type[SSHError]:
     """按类名映射 paramiko/socket 异常为 SSHError 子类（弱依赖、免导入）。"""
     name = type(exc).__name__
+    if "BadHostKey" in name or "HostKeyMismatch" in name:
+        return SSHHostKeyMismatchError
+    if "UnknownHostKey" in name or "HostKeyUnknown" in name:
+        return SSHHostKeyUnknownError
     if "Authentication" in name or "Permission" in name or "password" in name.lower():
         return SSHAuthError
     if "timeout" in name.lower() or "Timeout" in name:
@@ -59,9 +94,11 @@ class SSHManager:
     def __init__(self, *, credentials: CredentialStore | None = None,
                  client_factory=None, connect_timeout: int = 15,
                  cmd_timeout: int = 60,
-                 max_output_bytes: int = 64 * 1024):
+                 max_output_bytes: int = 64 * 1024,
+                 known_hosts_path: str | None = None):
         self.credentials = credentials or MemoryCredentialStore()
-        self.client_factory = client_factory or _default_client_factory
+        self.client_factory = client_factory
+        self.known_hosts_path = known_hosts_path
         self.connect_timeout = connect_timeout
         self.cmd_timeout = cmd_timeout
         self.max_output_bytes = max_output_bytes
@@ -86,8 +123,6 @@ class SSHManager:
     def forget(self) -> None:
         """清空当前活动账号并断开连接（不删凭据）。"""
         self.close()
-        self._active = None
-        """清空当前活动账号（不连接、不删凭据）。"""
         self._active = None
 
     @property
@@ -129,7 +164,8 @@ class SSHManager:
                 return self._client
             self._cleanup_client(self._client)
             self._client = None
-        client = self.client_factory()
+        client = (self.client_factory() if self.client_factory is not None
+                  else _default_client_factory(self.known_hosts_path))
         password = self.credentials.get_password(active["host"], active["username"])
         try:
             client.connect(
@@ -147,8 +183,14 @@ class SSHManager:
             raise
         except Exception as exc:
             self._cleanup_client(client)
-            raise _guess_error_type(exc)(
-                "无法连接超算（已脱敏，请检查地址/端口/凭据）") from exc
+            error_type = _guess_error_type(exc)
+            if error_type is SSHHostKeyMismatchError:
+                message = "SSH 主机密钥与 known_hosts 不匹配；已在认证前拒绝连接"
+            elif error_type is SSHHostKeyUnknownError:
+                message = "SSH 主机密钥未知；已在认证前拒绝连接"
+            else:
+                message = "无法连接超算（已脱敏，请检查地址/端口/凭据）"
+            raise error_type(message) from exc
         try:
             t = client.get_transport()
             if t is not None:
@@ -208,7 +250,7 @@ class SSHManager:
         client = self.connect()
         full = command
         if cwd:
-            full = f"cd {cwd} && {command}"
+            full = f"cd -- {shlex.quote(cwd)} && {command}"
         timeout = timeout or self.cmd_timeout
         try:
             stdin, stdout, stderr = client.exec_command(full, timeout=timeout)
@@ -257,7 +299,10 @@ class SSHManager:
     def stat(self, remote: str) -> dict | None:
         try:
             st = self._get_sftp().stat(remote)
-            return {"size": st.st_size, "mtime": getattr(st, "st_mtime", 0)}
+            mode = int(getattr(st, "st_mode", 0) or 0)
+            return {"size": st.st_size, "mtime": getattr(st, "st_mtime", 0),
+                    "is_file": stat_mode.S_ISREG(mode) if mode else None,
+                    "is_dir": stat_mode.S_ISDIR(mode) if mode else None}
         except FileNotFoundError:
             return None
         except Exception as exc:
@@ -272,6 +317,21 @@ class SSHManager:
         except Exception as exc:
             raise SSHSFTPError(f"读取失败: {remote!r}") from exc
 
+    def sha256_file(self, remote: str) -> str:
+        """Stream a remote file through SHA-256 without returning its contents."""
+        try:
+            digest = hashlib.sha256()
+            f = self._get_sftp().open(remote, "rb")
+            with f:
+                while True:
+                    chunk = f.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    digest.update(chunk)
+            return digest.hexdigest()
+        except Exception as exc:
+            raise SSHSFTPError(f"哈希读取失败: {remote!r}") from exc
+
     def write_file(self, remote: str, data: bytes) -> int:
         try:
             f = self._get_sftp().open(remote, "wb")
@@ -281,6 +341,38 @@ class SSHManager:
             return n
         except Exception as exc:
             raise SSHSFTPError(f"写入失败: {remote!r}") from exc
+
+    def atomic_write_file(self, remote: str, data: bytes, *,
+                          expected_sha256: str) -> int:
+        """Upload to a sibling temporary file, verify, then atomically rename."""
+        expected = str(expected_sha256 or "").lower()
+        if len(expected) != 64 or any(ch not in "0123456789abcdef" for ch in expected):
+            raise SSHSFTPError("原子上传缺少有效 SHA-256")
+        sftp = self._get_sftp()
+        temporary = f"{remote}.vasp-doctor-{uuid.uuid4().hex}.tmp"
+        try:
+            with sftp.open(temporary, "wb") as handle:
+                result = handle.write(data)
+                written = len(data) if result is None else int(result)
+                handle.flush()
+            if written != len(data) or self.sha256_file(temporary) != expected:
+                raise SSHSFTPError("远端临时文件哈希校验失败")
+            rename = getattr(sftp, "posix_rename", None) or getattr(sftp, "rename", None)
+            if rename is None:
+                raise SSHSFTPError("SFTP 服务不支持原子 rename")
+            rename(temporary, remote)
+            if self.sha256_file(remote) != expected:
+                raise SSHSFTPError("原子 rename 后远端哈希校验失败")
+            return written
+        except SSHSFTPError:
+            raise
+        except Exception as exc:
+            raise SSHSFTPError(f"原子写入失败: {remote!r}") from exc
+        finally:
+            try:
+                sftp.remove(temporary)
+            except (FileNotFoundError, OSError):
+                pass
 
     def mkdir(self, remote: str) -> None:
         try:

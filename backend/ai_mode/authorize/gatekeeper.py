@@ -1,12 +1,8 @@
-"""门卫（M5→M47）：对工具请求分级放行/拒绝/挂起（弹卡=申请提权）；同意按批覆盖但每条先检。
+"""Stateless risk gate used before creating exact, single-use actions.
 
-- 放行（ALLOW）：直接执行（含已获授权 grant 的高风险项，附所需提权 permits）。
-- 挂起（HOLD）：生成 ConsentCard 交上层渲染；用户「同意本次/同意本批」后，
-  把作用域键写入持久化 grants，重放该请求即 ALLOW+granted；
-  「拒绝」写入 denials，再次出现同请求直接 DENY（不再骚扰用户）。
-- 拒绝（DENY）：红线/敏感/已拒绝项，不产生卡片。
-
-纯数据判定；授权落点在执行器与提交入口。
+Legacy grant/denial inputs are accepted for API compatibility but never alter
+the verdict. A HOLD is only a request to create one consent action; it is not
+a reusable permission and never replays the original LLM request.
 """
 from __future__ import annotations
 
@@ -20,7 +16,7 @@ from .rules import classify as _classify
 
 __all__ = ["AuthorizationGate", "evaluate", "authorize_batch", "confirm"]
 
-DEFAULT_OPTIONS = ["同意本次", "同意本批", "拒绝"]
+DEFAULT_OPTIONS = ["同意本次", "拒绝"]
 
 
 def _batch_key(tool: ToolRequest) -> str:
@@ -34,12 +30,11 @@ def _stable(text: str) -> str:
 
 
 class AuthorizationGate:
-    """每批任务建议新建实例；可注入外部 grants/denials（持久化的同意/拒绝记录）。"""
+    """Stateless compatibility gate; historical grants never authorize work."""
 
     def __init__(self, *, cwd=None, classify_callable: Callable | None = None):
         self.cwd = cwd
         self.classify = classify_callable or _classify
-        self._approved: dict[str, str] = {}
 
     def evaluate(self, tool: ToolRequest, *, cwd=None, auto: bool = False,
                  grants: Iterable[str] | None = None,
@@ -47,7 +42,7 @@ class AuthorizationGate:
         """单条评估。
 
         - auto=True：挂起项不发卡片（测试/离线）。
-        - grants/denials：持久化的同意/拒绝 batch_key 集合。
+        - grants/denials：兼容参数；不会影响裁决。
         """
         cwd = cwd or self.cwd
         if cwd is None:
@@ -56,20 +51,8 @@ class AuthorizationGate:
         if kind is not VerdictKind.HOLD:
             return Verdict(kind, tool.name, risk, reason, permits=permits)
         key = _batch_key(tool)
-        deny_set = set(denials or ())
-        grant_set = set(grants or ())
-        if key in self._approved:
-            return Verdict(VerdictKind.ALLOW, tool.name, risk,
-                           "本批已同意（作用域覆盖，仍已完成安全检查）",
-                           granted=True, permits=permits)
-        if key in deny_set:
-            return Verdict(VerdictKind.DENY, tool.name, risk,
-                           f"你已拒绝该操作授权：{reason}", permits=frozenset())
-        if key in grant_set:
-            self._approved[key] = "granted"
-            return Verdict(VerdictKind.ALLOW, tool.name, risk,
-                           "已获用户授权（弹卡同意），放行执行",
-                           granted=True, permits=permits)
+        # v0.2.1：历史 grants/denials/batch memory 不再改变裁决。每个副作用
+        # 必须由 consent 层的精确、单次 action 执行，绝不重放原 LLM 请求。
         if auto:
             return Verdict(VerdictKind.DENY, tool.name, risk,
                            "自动模式不放行未批准操作")
@@ -89,24 +72,24 @@ class AuthorizationGate:
                         auto: bool = False,
                         grants: Iterable[str] | None = None,
                         denials: Iterable[str] | None = None) -> list[Verdict]:
-        """逐条评估整批（每条都先过检查）；已同意作用域自动复用。"""
+        """逐条独立评估整批；不会复用任何历史确认。"""
         return [self.evaluate(t, cwd=cwd, auto=auto, grants=grants,
                               denials=denials) for t in tools]
 
     def grant(self, batch_keys: Iterable[str]) -> None:
-        """用户同意后，把作用域键记入本批已批准。"""
-        for key in batch_keys or ():
-            self._approved.setdefault(key, "batch-granted")
+        """兼容空实现：v0.2.1 禁止批量或可复用 grant。"""
+        return None
 
     def confirm(self, card: ConsentCard, choice: str = "同意本次",
                 note: str = "") -> ConsentOutcome:
-        """处理一张卡片：同意/拒绝记录；同意则登记作用域（同意本批=整批复用）。"""
+        """Resolve one compatibility card; batch authorization is rejected."""
         choice = (choice or "").strip()
         if choice in ("拒绝", "deny", "Decline"):
             return ConsentOutcome(card.card_id, False, note or "用户拒绝",
                                   card.batch_key)
         if choice in ("同意本批", "allow_batch"):
-            self.grant([card.batch_key])
+            return ConsentOutcome(card.card_id, False,
+                                  note or "批量授权已禁用", card.batch_key)
         return ConsentOutcome(card.card_id, True, note or "用户同意",
                               card.batch_key)
 
@@ -126,5 +109,5 @@ def authorize_batch(tools, *, cwd, auto=False, grants=None, denials=None):
 
 def confirm(card: ConsentCard, choice: str = "同意本次",
             note: str = "") -> ConsentOutcome:
-    """无状态确认（不登记记忆；需要批内记忆请用 AuthorizationGate）。"""
+    """无状态确认；不登记、复用或继承任何授权。"""
     return AuthorizationGate().confirm(card, choice=choice, note=note)

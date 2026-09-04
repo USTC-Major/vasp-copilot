@@ -1,29 +1,24 @@
 # -*- coding: utf-8 -*-
-"""中枢执行态推进器（M14）：把聊天端点接上「真实 8 步工序」的执行链路。
+"""AI mode orchestration with explicit, single-use mutation approvals.
 
-对齐 WORKFLOW v14 §2/§9 与 MODULE_INTERFACES §1.1（中枢 Orchestrator）：
-- 每一步都做真实操作（本地文件/命令、LLM、SSH/SFTP/sbatch/squeue、
-  OUTCAR 提取、报告渲染），不注入任何演示文案。
-- 未配置/未连接 SSH 时如实降级：能做的做（理解、规划、本地准备、预检、
-  草稿），需要超算的操作明确说明「未连接超算，未执行」，绝不假造作业号。
-- 提交作业必须等用户确认（产品红线），确认后才真实 sbatch；在途作业按
-  轮询查询 squeue 推进状态；终态后真实提取结果并由 LLM 提炼报告。
-- 全局配额（§9）：提交前实时 squeue 查账号「排队+运行中」，无空位进
-  「等待空位」本地队列，空位出现时自动补提。
+Preparation and precheck are inventory-only.  Submission is possible only
+after a current script attestation, a hard precheck, and a fresh confirmation;
+capacity or dependency changes never trigger automatic submission.
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import re
-import shutil
-import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Optional
 
 from .agent.tools import _label_slug
-from .config import AiModeConfig
+from .config import AiModeConfig, execution_mode
+from .consent import task_lock as _task_lock
 from .jobs.scheduler import parse_slurm_output
 from .projects import ProjectStore
 from .report.extract import summarize_run
@@ -31,8 +26,11 @@ from .report.render import render_report
 from .schemas import JobEntry, JobStatus as SessionJobStatus, \
     PlanSnapshot, PlanStep, RequirementSnapshot, Session
 from .tools.draft import (find_remote_submit_script,
+                          fingerprint_local_submit_script,
+                          fingerprint_remote_submit_script,
+                          input_fingerprint_local,
+                          input_fingerprint_remote, precheck_snapshot,
                           resolve_user_submit_script, submit_command)
-from .tools.vaspkit import probe_and_store
 from .workflow.plan import gate_jobs
 
 logger = logging.getLogger("ai_mode.orchestrator")
@@ -82,16 +80,6 @@ def _detect_job_label(goal: str) -> str:
     return "结构优化"
 
 
-_TASK_LOCKS: dict[tuple[str, str], threading.Lock] = {}
-_TASK_LOCKS_GUARD = threading.Lock()
-
-
-def _task_lock(project_id: str, task_id: str) -> threading.Lock:
-    """M55：每任务一把互斥锁，串行化用户消息与后台监控线程的推进。"""
-    with _TASK_LOCKS_GUARD:
-        return _TASK_LOCKS.setdefault((project_id, task_id), threading.Lock())
-
-
 def _remote_state_map(stdout: str) -> dict[str, str]:
     """把 squeue 输出解析为 slurm_id -> 状态列（默认列序 JOBID..ST..）。"""
     out: dict[str, str] = {}
@@ -137,23 +125,28 @@ class Orchestrator:
     """
 
     def __init__(self, cfg: AiModeConfig, *, hpc=None, llm_factory=None,
-                 data_dir: Optional[Path] = None):
+                 data_dir: Optional[Path] = None,
+                 hpc_execution_mode: str | None = None):
         self.cfg = cfg
         self.hpc = hpc
+        self.execution_mode = execution_mode(hpc, explicit=hpc_execution_mode)
         self.llm_factory = llm_factory or (lambda c: _build_llm(c))
         self.data_dir = Path(data_dir or cfg.data_dir)
 
     @classmethod
     def from_settings(cls, cfg: AiModeConfig, *, hpc=None,
-                      llm_factory=None) -> "Orchestrator":
+                      llm_factory=None,
+                      hpc_execution_mode: str | None = None) -> "Orchestrator":
         if hpc is not None:
-            return cls(cfg=cfg, hpc=hpc, llm_factory=llm_factory)
+            return cls(cfg=cfg, hpc=hpc, llm_factory=llm_factory,
+                       hpc_execution_mode=hpc_execution_mode)
         manager = None
         if cfg.ssh_host and cfg.ssh_username:
             from .ssh.connection import SSHManager
             from .ssh.credentials import KeyringCredentialStore
             manager = SSHManager(credentials=KeyringCredentialStore(),
-                                 connect_timeout=15)
+                                 connect_timeout=15,
+                                 known_hosts_path=cfg.ssh_known_hosts_path or None)
             manager.switch(host=cfg.ssh_host, username=cfg.ssh_username,
                            port=cfg.ssh_port or 22)
         return cls(cfg=cfg, hpc=manager, llm_factory=llm_factory)
@@ -179,9 +172,25 @@ class Orchestrator:
     def _llm(self):
         return self.llm_factory(self.cfg)
 
+    def sync_execution_mode(self, store: ProjectStore, project_id: str,
+                            task_id: str) -> str:
+        """Migrate any stale persisted LLM-derived label to the HPC truth."""
+        with _task_lock(project_id, task_id):
+            task = store.get_task(project_id, task_id) or {}
+            flow = dict(task.get("flow") or {})
+            if flow and flow.get("execution_mode") != self.execution_mode:
+                flow["execution_mode"] = self.execution_mode
+                self._save(store, project_id, task_id, flow)
+            return self.execution_mode
+
     # ---------------- 对话入口 ----------------
     def begin(self, store: ProjectStore, project_id: str, task_id: str,
               requirement: str) -> str:
+        with _task_lock(project_id, task_id):
+            return self._begin_locked(store, project_id, task_id, requirement)
+
+    def _begin_locked(self, store: ProjectStore, project_id: str, task_id: str,
+                      requirement: str) -> str:
         """确认「开始计算流程」：建 flow 并推进到第一个决策点。"""
         task = store.get_task(project_id, task_id) or {}
         goal = (requirement or "").strip() or self._default_goal(task)
@@ -194,6 +203,7 @@ class Orchestrator:
                 project_id, task_id, task.get("local_workspace") or "")),
             "hpc_dir": str(task.get("hpc_workspace") or "").strip(),
             "uploaded": False,
+            "execution_mode": self.execution_mode,
             "precheck": {"ok": False, "issues": []},
             "draft": [],
             "waiting": [],
@@ -206,9 +216,17 @@ class Orchestrator:
 
     def handle(self, store: ProjectStore, project_id: str, task_id: str,
                content: str) -> str:
+        with _task_lock(project_id, task_id):
+            return self._handle_locked(store, project_id, task_id, content)
+
+    def _handle_locked(self, store: ProjectStore, project_id: str, task_id: str,
+                       content: str) -> str:
         """已有 flow 的用户消息：按当前 phase 推进。"""
         task = store.get_task(project_id, task_id) or {}
-        flow = task.get("flow") or {}
+        flow = dict(task.get("flow") or {})
+        if flow and flow.get("execution_mode") != self.execution_mode:
+            flow["execution_mode"] = self.execution_mode
+            self._save(store, project_id, task_id, flow)
         # M44：任务设了 local_workspace 时，计算目录必须指向该工作区；
         # 历史 flow 若仍指向私有草稿目录，先自愈再继续，避免预检/提交走错目录。
         ws = (task.get("local_workspace") or "").strip()
@@ -254,7 +272,7 @@ class Orchestrator:
             issues = "\n".join(f"- [{i['level']}] {i['job']}: {i['message']}"
                                for i in flow["precheck"]["issues"])
             return "\n".join(logs) + "\n\n提交前检查未通过，暂不生成提交草稿：\n" \
-                + issues + "\n请补齐上述文件后，再回复「确认提交」重试。"
+                + issues + "\n请补齐上述文件后，重新生成草稿与提交确认卡。"
 
         try:
             draft_text = self._draft(flow)
@@ -263,11 +281,11 @@ class Orchestrator:
             self._save(store, project_id, task_id, flow)
             return ("\n".join(logs) + "\n\n生成提交草稿失败：\n- " + str(exc)
                     + "\n请把对应的唯一提交脚本（*.sh）放进该作业目录后，"
-                      "再回复「确认提交」重试。")
+                      "重新生成草稿与提交确认卡。")
         flow["phase"] = "await_submit"
         self._save(store, project_id, task_id, flow)
         return "\n".join(logs) + "\n\n" + draft_text + \
-            "\n回复「确认提交」将真实提交到超算（需已配置 SSH）；「取消」放弃本次。"
+            "\n系统会展示一次性确认卡；只有卡片批准后才会真实提交到超算。"
 
     def _plan(self, flow: dict, goal: str) -> None:
         label = _detect_job_label(goal)
@@ -286,152 +304,147 @@ class Orchestrator:
         }
 
     def _prepare(self, store, project_id, task_id, flow, logs: list[str]) -> None:
+        """Inventory only. File copies and uploads require separate actions."""
         local_dir = Path(flow["local_dir"])
-        local_dir.mkdir(parents=True, exist_ok=True)
         task = store.get_task(project_id, task_id) or {}
         source = (task.get("local_workspace") or "").strip()
-        copied: list[str] = []
-        same_dir = False
-        if source:
-            src = Path(source)
-            if src.is_dir():
-                same_dir = src.expanduser().resolve() == \
-                    local_dir.expanduser().resolve()
-                for name in ("POSCAR", "INCAR"):
-                    fp = src / name
-                    if fp.is_file():
-                        if same_dir:
-                            copied.append(name)
-                        else:
-                            shutil.copy2(fp, local_dir / name)
-                            copied.append(name)
-                if copied:
-                    logs.append("本地工作区即为计算目录：输入文件直接在该目录中，"
-                                "无需复制。")
-                elif not copied and not same_dir:
-                    logs.append("本地工作区里未找到 POSCAR/INCAR，"
-                                "输入文件需稍后补齐。")
-            else:
-                logs.append(f"本地工作区路径无效: {source}")
+        if source and Path(source).is_dir():
+            names = [name for name in ("INCAR", "POSCAR", "KPOINTS", "POTCAR")
+                     if (Path(source) / name).is_file()]
+            logs.append("已盘点用户工作区输入：" + ("、".join(names) or "（无）"))
         else:
-            logs.append("任务未填写本地工作区，拷贝初始文件跳过。")
-        if copied and not same_dir:
-            logs.append(f"已从本地工作区复制: {', '.join(copied)}。")
-
-        if self.hpc is None:
-            logs.append("未连接超算（未配置 SSH 账号），输入文件仅存本地，"
-                        "尚未上传到任何超算目录。")
-            return
-        remote = flow.get("hpc_dir") or ""
-        if not remote:
-            logs.append("任务未填写超算工作区（会话目录），跳过上传；"
-                        "确认提交前请先补充该目录。")
-            return
-        ok, note = self._upload_dir(
-            local_dir, remote,
-            job_keys=[j["key"] for j in (flow.get("plan") or {}).get("jobs", [])])
-        flow["uploaded"] = ok
-        logs.append(note)
+            logs.append("本地工作区无效或未设置；未执行任何文件创建/复制。")
+        logs.append("文件复制与 SFTP 上传均需逐次确认；本阶段未写入或上传。")
 
     def _upload_dir(self, local_dir: Path, remote: str,
                     job_keys: list[str] | None = None) -> tuple[bool, str]:
-        remote = (remote or "").rstrip("/")
-        try:
-            self.hpc.run(f"mkdir -p {self._shell_quote(remote)}")
-            for p in sorted(local_dir.iterdir()):
-                if p.is_file():
-                    self.hpc.write_file(f"{remote}/{p.name}", p.read_bytes())
-                elif p.is_dir() and job_keys and (
-                        p.name in job_keys
-                        or any(k.startswith(p.name + "/") for k in job_keys)):
-                    # M52：嵌套作业 key（relax/static）的首段目录也要整树上传
-                    self._upload_subdir(p, f"{remote}/{p.name}")
-            return True, f"已上传输入文件到超算目录 `{remote}`。"
-        except Exception as exc:  # noqa: BLE001
-            return False, f"上传超算失败（未执行提交）：{type(exc).__name__}"
+        del local_dir, remote, job_keys
+        return False, "P0 禁止编排器隐式上传；请逐个确认绑定的 artifact 上传动作。"
 
     def _upload_subdir(self, local: Path, remote: str) -> None:
-        """递归上传作业目录子树（M52：支持嵌套作业目录 relax/static/dos）。"""
-        self.hpc.run(f"mkdir -p {self._shell_quote(remote)}")
-        for p in sorted(local.iterdir()):
-            if p.is_file():
-                self.hpc.write_file(f"{remote.rstrip('/')}/{p.name}",
-                                    p.read_bytes())
-            elif p.is_dir():
-                self._upload_subdir(p, f"{remote.rstrip('/')}/{p.name}")
-
-    def _shell_quote(self, text: str) -> str:
-        return "'" + str(text).replace("'", r"'\''") + "'"
+        del local, remote
+        raise RuntimeError("P0 禁止编排器隐式递归上传")
 
     def _setup(self, flow: dict, logs: list[str]) -> None:
-        if self.hpc is None:
-            logs.append("未连接超算：跳过 vaspkit 探测（连接后会自动探测并固化)。")
-            return
-        try:
-            skill = probe_and_store(self.hpc.run, root=self.data_dir,
-                                    timeout=float(self.cfg.llm_timeout_seconds or 30))
-            if skill.found:
-                ver = f"，{skill.version}" if skill.version else ""
-                logs.append(f"vaspkit 已探测（{skill.path}{ver}），技能已固化。")
-            else:
-                logs.append("vaspkit 未在超算上定位；不会自动补 KPOINTS/POTCAR，"
-                            "需手动准备后再提交。")
-        except Exception as exc:  # noqa: BLE001
-            logs.append(f"vaspkit 探测失败: {type(exc).__name__}")
+        del flow
+        logs.append("P0 不执行远端探测命令，也不自动生成 KPOINTS/POTCAR。")
 
     def _precheck(self, flow: dict, local_dir: Path, remote_ok: bool,
                   remote: str, logs: list[str]) -> None:
         issues: list[dict] = []
+        input_records: list[dict] = []
+        script_records: list[dict] = []
         remote = (remote or "").rstrip("/")
+        flow["execution_mode"] = self.execution_mode
         for job in flow["plan"]["jobs"]:
-            for name in ("INCAR", "POSCAR"):
-                exists = self._file_exists(local_dir, remote_ok, remote, name,
-                                           job_key=job["key"])
-                level = "ok" if exists else "error"
-                msg = f"{name} 存在" if exists else f"{name} 缺失，无法提交"
+            if job.get("status") in ("completed", "failed", "not_converged",
+                                      "canceled", "skipped", "blocked",
+                                      "unknown"):
+                continue
+            for name in ("INCAR", "POSCAR", "KPOINTS", "POTCAR"):
+                try:
+                    if remote_ok and self.hpc is not None:
+                        calc = self._job_calc_dir(remote, local_dir, job["key"])
+                        path = f"{calc.rstrip('/')}/{name}"
+                        fingerprint = input_fingerprint_remote(self.hpc, path)
+                        source = "remote"
+                    else:
+                        root = local_dir.resolve()
+                        base = self._contained_job_dir(root, job["key"]) or root
+                        target = (base / name).resolve()
+                        target.relative_to(root)
+                        fingerprint = input_fingerprint_local(target)
+                        source = "local"
+                    input_records.append({"job_key": job["key"], "name": name,
+                                          "source": source, **fingerprint})
+                    level = "ok"
+                    msg = f"{name} 非空且 SHA-256 已绑定"
+                except Exception:  # noqa: BLE001
+                    level = "error"
+                    msg = f"{name} 缺失、为空或无法哈希，无法提交"
                 issues.append({"job": job["key"], "file": name, "level": level,
                                "message": msg})
-            for name in ("POTCAR", "KPOINTS"):
-                exists = self._file_exists(local_dir, remote_ok, remote, name,
-                                           job_key=job["key"])
-                level = "ok" if exists else "warn"
-                msg = f"{name} 存在" if exists else (
-                    f"{name} 缺失（vaspkit 可生成，提交前建议补齐）")
-                issues.append({"job": job["key"], "file": name, "level": level,
-                               "message": msg})
-            has_script = self._user_script_exists(local_dir, job["key"])
+            calc = self._job_calc_dir(remote, local_dir, job["key"])
+            has_script = False
+            actual: dict | None = None
+            if remote_ok and calc:
+                try:
+                    script_name = find_remote_submit_script(self.hpc, calc)
+                    has_script = bool(script_name)
+                    if script_name:
+                        actual = {"source": "remote", "script_name": script_name,
+                                  **fingerprint_remote_submit_script(
+                                      self.hpc, calc, script_name)}
+                except RuntimeError:
+                    has_script = False
+            else:
+                has_script = self._user_script_exists(local_dir, job["key"])
+                if has_script:
+                    job_local = self._contained_job_dir(local_dir, job["key"]) or local_dir.resolve()
+                    script = resolve_user_submit_script(job_local)
+                    actual = {"source": "local", "script_name": script.name,
+                              **fingerprint_local_submit_script(script)}
             level = "ok" if has_script else "error"
             msg = "提交脚本(*.sh) 存在" if has_script else (
                 "提交脚本(*.sh) 缺失，无法提交（提交脚本必须由用户提供，"
                 "系统不代写生成脚本）")
             issues.append({"job": job["key"], "file": "提交脚本(*.sh)",
                            "level": level, "message": msg})
+            attestation = (flow.get("script_attestations") or {}).get(job["key"])
+            attested = (isinstance(attestation, dict) and isinstance(actual, dict)
+                        and all(attestation.get(key) == actual.get(key)
+                                for key in ("source", "script_name",
+                                            "normalized_path", "sha256", "size")))
+            issues.append({"job": job["key"], "file": "提交脚本认领",
+                           "level": "ok" if attested else "error",
+                           "message": ("脚本已由用户认领" if attested else
+                                       "提交脚本尚未显式认领并绑定 SHA-256")})
+            if attested:
+                script_records.append({"job_key": job["key"], **actual})
+        snapshot, digest = precheck_snapshot(
+            execution_mode=self.execution_mode, inputs=input_records,
+            scripts=script_records)
         flow["precheck"] = {
-            "ok": all(i["level"] != "error" for i in issues),
+            "ok": all(i["level"] == "ok" for i in issues),
+            "hard": True,
             "issues": issues,
+            "execution_mode": self.execution_mode,
+            "snapshot": snapshot,
+            "digest": digest,
         }
 
     def _file_exists(self, local_dir: Path, remote_ok: bool, remote: str,
                      name: str, *, job_key: str = "") -> bool:
         remote = (remote or "").rstrip("/")
         if remote_ok and self.hpc is not None:
-            candidates = ([f"{remote}/{job_key}/{name}", f"{remote}/{name}"]
-                          if job_key else [f"{remote}/{name}"])
-            for check in candidates:
-                try:
-                    if self.hpc.stat(check) is not None:
-                        return True
-                except Exception:  # noqa: BLE001
-                    continue
+            calc = self._job_calc_dir(remote, local_dir, job_key)
+            try:
+                info = self.hpc.stat(f"{calc.rstrip('/')}/{name}")
+                return info is not None and info.get("is_dir") is not True
+            except Exception:  # noqa: BLE001
+                return False
+        root = local_dir.resolve()
+        base = self._contained_job_dir(root, job_key) or root
+        target = (base / name).resolve()
+        try:
+            target.relative_to(root)
+        except ValueError:
             return False
-        if job_key and (local_dir / job_key).is_dir():
-            return (local_dir / job_key / name).is_file()
-        return (local_dir / name).is_file()
+        return target.is_file()
+
+    @staticmethod
+    def _contained_job_dir(local_dir: Path, job_key: str) -> Path | None:
+        root = local_dir.resolve()
+        candidate = (root / str(job_key or "")).resolve()
+        try:
+            candidate.relative_to(root)
+        except ValueError:
+            return None
+        return candidate if job_key and candidate.is_dir() else None
 
     def _user_script_exists(self, local_dir: Path, job_key: str) -> bool:
         """作业目录是否存在用户提供的唯一提交脚本（*.sh）。"""
-        job_local = ((local_dir / job_key)
-                     if (local_dir / job_key).is_dir() else local_dir)
+        job_local = self._contained_job_dir(local_dir, job_key) or local_dir.resolve()
         try:
             resolve_user_submit_script(job_local)
             return True
@@ -445,22 +458,49 @@ class Orchestrator:
         drafts: list[dict] = []
         lines: list[str] = []
         for job in flow["plan"]["jobs"]:
+            if job.get("status") in ("completed", "failed", "not_converged",
+                                      "canceled", "skipped", "blocked",
+                                      "unknown"):
+                continue
             calc_dir = self._job_calc_dir(base, local_dir, job["key"])
-            job_local = ((local_dir / job["key"])
-                         if (local_dir / job["key"]).is_dir() else local_dir)
-            script = resolve_user_submit_script(job_local)
-            script_text = script.read_text(encoding="utf-8")
+            job_local = self._contained_job_dir(local_dir, job["key"]) or local_dir.resolve()
+            source = "local"
+            script_name = ""
+            if remote and self.hpc is not None:
+                script_name = find_remote_submit_script(self.hpc, calc_dir) or ""
+                source = "remote"
+            if source == "remote":
+                if not script_name:
+                    raise RuntimeError(f"{job['key']} 远端提交脚本缺失")
+                fingerprint = fingerprint_remote_submit_script(
+                    self.hpc, calc_dir, script_name)
+            else:
+                script = resolve_user_submit_script(job_local)
+                script_name = script.name
+                fingerprint = fingerprint_local_submit_script(script)
+            attestation = (flow.get("script_attestations") or {}).get(job["key"])
+            if not isinstance(attestation, dict) or any(
+                    attestation.get(key) != value for key, value in {
+                        "source": source, "script_name": script_name,
+                        "normalized_path": fingerprint["normalized_path"],
+                        "sha256": fingerprint["sha256"], "size": fingerprint["size"],
+                    }.items()):
+                raise RuntimeError(f"{job['key']} 提交脚本未认领或认领已失效")
             drafts.append({
                 "job_key": job["key"],
                 "dir": calc_dir,
-                "script_name": script.name,
-                "script_text": script_text,
-                "submit_cmd": " ".join(submit_command(script.name)),
+                "script_name": script_name,
+                "script_source": source,
+                "script_path": fingerprint["normalized_path"],
+                "script_sha256": fingerprint["sha256"],
+                "script_size": fingerprint["size"],
+                "attestation_action_id": attestation.get("action_id"),
+                "attestation_binding_hash": attestation.get("binding_hash"),
+                "submit_cmd": " ".join(submit_command(script_name)),
             })
             lines.append(
                 f"- {job['key']}（{job['label']}）→ 目录 `{calc_dir}`，"
-                f"使用用户提供的提交脚本 {script.name}\n"
-                f"```bash\n{script_text}\n```")
+                f"使用用户认领脚本 {script_name}（SHA-256 {fingerprint['sha256']}）")
         flow["draft"] = drafts
         return ("已生成提交草稿（使用用户提供的提交脚本，只校验、未提交）：\n"
                 + "\n".join(lines))
@@ -476,7 +516,7 @@ class Orchestrator:
         if _is_true_answer(content):
             return self._submit(store, project_id, task_id, flow)
         return ("当前处于「提交前检查通过，待你确认提交」环节。\n"
-                "回复「确认提交」→ 真实提交到超算；「取消」→ 放弃本次；"
+                "请在绑定当前草稿的一次性确认卡中确认；「取消」→ 放弃本次；"
                 "也可以补充输入文件后再回来确认。")
 
     def _cascade_blocks(self, flow: dict) -> list[str]:
@@ -488,7 +528,7 @@ class Orchestrator:
         while changed:
             changed = False
             for j in jobs:
-                if j.get("status") != "waiting":
+                if j.get("status") not in {"draft", "waiting"}:
                     continue
                 bad = [r for r in (j.get("requires") or [])
                        if statuses.get(r) in ("failed", "not_converged",
@@ -523,92 +563,139 @@ class Orchestrator:
 
     def _submit(self, store, project_id, task_id, flow) -> str:
         """M55：与 _pump 同一把 per-task 锁，提交与监控不并发。"""
+        del flow
         with _task_lock(project_id, task_id):
-            return self._submit_locked(store, project_id, task_id, flow)
+            current = (store.get_task(project_id, task_id) or {}).get("flow") or {}
+            return self._submit_locked(store, project_id, task_id,
+                                       dict(current))
 
     def _submit_locked(self, store, project_id, task_id, flow) -> str:
+        if (flow.get("execution_mode") != self.execution_mode
+                or self.execution_mode == "None" or self.hpc is None):
+            return ("[AI_HPC_BACKEND_UNAVAILABLE] 当前流程没有与确认绑定的可用 "
+                    "HPC 执行后端；sbatch 次数为 0。")
+        remote = str(flow.get("hpc_dir") or flow.get("local_dir") or "").strip()
+        drafts = flow.get("draft") or []
+        precheck_digest = str((flow.get("precheck") or {}).get("digest") or "")
+        executing_action = next((
+            action for action in ((flow.get("consent") or {}).get("actions") or {}).values()
+            if action.get("kind") == "submit"
+            and action.get("state") == "executing"
+            and isinstance(action.get("binding"), dict)
+            and action["binding"].get("operation") == "submit"
+            and action["binding"].get("project_id") == project_id
+            and action["binding"].get("task_id") == task_id
+            and action["binding"].get("execution_mode") == self.execution_mode
+            and action["binding"].get("precheck_digest") == precheck_digest
+            and action["binding"].get("remote_root") == remote
+            and action["binding"].get("drafts") == drafts
+            and action.get("binding_hash") == hashlib.sha256(json.dumps(
+                action["binding"], ensure_ascii=False, sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")).hexdigest()
+        ), None)
+        if executing_action is None:
+            return ("[AI_SUBMIT_CONFIRMATION_REQUIRED] 缺少与当前草稿和目标绑定的"
+                    "单次提交确认；sbatch 次数为 0。")
         if self.hpc is None:
             return ("未配置/未连接 SSH，无法真实提交到超算（我不会伪造作业号）。"
                     "草稿已保留。请在「设置 → SSH」填写主机/用户名/密码后，"
-                    "再回复「确认提交」；或回复「取消」。\n"
+                    "重新生成并批准提交确认卡；或回复「取消」。\n"
                     "本次没有真正执行任何 sbatch。")
-        remote = flow.get("hpc_dir") or ""
         if not remote:
             flow["phase"] = "blocked"
             self._save(store, project_id, task_id, flow)
             return "任务未填写超算工作区（会话目录），无法定位提交目录。" \
                    "请补充后重新发起。"
         local_dir = Path(flow["local_dir"])
-        if not flow.get("uploaded"):
-            ok, note = self._upload_dir(
-                local_dir, remote,
-                job_keys=[j["key"] for j in flow["plan"]["jobs"]])
-            flow["uploaded"] = ok
-            logs_note = note
-        else:
-            logs_note = "输入已上传超算。"
+        self._precheck(flow, local_dir, True, remote, [])
+        if not flow.get("precheck", {}).get("ok"):
+            flow["phase"] = "blocked"
+            self._save(store, project_id, task_id, flow)
+            return ("[AI_PRECHECK_BLOCKED] 提交前硬检查未通过；缺少任一 "
+                    "INCAR/POSCAR/KPOINTS/POTCAR/认领脚本时 sbatch 次数为 0。")
+        if str(flow["precheck"].get("digest") or "") != precheck_digest:
+            flow["phase"] = "blocked"
+            self._save(store, project_id, task_id, flow)
+            return ("[AI_PRECHECK_STALE] VASP 输入或脚本在确认后发生变化；"
+                    "必须重新预检并确认，sbatch 次数为 0。")
+        if not flow.get("draft"):
+            return "[AI_PRECHECK_BLOCKED] 缺少绑定脚本哈希的提交草稿；sbatch 次数为 0。"
+        logs_note = "已通过远端硬预检；不会在提交阶段隐式上传或改写文件。"
         account = self.cfg.ssh_username
         free = self._free_slots(account)
         if free is None:
             return logs_note + "\n无法查询超算配额（squeue 失败），" \
                 "为避免超限未提交。请检查 SSH 后重试。"
         if free <= 0:
-            selected = [j for j in flow["plan"]["jobs"]
-                        if j.get("status") not in
-                        ("completed", "failed", "canceled", "skipped")]
-            for job in selected:
-                job["status"] = "waiting"
-            flow["waiting"] = [j["key"] for j in selected]
-            flow["phase"] = "monitoring"
-            self._save(store, project_id, task_id, flow)
             return logs_note + f"\n超算账号「排队+运行中」已达上限（空位 {free}），" \
-                "作业已进入「等待空位」本地队列；我每次收到消息都会按空位自动补提。"
+                "本次未提交。空位恢复后必须重新预检并由用户再次确认。"
         submitted = []
-        wait_notes: list[str] = []
         gate = self._gate(flow)
-        waiting_set = set(flow.setdefault("waiting", []))
+        flow["waiting"] = []
         for job in flow["plan"]["jobs"]:
             key = job["key"]
             st = job.get("status")
             if st in ("completed", "failed", "not_converged", "canceled",
-                      "skipped"):
+                      "skipped", "unknown"):
+                continue
+            if job.get("submission_state") == "executing":
+                job["submission_state"] = "unknown"
+                job["status"] = "unknown"
+                job["submission_error"] = "检测到中断的提交尝试；结果未知"
+                submitted.append(f"- {key} 上次提交尝试中断，已标记 unknown；不会重试")
+                continue
+            if job.get("submission_state") in {"submitted", "unknown"}:
+                submitted.append(f"- {key} 已有提交尝试状态 {job['submission_state']}，不会重试")
                 continue
             if key not in gate.eligible:
-                # 依赖未满足（M52 闸门）：不提交，进等待队列并注明原因
                 if st in ("submitted", "queued", "running"):
                     continue
                 reason = gate.blocked.get(key) or "等待空位"
-                job["status"] = "waiting"
                 job["wait_reason"] = reason
-                if key not in waiting_set:
-                    flow["waiting"].append(key)
-                    waiting_set.add(key)
-                wait_notes.append(f"- {key}：{reason}")
+                submitted.append(f"- {key} 未提交：{reason}；依赖满足后需重新确认")
                 continue
             try:
-                slurm_id = self._submit_one(remote, job,
-                                            local_dir=local_dir)
+                calc, script_name = self._verify_submit_target(
+                    flow, remote, local_dir, job)
             except Exception as exc:  # noqa: BLE001
-                # M56：失败原因（含 sbatch stderr 摘要）必须完整呈现，
-                # 不能只报异常类型让用户误以为已提交
-                submitted.append(f"- {job['key']} 提交失败：{exc}")
+                submitted.append(f"- {job['key']} 预提交校验失败：{exc}（sbatch=0）")
+                continue
+            job["submission_state"] = "executing"
+            job["submission_action_id"] = executing_action["action_id"]
+            self._save(store, project_id, task_id, flow)
+            try:
+                slurm_id = self._submit_one(calc, script_name)
+            except Exception as exc:  # noqa: BLE001
+                job["submission_state"] = "unknown"
+                job["status"] = "unknown"
+                job["submission_error"] = str(exc)[:500]
+                self._save(store, project_id, task_id, flow)
+                submitted.append(f"- {job['key']} 提交结果不确定：{exc}；不会自动重试")
                 continue
             job["slurm_id"] = slurm_id
             job["status"] = "submitted"
-            calc = self._job_calc_dir(remote, local_dir, job["key"])
+            job["submission_state"] = "submitted"
+            self._save(store, project_id, task_id, flow)
             submitted.append(f"- {job['key']} 已提交：slurm id {slurm_id} "
                              f"（目录 `{calc}`）")
-        flow["phase"] = "monitoring"
+        if any(j.get("submission_state") == "unknown"
+               for j in flow["plan"]["jobs"]):
+            flow["phase"] = "blocked"
+        elif any(j.get("status") in ("draft", "waiting")
+                 for j in flow["plan"]["jobs"]):
+            # A dependency or capacity transition never inherits an earlier
+            # approval.  Keep an explicit confirmation boundary available.
+            flow["phase"] = "await_submit"
+        else:
+            flow["phase"] = "monitoring"
         self._save(store, project_id, task_id, flow)
         out = logs_note + "\n" + "\n".join(submitted)
-        if wait_notes:
-            out += ("\n\n依赖闸门（计划内等待，无需处理）：以下作业暂不提交，"
-                    "前序完成后自动补提：\n" + "\n".join(wait_notes))
         return out + "\n在途作业会随后续消息刷新（squeue 实况）。"
 
     def _free_slots(self, account: str) -> Optional[int]:
         try:
-            code, out, _ = self.hpc.run(f"squeue -u {account}")
+            code, out, _ = self.hpc.run(self._squeue_command(account))
             if code != 0:
                 return None
             pending, running = parse_slurm_output(out or "")
@@ -616,50 +703,53 @@ class Orchestrator:
         except Exception:  # noqa: BLE001
             return None
 
+    @staticmethod
+    def _squeue_command(account: str) -> str:
+        if not re.fullmatch(r"[A-Za-z0-9_.@-]{1,128}", str(account or "")):
+            raise ValueError("invalid scheduler account")
+        return f"squeue -u {account}"
+
     def _job_calc_dir(self, base: str, local_dir: Path, key: str) -> str:
         """作业计算目录：本地/远端已存在 <base>/<key> 子目录时用该子目录，
         否则退回 base（保持旧版「扁平工作区」行为）。"""
-        base_dir = Path(local_dir) / key
-        per_job = base_dir.is_dir()
+        per_job = self._contained_job_dir(Path(local_dir), key) is not None
         if not per_job and self.hpc is not None and base:
             try:
-                per_job = self.hpc.stat(f"{base.rstrip('/')}/{key}") is not None
+                info = self.hpc.stat(f"{base.rstrip('/')}/{key}")
+                per_job = (info is not None and info.get("is_file") is not True)
             except Exception:  # noqa: BLE001
                 per_job = False
         return f"{base.rstrip('/')}/{key}" if per_job else (base or "")
 
-    def _submit_one(self, remote: str, job: dict, *,
-                    local_dir: Path | None = None) -> int:
-        calc = remote
-        job_local = None
-        if local_dir is not None:
-            calc = self._job_calc_dir(remote, local_dir, job["key"])
-            job_local = ((local_dir / job["key"])
-                         if (local_dir / job["key"]).is_dir() else local_dir)
-        # M51 远端优先：超算作业目录已有唯一用户提交脚本则直接用（不覆盖）
-        if calc:
-            try:
-                remote_script = find_remote_submit_script(self.hpc, calc)
-            except RuntimeError as exc:
-                raise RuntimeError(f"{job.get('key')}: {exc}") from exc
-            if remote_script:
-                code, out, err = self.hpc.run(f"sbatch {remote_script}",
-                                              cwd=calc)
-                match = re.search(r"Submitted batch job (\d+)", out or "")
-                if match:
-                    return int(match.group(1))
-                raise RuntimeError(
-                    f"sbatch 未返回作业号: exit={code} out={(out or '')[:80]} "
-                    f"err={(err or '')[:80]}")
-        if job_local is None:
-            raise RuntimeError("缺少本地作业目录，且超算作业目录里没有提交脚本；"
-                               "无法定位用户提供的提交脚本")
-        script = resolve_user_submit_script(job_local)
-        if calc:
-            self.hpc.run(f"mkdir -p {self._shell_quote(calc)}")
-        self.hpc.write_file(f"{calc.rstrip('/')}/{script.name}",
-                            script.read_bytes())
-        code, out, err = self.hpc.run(f"sbatch {script.name}", cwd=calc)
+    def _verify_submit_target(self, flow: dict, remote: str, local_dir: Path,
+                              job: dict) -> tuple[str, str]:
+        calc = self._job_calc_dir(remote, local_dir, job["key"])
+        script_name = find_remote_submit_script(self.hpc, calc)
+        if not script_name:
+            raise RuntimeError("远端作业目录缺少唯一用户脚本")
+        fingerprint = fingerprint_remote_submit_script(self.hpc, calc, script_name)
+        attestation = (flow.get("script_attestations") or {}).get(job["key"])
+        draft = next((d for d in flow.get("draft") or []
+                      if d.get("job_key") == job["key"]), None)
+        if not isinstance(attestation, dict) or not isinstance(draft, dict):
+            raise RuntimeError("脚本认领或提交草稿缺失")
+        expected = {
+            "script_name": script_name,
+            "normalized_path": fingerprint["normalized_path"],
+            "sha256": fingerprint["sha256"], "size": fingerprint["size"],
+        }
+        if any(attestation.get(key) != value for key, value in expected.items()):
+            raise RuntimeError("远端脚本与认领哈希不一致")
+        if (draft.get("script_sha256") != fingerprint["sha256"]
+                or draft.get("script_size") != fingerprint["size"]
+                or draft.get("script_path") != fingerprint["normalized_path"]):
+            raise RuntimeError("远端脚本与草稿绑定不一致")
+        return calc, script_name
+
+    def _submit_one(self, calc: str, script_name: str) -> int:
+        if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}\.sh", script_name):
+            raise RuntimeError("非法提交脚本名")
+        code, out, err = self.hpc.run(f"sbatch {script_name}", cwd=calc)
         match = re.search(r"Submitted batch job (\d+)", out or "")
         if match:
             return int(match.group(1))
@@ -681,10 +771,13 @@ class Orchestrator:
         """M56：用户终止当前计算流程（agent stop_monitor 工具用）。
 
         全部未终态作业置 canceled、等待队列清空、phase=done——后台监控
-        下轮扫不到本任务，自动补提随即停止。已在超算上运行的作业无法
+        下轮扫不到本任务。已在超算上运行的作业无法
         从本地真正取消，回执中给出 scancel 建议由用户决定。"""
+        del flow
         with _task_lock(project_id, task_id):
-            return self._stop_monitor_locked(store, project_id, task_id, flow)
+            current = (store.get_task(project_id, task_id) or {}).get("flow") or {}
+            return self._stop_monitor_locked(store, project_id, task_id,
+                                             dict(current))
 
     def _stop_monitor_locked(self, store, project_id, task_id, flow) -> str:
         if not flow:
@@ -712,13 +805,12 @@ class Orchestrator:
         self._save(store, project_id, task_id, flow)
         out = "已终止本次计算流程："
         out += ("、".join(stopped) if stopped else "没有未完成的作业") \
-            + "。\n后台监控与自动补提已停止，不会再提交任何作业。"
+            + "。\n后台监控已停止；系统不会自动提交任何作业。"
         if on_hpc:
             out += ("\n注意：以下作业已提交到超算，本地仅标记取消，超算上可能"
                     "仍在运行（会继续占额度）。如需停止请在超算执行：\n"
                     + "\n".join(f"scancel {s.split('（')[0]}" for s in on_hpc)
-                    + "\n（scancel 属高风险命令，我不会代执行；也可由你授权后"
-                      "经 hpc_exec 执行）")
+                    + "\n（scancel 属高风险命令，AI 模式不会代执行。）")
         return out
 
     def finalize_report(self, store: ProjectStore, project_id: str,
@@ -731,8 +823,11 @@ class Orchestrator:
     def _pump(self, store, project_id, task_id, flow) -> str:
         """M55：per-task 互斥——用户消息触发与后台监控线程不并发推进，
         防止同一作业被双补提/状态互相覆盖。"""
+        del flow
         with _task_lock(project_id, task_id):
-            return self._pump_locked(store, project_id, task_id, flow)
+            current = (store.get_task(project_id, task_id) or {}).get("flow") or {}
+            return self._pump_locked(store, project_id, task_id,
+                                     dict(current))
 
     def _pump_locked(self, store, project_id, task_id, flow) -> str:
         if self.hpc is None:
@@ -740,7 +835,7 @@ class Orchestrator:
                     "配置 SSH 后回到本会话即可看到实况与报告。")
         account = self.cfg.ssh_username
         try:
-            code, out, _ = self.hpc.run(f"squeue -u {account}")
+            code, out, _ = self.hpc.run(self._squeue_command(account))
         except Exception as exc:  # noqa: BLE001
             return f"查询 squeue 失败（{type(exc).__name__}），进度未知。"
         states = _remote_state_map(out or "")
@@ -769,35 +864,11 @@ class Orchestrator:
                 result = self._finalize_job(flow, job)
                 progress.append(f"{job['key']}：{result}")
 
-        # M52 依赖闸门补提：状态推进后执行（本轮终态立即解锁下游），
-        # 空位允许时从等待队列补提「依赖已满足」的作业
-        backfilled: list[str] = []
+        # P0: monitoring is read-only with respect to submission. Dependency
+        # completion never authorizes a later sbatch.
         stalled = self._cascade_blocks(flow)
         if flow.get("waiting"):
-            gate = self._gate(flow)
-            for key in list(flow["waiting"]):
-                job = next((j for j in flow["plan"]["jobs"]
-                            if j["key"] == key), None)
-                if job is None:
-                    flow["waiting"].remove(key)
-                    continue
-                if free <= 0 or key not in gate.eligible:
-                    continue   # 依赖未满足或无空位：继续等
-                try:
-                    _backfill_local = (Path(flow.get("local_dir"))
-                                       if flow.get("local_dir") else None)
-                    job["slurm_id"] = self._submit_one(
-                        flow.get("hpc_dir") or "", job,
-                        local_dir=_backfill_local)
-                    job["status"] = "submitted"
-                    flow["waiting"].remove(key)
-                    backfilled.append(f"{key}(id {job['slurm_id']})")
-                    free -= 1
-                except Exception:  # noqa: BLE001
-                    continue
-
-        if backfilled:
-            progress.insert(0, "等待队列解锁，已自动补提: " + ", ".join(backfilled))
+            progress.insert(0, "等待作业不会自动补提；条件满足后需重新预检并逐次确认")
         for note in stalled:
             progress.append("已停止等待：" + note)
         self._save(store, project_id, task_id, flow)
@@ -819,29 +890,8 @@ class Orchestrator:
         return "\n".join(progress) + suffix
 
     def _cleanup_temp_logs(self, flow: dict) -> None:
-        """M57：全部作业终态后清理 vaspkit 等留下的 *.err/*.log 临时文件。
-
-        用户政策：这些文件不需要保留。范围限超算工作区根与各作业目录；
-        best-effort，失败不影响报告生成。
-        """
-        remote = (flow.get("hpc_dir") or "").rstrip("/")
-        hpc = getattr(self, "hpc", None)
-        if not remote or hpc is None:
-            return
-        local_dir = Path(flow["local_dir"]) if flow.get("local_dir") else None
-        targets = [remote]
-        for job in flow.get("plan", {}).get("jobs", []):
-            targets.append(self._job_calc_dir(
-                remote, local_dir, str(job.get("key") or "")).rstrip("/"))
-        seen: set[str] = set()
-        for t in targets:
-            if not t or t in seen:
-                continue
-            seen.add(t)
-            try:
-                hpc.run(f"rm -f '{t}'/*.err '{t}'/*.log 2>/dev/null")
-            except Exception:  # noqa: BLE001
-                continue
+        """Automatic cleanup is disabled because remote deletes require consent."""
+        del flow
 
     def _finalize_job(self, flow: dict, job: dict) -> str:
         remote = flow.get("hpc_dir") or ""
