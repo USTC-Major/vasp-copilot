@@ -7,7 +7,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Layout, Button, Input, Space, Typography, Tag, Modal, message } from 'antd';
+import { Alert, Layout, Button, Input, Space, Typography, Tag, Modal, message } from 'antd';
 import { PlusOutlined, SendOutlined, BarChartOutlined, SettingOutlined, RobotOutlined, FolderOutlined, FolderOpenOutlined, CloudServerOutlined, LoadingOutlined, StopOutlined, DeleteOutlined } from '@ant-design/icons';
 import AiChatBubble from '../components/ai/AiChatBubble';
 import AiTaskSidebar from '../components/ai/AiTaskSidebar';
@@ -27,6 +27,11 @@ interface LiveMsg {
   content: string;
   thinking: string;
   stopped?: boolean;
+}
+
+interface StreamIssue {
+  kind: 'generation' | 'connection';
+  message: string;
 }
 
 const AiProjectPage: React.FC = () => {
@@ -68,9 +73,17 @@ const AiProjectPage: React.FC = () => {
   const [editTitle, setEditTitle] = useState('');
   const [liveMsgs, setLiveMsgs] = useState<LiveMsg[]>([]);
   const [streaming, setStreaming] = useState(false);
+  const [streamIssue, setStreamIssue] = useState<StreamIssue | null>(null);
   const [pendingCards, setPendingCards] = useState<AiConsentCard[]>([]);
   const [resolvingCardId, setResolvingCardId] = useState<string | null>(null);
   const threadRef = useRef<HTMLDivElement>(null);
+  const selectedTaskIdRef = useRef<string | null>(selectedTaskId);
+  const streamSequenceRef = useRef(0);
+  const activeStreamRef = useRef<{
+    requestId: number;
+    taskId: string;
+    controller: AbortController;
+  } | null>(null);
 
   const tasks = tasksQuery.data?.tasks ?? [];
   const selectedTask = tasks.find((t) => t.id === selectedTaskId) ?? null;
@@ -78,19 +91,51 @@ const AiProjectPage: React.FC = () => {
   const taskContextQuery = useAiTaskContext(projectId, selectedTaskId);
   const messages: AiMsg[] = messagesQuery.data?.messages ?? [];
   const allMsgs = [...messages, ...liveMsgs];
+  const generationRunning = messagesQuery.data?.generation?.running ?? false;
+  const conversationBusy = streaming || generationRunning;
+
+  const selectTask = (taskId: string | null) => {
+    const active = activeStreamRef.current;
+    if (active && active.taskId !== taskId) {
+      active.controller.abort();
+      activeStreamRef.current = null;
+    }
+    // 先同步 ref，确保已经在途的异步回调不会污染刚切换到的任务。
+    selectedTaskIdRef.current = taskId;
+    setSelectedTaskId(taskId);
+  };
 
   useEffect(() => {
     const t = tasksQuery.data?.tasks;
     if (t && t.length > 0 && !selectedTaskId) {
-      setSelectedTaskId(t[0].id);
+      selectTask(t[0].id);
     }
+    // selectTask 只依赖 ref/setter；无需让函数身份触发任务重选。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tasksQuery.data, selectedTaskId]);
 
   useEffect(() => {
+    const active = activeStreamRef.current;
+    if (active && active.taskId !== selectedTaskId) {
+      active.controller.abort();
+      activeStreamRef.current = null;
+    }
     setLiveMsgs([]);
     setStreaming(false);
+    setStreamIssue(null);
     setPendingCards([]);
+    setResolvingCardId(null);
   }, [selectedTaskId]);
+
+  useEffect(() => () => {
+    activeStreamRef.current?.controller.abort();
+    activeStreamRef.current = null;
+  }, []);
+
+  useEffect(() => {
+    const restored = messagesQuery.data?.pending_actions;
+    if (restored !== undefined) setPendingCards(restored);
+  }, [messagesQuery.data?.pending_actions, selectedTaskId]);
 
   useEffect(() => {
     const el = threadRef.current;
@@ -114,7 +159,7 @@ const AiProjectPage: React.FC = () => {
       setNewTitle('');
       setNewLocalWorkspace('');
       setNewHpcWorkspace('');
-      setSelectedTaskId(task.id);
+      selectTask(task.id);
     } catch (err) {
       message.error(err instanceof Error ? err.message : '创建失败');
     }
@@ -149,7 +194,7 @@ const AiProjectPage: React.FC = () => {
       await deleteTaskMutation.mutateAsync({ projectId, taskId: task.id });
       const remain = (tasksQuery.data?.tasks ?? []).filter((t) => t.id !== task.id);
       if (selectedTaskId === task.id) {
-        setSelectedTaskId(remain.length ? (remain[0]?.id ?? null) : null);
+        selectTask(remain.length ? (remain[0]?.id ?? null) : null);
       }
       void tasksQuery.refetch();
     } catch (err) {
@@ -157,7 +202,11 @@ const AiProjectPage: React.FC = () => {
     }
   };
 
-  const patchAssistant = (patch: Partial<Pick<LiveMsg, 'content' | 'thinking' | 'stopped'>>) => {
+  const patchAssistant = (
+    requestId: number,
+    patch: Partial<Pick<LiveMsg, 'content' | 'thinking' | 'stopped'>>,
+  ) => {
+    if (activeStreamRef.current?.requestId !== requestId) return;
     setLiveMsgs((prev) => {
       if (prev.length === 0) return prev;
       const copy = [...prev];
@@ -177,6 +226,7 @@ const AiProjectPage: React.FC = () => {
       if (!r.stopped) {
         message.info('当前没有进行中的回复生成，可直接发送下一条。');
       }
+      void messagesQuery.refetch();
     } catch (err) {
       message.warning(err instanceof Error ? err.message : '停止失败');
     } finally {
@@ -190,66 +240,83 @@ const AiProjectPage: React.FC = () => {
     setResolvingCardId(card.card_id);
     try {
       const r = await aiApi.resolveConsent(projectId, taskId, card.card_id, approved);
-      if (approved) {
-        message.success(r.result || '已授权，同类操作可直接执行');
-      } else {
-        message.info(r.result || '已拒绝，本次不执行');
+      if (selectedTaskIdRef.current === taskId) {
+        if (approved) {
+          message.success(r.result || '已批准本次操作；后续操作仍需单独确认');
+        } else {
+          message.info(r.result || '已拒绝，本次不执行');
+        }
+        setPendingCards((prev) => prev.filter((c) => c.card_id !== card.card_id));
+        // 提交/授权结果已由后端落库为 assistant 消息，立即刷出，不能只靠 toast。
+        await messagesQuery.refetch();
+        void tasksQuery.refetch();
+        void taskContextQuery.refetch();
       }
-      setPendingCards((prev) => prev.filter((c) => c.card_id !== card.card_id));
-      // 提交/授权结果已由后端落库为 assistant 消息，立即刷出，不能只靠 toast
-      await messagesQuery.refetch();
-      void tasksQuery.refetch();
-      void taskContextQuery.refetch();
     } catch (err) {
-      message.error(err instanceof Error ? err.message : '授权处理失败');
+      if (selectedTaskIdRef.current === taskId) {
+        message.error(err instanceof Error ? err.message : '授权处理失败');
+      }
     } finally {
-      setResolvingCardId(null);
+      if (selectedTaskIdRef.current === taskId) setResolvingCardId(null);
     }
   };
 
   const send = async () => {
     const content = input.trim();
-    if (!content || !selectedTask || streaming) return;
+    if (!content || !selectedTask || conversationBusy) return;
+    const taskId = selectedTask.id;
+    const requestId = ++streamSequenceRef.current;
+    const controller = new AbortController();
+    activeStreamRef.current = { requestId, taskId, controller };
     setInput('');
     setStreaming(true);
+    setStreamIssue(null);
     setLiveMsgs((prev) => [
       ...prev,
       { role: 'user', content, thinking: '' },
       { role: 'assistant', content: '', thinking: '' },
     ]);
-    const taskId = selectedTask.id;
     try {
       let answer = '';
       let thinking = '';
-      for await (const ev of aiApi.sendMessageStream(projectId, taskId, content)) {
+      for await (const ev of aiApi.sendMessageStream(projectId, taskId, content, controller.signal)) {
+        if (activeStreamRef.current?.requestId !== requestId) break;
         if (ev.type === 'thinking') {
           thinking += ev.text;
-          patchAssistant({ thinking });
+          patchAssistant(requestId, { thinking });
         } else if (ev.type === 'answer') {
           answer += ev.text;
-          patchAssistant({ content: answer });
+          patchAssistant(requestId, { content: answer });
         } else if (ev.type === 'card') {
           setPendingCards((prev) => (prev.some((c) => c.card_id === ev.card.card_id) ? prev : [...prev, ev.card]));
         } else if (ev.type === 'done') {
           answer = ev.answer;
-          patchAssistant({ content: answer });
+          patchAssistant(requestId, { content: answer });
         } else if (ev.type === 'stopped') {
           answer = ev.answer;
-          patchAssistant({ content: answer, stopped: true });
+          patchAssistant(requestId, { content: answer, stopped: true });
           break;
         } else if (ev.type === 'error') {
-          answer = ev.message;
-          patchAssistant({ content: answer });
+          // 业务/模型错误后服务端仍会发送 done 并落库；继续消费终止事件。
+          setStreamIssue({ kind: 'generation', message: ev.message });
         }
       }
     } catch (err) {
-      patchAssistant({ content: err instanceof Error ? err.message : '发送失败' });
+      if (activeStreamRef.current?.requestId === requestId && !controller.signal.aborted) {
+        setStreamIssue({
+          kind: 'connection',
+          message: err instanceof Error ? err.message : '发送失败',
+        });
+      }
     } finally {
       await messagesQuery.refetch();
       void taskContextQuery.refetch();
       void tasksQuery.refetch();
-      setStreaming(false);
-      setLiveMsgs([]);
+      if (activeStreamRef.current?.requestId === requestId) {
+        activeStreamRef.current = null;
+        setStreaming(false);
+        setLiveMsgs([]);
+      }
     }
   };
 
@@ -269,7 +336,7 @@ const AiProjectPage: React.FC = () => {
       <AiTaskSidebar
         projectId={projectId}
         selectedTaskId={selectedTaskId}
-        onSelectTask={(id) => setSelectedTaskId(id)}
+        onSelectTask={selectTask}
         contextHint="每个计算任务是一段独立对话"
         extra={sidebarExtra}
         onEditTask={openEditTask}
@@ -386,6 +453,28 @@ const AiProjectPage: React.FC = () => {
                 ))}
               </div>
             )}
+            {streamIssue && (
+              <Alert
+                type={streamIssue.kind === 'connection' ? 'error' : 'warning'}
+                showIcon
+                closable
+                onClose={() => setStreamIssue(null)}
+                style={{ marginBottom: 10 }}
+                message={streamIssue.kind === 'connection' ? '回复连接中断' : '回复生成提示'}
+                description={streamIssue.kind === 'connection'
+                  ? `${streamIssue.message}。已重新同步已保存消息；${generationRunning ? '后端显示仍在生成，页面会继续轮询结果。' : '后端当前未报告进行中的生成。'}`
+                  : streamIssue.message}
+              />
+            )}
+            {generationRunning && !streaming && (
+              <Alert
+                type="info"
+                showIcon
+                style={{ marginBottom: 10 }}
+                message="后台仍在生成回复"
+                description="页面正在自动同步已持久化的消息。你可以等待完成，或点击“停止”。"
+              />
+            )}
             <div style={{ display: 'flex', gap: 10, borderTop: '1px solid rgba(0,0,0,0.06)', paddingTop: 14 }}>
               <Input
                 value={input}
@@ -393,9 +482,9 @@ const AiProjectPage: React.FC = () => {
                 onPressEnter={send}
                 placeholder="描述计算需求…（如：对 Fe2O3 结构做 relax → static → dos）"
                 size="large"
-                disabled={streaming}
+                disabled={conversationBusy}
               />
-              {streaming ? (
+              {conversationBusy ? (
                 <Button danger size="large" icon={<StopOutlined />} onClick={() => void handleStop()}>
                   停止
                 </Button>

@@ -14,6 +14,8 @@ from ai_mode.consent import (claim_action, finish_action, resolve_card,
 from ai_mode.orchestrator import Orchestrator
 from ai_mode.projects import ProjectStore
 from ai_mode.tools.draft import fingerprint_remote_submit_script
+from ai_mode.agent.tools import ToolExecutor, _CONSENT_PENDING
+from ai_mode.consent import get_card
 
 
 class FakeHPC:
@@ -125,12 +127,208 @@ OUTCAR_OK = (
     "  free  energy   TOTEN = -123.456789 eV\n"
     "  free  energy   TOTEN = -123.456789 eV\n"
     "  reached required accuracy - stopping structural energy minimisation\n"
-    "  achieved convergence\n"
+    "  General timing and accounting informations for this job:\n"
 )
 OSZICAR_OK = (
+    " DAV:  2    -0.12345679E+03   -1e-7  -2e-7  12  1e-6\n"
     "   1 F= -.12345679E+03     E0= -.12345679E+03  d E =-.45678E+00\n"
-    " DAV:  1    -0.12345679E+03   -0.12345679E+03  -0.12345679E+03  -0.12121E+01\n"
 )
+
+
+@pytest.mark.parametrize("query", [(1, "", "controller unavailable"),
+                                    (0, "unexpected output", ""), TimeoutError("SSH")])
+def test_queue_failure_preserves_live_job_and_never_reads_results(env, query):
+    store, pid, tid, cfg = env
+    hpc = FakeHPC(outcar=OUTCAR_OK.encode(), osziacar=OSZICAR_OK.encode())
+    orch = Orchestrator(cfg, hpc=hpc, llm_factory=lambda _c: None)
+    _ready_flow(store, pid, tid, hpc, [{"key": "relax", "status": "running", "slurm_id": 42}])
+    def bad_query(*args, **kwargs):
+        if isinstance(query, Exception):
+            raise query
+        return query
+    hpc.run = bad_query
+    hpc.read_file = lambda *_args, **_kw: pytest.fail("must not read outputs after failed query")
+    result = orch.monitor(store, pid, tid, {})
+    flow = store.get_task(pid, tid)["flow"]
+    assert "进度未知" in result
+    assert flow["plan"]["jobs"][0]["status"] == "running"
+    assert flow["plan"]["jobs"][0]["slurm_id"] == 42
+    assert flow["monitor_error"]
+
+
+@pytest.mark.parametrize("state", ["CG", "S", "CF", "UNKNOWN_NEW_STATE"])
+def test_unhandled_queue_state_is_not_completion(env, state):
+    store, pid, tid, cfg = env
+    hpc = FakeHPC(squeue_rows=[f"42 partition job user {state} 0:00 1 node"])
+    _ready_flow(store, pid, tid, hpc, [{"key": "band", "status": "running", "slurm_id": 42}])
+    orch = Orchestrator(cfg, hpc=hpc, llm_factory=lambda _c: None)
+    hpc.read_file = lambda *_args, **_kw: pytest.fail("queued job is not ready for finalization")
+    orch.monitor(store, pid, tid, {})
+    assert store.get_task(pid, tid)["flow"]["plan"]["jobs"][0]["status"] == "running"
+
+
+def test_unreadable_outputs_remain_unknown_and_can_be_refreshed(env):
+    store, pid, tid, cfg = env
+    hpc = FakeHPC(outcar=OUTCAR_OK.encode(), osziacar=OSZICAR_OK.encode())
+    _ready_flow(store, pid, tid, hpc, [{"key": "relax", "status": "running", "slurm_id": 42,
+                                      "submission_state": "submitted"}])
+    orch = Orchestrator(cfg, hpc=hpc, llm_factory=lambda _c: None)
+    reader = hpc.read_file
+    def unavailable(*args, **kwargs):
+        raise TimeoutError("SSH connection")
+    hpc.read_file = unavailable
+    orch.monitor(store, pid, tid, {})
+    assert store.get_task(pid, tid)["flow"]["plan"]["jobs"][0]["status"] == "unknown"
+    hpc.read_file = reader
+    orch.monitor(store, pid, tid, {})
+    assert store.get_task(pid, tid)["flow"]["plan"]["jobs"][0]["status"] == "completed"
+    assert not any(c.startswith("sbatch") for c in hpc.calls)
+
+
+def test_failure_diagnose_recovery_requires_fresh_precheck_and_approval(env):
+    store, pid, tid, cfg = env
+    hpc = FakeHPC(outcar=b"charge density could not be read from CHGCAR\n")
+    jobs = [{"key": "band", "label": "band", "requires": [], "status": "draft"},
+            {"key": "post", "label": "post", "requires": ["band"], "status": "waiting"}]
+    _ready_flow(store, pid, tid, hpc, jobs)
+    orch = Orchestrator(cfg, hpc=hpc, llm_factory=lambda _c: None)
+    _confirmed_submit(orch, store, pid, tid)
+    orch.monitor(store, pid, tid, {})
+    ex = ToolExecutor(store=store, project_id=pid, task_id=tid, cfg=cfg, orch=orch)
+    diagnostic = ex.handle("diagnose_job", {"job_key": "band"})
+    assert "failed" in diagnostic and "CHGCAR" in diagnostic
+    failed = store.get_task(pid, tid)["flow"]
+    assert failed["plan"]["jobs"][1]["status"] == "blocked"
+    old_card = spawn_submit_card(store, pid, tid)
+    pending = ex.handle("retry_job", {"job_key": "band"})
+    assert pending.startswith(_CONSENT_PENDING)
+    action_id = pending[len(_CONSENT_PENDING):]
+    assert store.get_task(pid, tid)["flow"]["plan"]["jobs"][0]["status"] == "failed"
+    before_files = dict(hpc.files)
+    resolve_card(store, pid, tid, action_id, approved=True)
+    assert "sbatch=0" in ex.execute_action(action_id)
+    flow = store.get_task(pid, tid)["flow"]
+    job = flow["plan"]["jobs"][0]
+    assert job["status"] == "draft" and not job.get("slurm_id")
+    assert job["attempt_history"][0]["job"]["slurm_id"] == 4201
+    assert job["attempt_history"][0]["job"]["diagnosis"]["status"] == "failed"
+    assert job["attempt_history"][0]["extraction"]["output_sha256"]["OUTCAR"]
+    assert flow["plan"]["jobs"][1]["status"] == "waiting"
+    assert not flow["draft"] and not flow["precheck"]["ok"] and not flow["script_attestations"]
+    assert get_card(store, pid, tid, old_card["action_id"])["state"] == "expired"
+    ex.execute_action(action_id)  # replay cannot reset a second time
+    assert len(store.get_task(pid, tid)["flow"]["plan"]["jobs"][0]["attempt_history"]) == 1
+    with pytest.raises(ValueError, match="AI_PRECHECK_REQUIRED"):
+        spawn_submit_card(store, pid, tid)
+    orch._submit(store, pid, tid, {})
+    assert len([c for c in hpc.calls if c.startswith("sbatch")]) == 1
+    # Fresh script attestation goes through the same one-use action executor.
+    pending = ex.handle("draft", {})
+    assert pending.startswith(_CONSENT_PENDING)
+    attestation_id = pending[len(_CONSENT_PENDING):]
+    resolve_card(store, pid, tid, attestation_id, approved=True)
+    ex.execute_action(attestation_id)
+    ex.handle("draft", {})
+    assert store.get_task(pid, tid)["flow"]["precheck"]["hard"]
+    assert len([c for c in hpc.calls if c.startswith("sbatch")]) == 1
+    submitted = _confirmed_submit(orch, store, pid, tid)
+    current = store.get_task(pid, tid)["flow"]["plan"]["jobs"][0]
+    assert current.get("slurm_id"), submitted
+    assert current["slurm_id"] == 4202 and current["status"] == "submitted"
+    assert len([c for c in hpc.calls if c.startswith("sbatch")]) == 2
+    assert hpc.files == before_files and hpc.write_calls == []
+
+
+@pytest.mark.parametrize("status", ["unknown", "completed", "running", "queued", "draft", "canceled"])
+def test_retry_refuses_non_failure_states(env, status):
+    store, pid, tid, cfg = env
+    hpc = FakeHPC()
+    _ready_flow(store, pid, tid, hpc, [{"key": "band", "status": status, "slurm_id": 42}])
+    ex = ToolExecutor(store=store, project_id=pid, task_id=tid, cfg=cfg,
+                      orch=Orchestrator(cfg, hpc=hpc))
+    assert "AI_RETRY_BLOCKED" in ex.handle("retry_job", {"job_key": "band"})
+    assert not hpc.write_calls and not hpc.calls
+
+
+@pytest.mark.parametrize("status", ["unknown", "failed", "not_converged", "running"])
+def test_plan_and_selection_cannot_bypass_explicit_recovery(env, status):
+    store, pid, tid, cfg = env
+    hpc = FakeHPC()
+    _ready_flow(store, pid, tid, hpc, [{"key": "band", "status": status, "slurm_id": 42}])
+    orch = Orchestrator(cfg, hpc=hpc)
+    ex = ToolExecutor(store=store, project_id=pid, task_id=tid, cfg=cfg, orch=orch)
+    assert "AI_RECOVERY_REQUIRED" in ex.handle("plan", {"jobs": [{"key": "band", "kind": "band"}]})
+    ex.handle("select_jobs", {"skip_all": True})
+    ex.handle("select_jobs", {"submit_all": True})
+    orch.begin(store, pid, tid, "重新计算能带")
+    job = store.get_task(pid, tid)["flow"]["plan"]["jobs"][0]
+    assert job["status"] == status and job["slurm_id"] == 42
+    assert not hpc.calls and not hpc.write_calls
+
+
+@pytest.mark.parametrize("change", ["status", "slurm_id", "diagnosis"])
+def test_retry_confirmation_rechecks_exact_failed_attempt(env, change):
+    store, pid, tid, cfg = env
+    hpc = FakeHPC()
+    _ready_flow(store, pid, tid, hpc, [{"key": "band", "status": "failed", "slurm_id": 42,
+                                      "diagnosis": {"status": "failed", "reason": "fatal error"}}])
+    ex = ToolExecutor(store=store, project_id=pid, task_id=tid, cfg=cfg,
+                      orch=Orchestrator(cfg, hpc=hpc))
+    pending = ex.handle("retry_job", {"job_key": "band"})
+    action_id = pending[len(_CONSENT_PENDING):]
+    flow = store.get_task(pid, tid)["flow"]
+    flow["plan"]["jobs"][0][change] = {"status": "unknown", "slurm_id": 99,
+                                       "diagnosis": {"reason": "changed evidence"}}[change]
+    store.update_task(pid, tid, flow=flow)
+    resolve_card(store, pid, tid, action_id, approved=True)
+    assert "only the unchanged" in ex.execute_action(action_id)
+    job = store.get_task(pid, tid)["flow"]["plan"]["jobs"][0]
+    assert not job.get("attempt_history")
+    assert get_card(store, pid, tid, action_id)["state"] == "failed"
+    assert not hpc.calls and not hpc.write_calls
+
+
+def test_existing_successful_outputs_do_not_complete_new_submission(env):
+    store, pid, tid, cfg = env
+    hpc = FakeHPC()
+    _ready_flow(store, pid, tid, hpc, [{"key": "relax", "label": "relax", "status": "draft"}])
+    root = "/home/user/calc/r1/relax"
+    hpc.files[f"{root}/OUTCAR"] = OUTCAR_OK.encode()
+    hpc.files[f"{root}/OSZICAR"] = OSZICAR_OK.encode()
+    orch = Orchestrator(cfg, hpc=hpc, llm_factory=lambda _c: None)
+    _confirmed_submit(orch, store, pid, tid)
+    orch.monitor(store, pid, tid, {})
+    flow = store.get_task(pid, tid)["flow"]
+    assert flow["plan"]["jobs"][0]["status"] == "unknown"
+    assert "本次作业" in flow["plan"]["jobs"][0]["diagnosis"]["reason"]
+    hpc.files[f"{root}/OUTCAR"] += b"Elapsed time (sec): 15.0\n"
+    orch.monitor(store, pid, tid, {})
+    assert store.get_task(pid, tid)["flow"]["plan"]["jobs"][0]["status"] == "completed"
+    assert len([c for c in hpc.calls if c.startswith("sbatch")]) == 1
+
+
+def test_explicit_scheduler_failure_wins_over_successful_output(env):
+    store, pid, tid, cfg = env
+    hpc = FakeHPC(squeue_rows=["42 partition job user FAILED 0:00 1 node"],
+                  outcar=OUTCAR_OK.encode(), osziacar=OSZICAR_OK.encode())
+    _ready_flow(store, pid, tid, hpc, [{"key": "relax", "status": "running", "slurm_id": 42}])
+    orch = Orchestrator(cfg, hpc=hpc, llm_factory=lambda _c: None)
+    orch.monitor(store, pid, tid, {})
+    flow = store.get_task(pid, tid)["flow"]
+    job = flow["plan"]["jobs"][0]
+    assert job["status"] == "failed" and job["diagnosis"]["status"] == "failed"
+    assert {"file": "squeue", "text": "42 FAILED"} in job["diagnosis"]["evidence"]
+    assert flow["phase"] == "blocked"
+
+
+def test_nested_static_directory_is_not_classified_as_relaxation(env):
+    store, pid, tid, cfg = env
+    hpc = FakeHPC(outcar=("EDIFF=1e-5 IBRION=-1 NSW=0\nfree energy TOTEN = -10\n"
+                          "General timing and accounting informations\n").encode(),
+                  osziacar=b"DAV: 5 -10 -1e-7 -2e-7 20 1e-6\n1 F= -10\n")
+    _ready_flow(store, pid, tid, hpc, [{"key": "relax/static", "label": "static", "status": "running", "slurm_id": 42}])
+    Orchestrator(cfg, hpc=hpc, llm_factory=lambda _c: None).monitor(store, pid, tid, {})
+    assert store.get_task(pid, tid)["flow"]["plan"]["jobs"][0]["status"] == "completed"
 
 
 @pytest.fixture

@@ -23,6 +23,8 @@ describe('路由懒加载', () => {
   it('首页可渲染', async () => {
     renderRoute('/');
     expect(await screen.findAllByText(/VASP-Copilot/)).not.toHaveLength(0);
+    expect(screen.getByText(/任何文件写入与作业提交都按本次精确内容确认/)).toBeInTheDocument();
+    expect(screen.getByText(/不会自动补提/)).toBeInTheDocument();
   });
 
   it('工作流页可渲染（懒加载）', async () => {

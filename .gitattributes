@@ -1,0 +1,3 @@
+# Golden artifacts are compared byte-for-byte across operating systems.
+backend/tests/be_a/golden/** text eol=lf
+backend/tests/be_a/golden/**/*.zip binary

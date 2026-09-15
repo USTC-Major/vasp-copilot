@@ -435,21 +435,22 @@ export const aiApi = {
       body: initialDir && initialDir.trim() ? { initial_dir: initialDir } : {},
     }),
   getMessages: (projectId: string, taskId: string) =>
-    aiRequest<{ messages: import("../types/ai").AiMessage[] }>(`/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(taskId)}/messages`),
+    aiRequest<import("../types/ai").AiMessagesResponse>(`/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(taskId)}/messages`),
   sendMessage: (projectId: string, taskId: string, content: string) =>
     aiRequest<{ answer: string }>(`/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(taskId)}/messages`, { method: "POST", body: { content } }),
-  async *sendMessageStream(projectId: string, taskId: string, content: string)
+  async *sendMessageStream(projectId: string, taskId: string, content: string, signal?: AbortSignal)
     : AsyncGenerator<import("../types/ai").AiStreamEvent> {
     const resp = await fetch(`${AI_BASE}/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(taskId)}/messages/stream`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
       body: JSON.stringify({ content }),
+      signal,
     });
     if (!resp.ok) {
       let msg = `HTTP ${resp.status}`;
       try {
         const j = await resp.json().catch(() => null);
-        msg = j?.error?.message || msg;
+        msg = j?.error?.message || j?.detail || j?.message || msg;
       } catch { /* 忽略 */ }
       throw new Error(msg);
     }
@@ -457,21 +458,58 @@ export const aiApi = {
     const reader = resp.body.getReader();
     const decoder = new TextDecoder("utf-8");
     let buffer = "";
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const blocks = buffer.split(/\r?\n\r?\n/);
-      buffer = blocks.pop() ?? "";
-      for (const block of blocks) {
-        const line = block.split("\n").find((l) => l.startsWith("data:"));
-        if (!line) continue;
-        const raw = line.slice(5).trim();
-        if (!raw) continue;
-        try {
-          yield JSON.parse(raw) as import("../types/ai").AiStreamEvent;
-        } catch { /* 忽略非 JSON */ }
+    let reachedEof = false;
+    let terminalSeen = false;
+
+    const parseBlock = (block: string): import("../types/ai").AiStreamEvent | null => {
+      const data = block
+        .split(/\r?\n/)
+        .filter((line) => line.startsWith("data:"))
+        .map((line) => line.slice(5).trimStart())
+        .join("\n")
+        .trim();
+      if (!data) return null;
+      try {
+        return JSON.parse(data) as import("../types/ai").AiStreamEvent;
+      } catch {
+        return null;
       }
+    };
+
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) {
+          reachedEof = true;
+          buffer += decoder.decode();
+          break;
+        }
+        buffer += decoder.decode(value, { stream: true });
+        const blocks = buffer.split(/\r?\n\r?\n/);
+        buffer = blocks.pop() ?? "";
+        for (const block of blocks) {
+          const event = parseBlock(block);
+          if (!event) continue;
+          if (event.type === "done" || event.type === "stopped") terminalSeen = true;
+          yield event;
+        }
+      }
+
+      const tail = parseBlock(buffer);
+      if (tail) {
+        if (tail.type === "done" || tail.type === "stopped") terminalSeen = true;
+        yield tail;
+      }
+      if (!terminalSeen) {
+        throw new Error("回复连接意外中断：未收到完成标记，请稍后刷新查看后台结果");
+      }
+    } finally {
+      if (!reachedEof) {
+        try {
+          await reader.cancel();
+        } catch { /* 流可能已因网络中断或 AbortSignal 关闭 */ }
+      }
+      reader.releaseLock();
     }
   },
   stopMessage: (projectId: string, taskId: string) =>

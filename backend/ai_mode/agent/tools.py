@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import json
+import copy
 import hashlib
 import logging
 import os
@@ -214,6 +215,8 @@ def tool_schema_text() -> str:
         "- submit：把流程停在「待你确认提交」边界（同样不会代替用户执行；真实提交由系统在用户确认后执行）。args: {}\n"
         "- select_jobs：按用户要求选择本次提交哪些作业/跳过哪些（只调规划不提交；跳过作业不生成草稿也不提交）。args: {\"submit\":[\"relax\"],\"skip\":[\"static\"]}\n"
         "- monitor：查询超算作业进度（squeue 实况 + 状态推进；未连接超算如实说明）。args: {}\n"
+        "- diagnose_job：查询作业并返回有文件证据的诊断及恢复建议。args: {\"job_key\":\"band\"}\n"
+        "- retry_job：仅在用户明确要求重试时调用；只为已有诊断的 failed/not_converged 作业生成恢复确认卡。批准后仅恢复待准备状态，保留历史与输出；unknown 禁止重试，后续写入、上传、硬预检和提交必须重新逐次授权。args: {\"job_key\":\"band\"}\n"
         "- report：作业全部终态后生成结果报告（从 OUTCAR/OSZICAR 提取真报告）。args: {}"
     )
 
@@ -419,6 +422,8 @@ class ToolExecutor:
         "submit": "tool_submit",
         "select_jobs": "tool_select_jobs",
         "monitor": "tool_monitor",
+        "diagnose_job": "tool_diagnose_job",
+        "retry_job": "tool_retry_job",
         "report": "tool_report",
     }
 
@@ -671,6 +676,9 @@ class ToolExecutor:
                 result = self._execute_deterministic_text_action(binding)
             elif operation == "script_attestation":
                 result = self._execute_script_attestation(action)
+            elif operation == "retry_job":
+                result = self._ensure_orch().retry_job(
+                    self.store, self.project_id, self.task_id, action)
             else:
                 raise ValueError(f"unsupported consent operation: {operation}")
         except Exception as exc:  # noqa: BLE001
@@ -1030,6 +1038,10 @@ class ToolExecutor:
             (self._task().get("goal") or "")
         local_dir = self.local_dir()
         flow = self._load_flow()
+        if any(j.get("status") in {"submitted", "queued", "running", "unknown", "failed", "not_converged"}
+               or j.get("attempt_history") or j.get("submission_state") == "unknown"
+               for j in flow.get("plan", {}).get("jobs", [])):
+            return "[AI_RECOVERY_REQUIRED] 当前计划含在途、未知或失败/恢复作业，不能用重新规划覆盖历史；请先 diagnose_job，明确失败再由用户确认 retry_job。"
         normalized: list[dict] = []
         used: set = set()
         for j in jobs:
@@ -1417,6 +1429,9 @@ class ToolExecutor:
             return False
 
         for job in jobs:
+            if (job.get("slurm_id") or job.get("submission_state")
+                    or job.get("status") in {"completed", "failed", "not_converged", "unknown", "blocked", "running", "queued", "submitted"}):
+                continue  # Selection cannot erase an attempt and bypass recovery.
             if skip_all or (skip and _matches(job, skip)):
                 job["status"] = "skipped"
             elif submit_all or _matches(job, submit):
@@ -1436,6 +1451,48 @@ class ToolExecutor:
                 + "请重新调用 draft 生成本次提交草稿后停在「待确认」。")
 
     # ---------------- 监控 / 报告（复用真实 Orchestrator 原语） ----------------
+    def tool_diagnose_job(self, args: dict) -> str:
+        key = args.get("job_key")
+        if not isinstance(key, str) or set(args) != {"job_key"}:
+            return "[AI_DIAGNOSIS_INVALID] 需要唯一 job_key"
+        flow = self._load_flow()
+        job = next((j for j in flow.get("plan", {}).get("jobs", []) if j["key"] == key), None)
+        if job is None:
+            return "[AI_JOB_NOT_FOUND] 作业不存在"
+        progress = ""
+        if job.get("status") in {"running", "queued", "submitted", "unknown"}:
+            progress = self.tool_monitor({})
+            flow = self._load_flow()
+            job = next(j for j in flow["plan"]["jobs"] if j["key"] == key)
+        return json.dumps({"job_key": key, "status": job.get("status"),
+                           "slurm_id": job.get("slurm_id"), "diagnosis": job.get("diagnosis"),
+                           "attempt_history": job.get("attempt_history", []),
+                           "monitor_error": flow.get("monitor_error"),
+                           "progress": progress,
+                           "recovery": "仅明确失败/未收敛且用户要求时调用 retry_job；unknown 继续查询或人工核对，禁止重提。"}, ensure_ascii=False)
+
+    def tool_retry_job(self, args: dict) -> str:
+        key = args.get("job_key")
+        if not isinstance(key, str) or set(args) != {"job_key"}:
+            return "[AI_RETRY_INVALID] 需要唯一 job_key；不接受命令或参数修改"
+        flow = self._load_flow()
+        job = next((j for j in flow.get("plan", {}).get("jobs", []) if j["key"] == key), None)
+        if (not job or job.get("status") not in {"failed", "not_converged"}
+                or job.get("submission_state") == "unknown" or not job.get("diagnosis")):
+            return "[AI_RETRY_BLOCKED] 仅有诊断证据的 failed/not_converged 作业可以恢复；unknown/在途/完成作业禁止重提。"
+        binding = {"operation": "retry_job", "project_id": self.project_id,
+                   "task_id": self.task_id, "execution_mode": self._execution_mode(),
+                   "job_key": key, "job_snapshot": copy.deepcopy(job)}
+        payload = card_payload(
+            tool="retry_job", args={"job_key": key}, risk="medium", kind="retry_job",
+            reason="用户确认后才恢复待准备状态；不提交作业、不修改输出或科学参数。",
+            batch_key="retry|" + hashlib.sha256(json.dumps(binding, sort_keys=True).encode()).hexdigest(),
+            summary=f"恢复 {key}（原 Slurm ID {job.get('slurm_id')}，{job['status']}）？\n"
+                    + str(job["diagnosis"].get("reason", ""))
+                    + "\n保留历史诊断和输出摘要，作废旧草稿与确认。之后必须保全旧输出、重新准备和硬预检，再确认提交。",
+            binding=binding)
+        raise PendingConsentError(save_card(self.store, self.project_id, self.task_id, flow, payload))
+
     def tool_monitor(self, args: dict) -> str:
         flow = self._load_flow()
         orch = self._ensure_orch()

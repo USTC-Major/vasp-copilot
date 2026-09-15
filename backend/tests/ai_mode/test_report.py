@@ -1,6 +1,7 @@
 """M10 报告与收尾测试：解析 OUTCAR/OSZICAR + 报告渲染 + 清理建议（纯内存）。"""
 
 import pytest
+from ai_mode.report.extract import verify_run
 
 from ai_mode.report import (
     cleanup_text,
@@ -25,7 +26,8 @@ SIGMA        =    0.2000
 NSW          =      60
 E-fermi :   4.8362     XMU=     4.8362
   free  energy   TOTEN  =      -32.016527 eV
-convergence has been achieved
+reached required accuracy - stopping structural energy minimisation
+General timing and accounting informations for this job:
 """
 
 OSZICAR_OK = """
@@ -33,6 +35,73 @@ DAV:   1    -31.976812E+00   ...
 DAV:   2    -32.016527E+00   ...
    1 F= -.32016527E+02 E0= -.32016527E+02  d E =-.320165E+02
 """
+
+
+def _verified_output(*, nsw=0, ibrion=-1, stop=""):
+    return (f"EDIFF=1e-5 NELM=60 NSW={nsw} IBRION={ibrion}\n"
+            "free energy TOTEN = -10 eV\n" + stop
+            + "\nGeneral timing and accounting informations for this job:\n")
+
+
+@pytest.mark.parametrize("algorithm", ["DAV", "RMM", "CG", "DMP", "SDA"])
+def test_verification_accepts_complete_electronic_evidence(algorithm):
+    osz = f" {algorithm}: 5 -10 -1e-7 -2e-7 20 1e-6\n 1 F= -10 E0= -10\n"
+    assert verify_run(_verified_output(), osz)["status"] == "completed"
+
+
+@pytest.mark.parametrize("outcar,oszicar,expected", [
+    ("free energy TOTEN = -10 eV", "", "unknown"),
+    (_verified_output(), "", "unknown"),
+    (_verified_output(), "DAV: 60 -10 -0.1 -0.2 20 1e-6\n1 F= -10", "not_converged"),
+    (_verified_output(), "DAV: 5 -10 -1e-7 -0.2 20 1e-6\n1 F= -10", "not_converged"),
+    (_verified_output(), "DAV: 5 -10 -1e-7 -1e-7 20 1e-6\n", "unknown"),
+    (_verified_output(nsw=1, ibrion=2), "DAV: 5 -10 -1e-7 -1e-7 20 1e-6\n1 F= -10", "not_converged"),
+    (_verified_output(nsw=10, ibrion=2), "DAV: 5 -10 -1e-7 -1e-7 20 1e-6\n1 F= -10", "unknown"),
+    (_verified_output() + "Unrecoverable error", "", "failed"),
+])
+def test_verification_never_promotes_partial_results(outcar, oszicar, expected):
+    assert verify_run(outcar, oszicar)["status"] == expected
+
+
+def test_ionic_stop_does_not_substitute_for_electronic_convergence():
+    out = _verified_output(nsw=10, ibrion=2,
+                           stop="reached required accuracy - stopping structural energy minimisation")
+    assert verify_run(out, "DAV: 60 -10 -0.1 -0.2 20 1e-6\n1 F= -10")["status"] == "not_converged"
+    assert verify_run(out, "DAV: 5 -10 -1e-7 -2e-7 20 1e-6\n1 F= -10")["status"] == "completed"
+
+
+def test_band_failure_has_existing_dependency_rule_and_smearing_evidence():
+    result = verify_run("charge density could not be read from CHGCAR", "",
+                        incar_text="ICHARG=11\nISMEAR=-5", kpoints_text="band\n10\nLine-mode\nReciprocal\n",
+                        source_files=["INCAR", "KPOINTS"], job_kind="band")
+    assert result["status"] == "failed"
+    assert {i["rule_id"] for i in result["issues"]} == {
+        "KPOINTS_LINE_MODE_WITHOUT_STATIC", "BAND_LINE_MODE_TETRAHEDRON"}
+    assert result["evidence"][0]["file"] == "OUTCAR"
+    assert any("CHGCAR" in r for r in result["recommendations"])
+
+
+def test_loose_convergence_words_are_not_a_stop_marker():
+    assert not parse_outcar("convergence not achieved\nfree energy TOTEN = -10").converged
+
+
+def test_fixed_charge_band_still_requires_electronic_and_termination_evidence():
+    output = _verified_output() + "ICHARG=11\n"
+    osz = "RMM: 8 -10 -1e-7 -2e-7 20 1e-6\n1 F= -10\n"
+    assert verify_run(output, osz, job_kind="band")["status"] == "completed"
+    assert verify_run(output, "", job_kind="band")["status"] == "unknown"
+
+
+def test_editable_incar_does_not_override_missing_executed_ediff():
+    output = _verified_output().replace("EDIFF=1e-5", "")
+    osz = "DAV: 5 -10 -1e-7 -2e-7 20 1e-6\n1 F= -10\n"
+    assert verify_run(output, osz, incar_text="EDIFF=1e-4")["status"] == "unknown"
+
+
+def test_fortran_ediff_exponent_is_not_truncated_to_a_looser_tolerance():
+    output = _verified_output().replace("1e-5", "0.1D-04")
+    osz = "DAV: 5 -10 -1e-3 -2e-3 20 1e-6\n1 F= -10\n"
+    assert verify_run(output, osz)["status"] == "not_converged"
 
 
 # ---------------- OUTCAR ----------------

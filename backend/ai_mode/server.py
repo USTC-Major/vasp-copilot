@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import queue
 import threading
 from contextlib import asynccontextmanager
 
@@ -42,15 +43,15 @@ from .settings.project import (
 )
 from . import chat as _chat
 from .consent import get_card as _get_consent_card
+from .consent import list_cards as _list_consent_cards
 from .consent import resolve_card as _resolve_consent_card
 from .consent import task_lock as _task_state_lock
 from .projects import get_project_store as _get_project_store
 from .storage import ensure_layout
+from .streaming import ACTIVE_STOPS as _ACTIVE_STOPS
+from .streaming import ChatRun, GenerationBusy, generation_status, request_stop
 
 logger = logging.getLogger("ai_mode")
-
-#: 正在进行的流式生成任务停止标记（键=(project_id, task_id)）。
-_ACTIVE_STOPS: dict[tuple[str, str], bool] = {}
 
 APP_TITLE = "VASP-Doctor 智能模式"
 APP_VERSION = "0.2.1"
@@ -602,8 +603,15 @@ def create_ai_mode_app() -> FastAPI:
             return resp
         if _get_project_store().get_task(project_id, task_id) is None:
             return _project_404("计算任务不存在或被删除")
+        # Read running state before messages: completion may happen between the
+        # reads. Returning running=true with final messages causes one harmless
+        # extra poll; running=false with pre-completion messages loses the final
+        # result until a manual reload.
+        generation = generation_status(_get_project_store(), project_id, task_id)
         return {"mode": "ai",
-                "messages": _get_project_store().list_messages(project_id, task_id)}
+                "messages": _get_project_store().list_messages(project_id, task_id),
+                "generation": generation,
+                "pending_actions": _list_consent_cards(_get_project_store(), project_id, task_id)}
 
     @app.post("/ai/v1/projects/{project_id}/tasks/{task_id}/messages")
     async def send_message(project_id: str, task_id: str, payload: dict):
@@ -617,11 +625,27 @@ def create_ai_mode_app() -> FastAPI:
         content = str(payload.get("content") or "").strip()
         if not content:
             return _bad("消息内容不能为空")
-        store.append_message(project_id, task_id, "user", content)
-        answer = await asyncio.to_thread(_chat.reply, store, project_id,
-                                         task_id, content)
-        store.append_message(project_id, task_id, "assistant", answer)
-        return {"mode": "ai", "answer": answer}
+        try:
+            run = ChatRun(store, project_id, task_id)
+        except GenerationBusy:
+            return JSONResponse(status_code=409, content={"mode": "ai", "error": {
+                "code": "GENERATION_RUNNING", "message": "该任务仍在生成，请等待或明确停止。"}})
+        # Sync callers share the same producer lifetime and exclusion as SSE.
+        # Cancellation of an HTTP request must not release its task early.
+        try:
+            store.append_message(project_id, task_id, "user", content)
+        except Exception:
+            run.finish("", state="error")
+            raise
+
+        def _sync_events():
+            answer = _chat.reply(store, project_id, task_id, content, should_stop=run.should_stop)
+            yield {"type": "stopped" if run.should_stop() else "done", "answer": answer}
+
+        run.detach()
+        threading.Thread(target=run.produce, args=(_sync_events,), daemon=True).start()
+        await asyncio.to_thread(run.finished.wait)
+        return {"mode": "ai", "answer": run.answer}
 
     @app.post("/ai/v1/projects/{project_id}/tasks/{task_id}/messages/stream")
     async def send_message_stream(project_id: str, task_id: str,
@@ -637,69 +661,36 @@ def create_ai_mode_app() -> FastAPI:
         content = str(payload.get("content") or "").strip()
         if not content:
             return _bad("消息内容不能为空")
-        store.append_message(project_id, task_id, "user", content)
-        stop_key = (project_id, task_id)
-        _ACTIVE_STOPS[stop_key] = False
+        try:
+            run = ChatRun(store, project_id, task_id)
+        except GenerationBusy:
+            return JSONResponse(status_code=409, content={"mode": "ai", "error": {
+                "code": "GENERATION_RUNNING", "message": "该任务仍在生成，请等待或明确停止。"}})
+        try:
+            store.append_message(project_id, task_id, "user", content)
+        except Exception:
+            run.finish("", state="error")
+            raise
 
-        def _should_stop() -> bool:
-            return bool(_ACTIVE_STOPS.get(stop_key))
+        def _events():
+            return _chat.reply_stream(store, project_id, task_id, content,
+                                      should_stop=run.should_stop)
 
-        # 生产/回复在后台线程运行，避免同步消费 reply_stream 阻塞事件循环，
-        # 使「停止」「卡片同意/拒绝」等 POST 始终能立即打断当前运行。
-        loop = asyncio.get_running_loop()
-        queue: asyncio.Queue = asyncio.Queue(maxsize=256)
-
-        def _put(event: dict) -> None:
-            try:
-                loop.call_soon_threadsafe(queue.put_nowait, event)
-            except BaseException:
-                pass
-
-        def _produce() -> None:
-            final = ""
-            thinking_parts: list[str] = []
-            try:
-                for ev in _chat.reply_stream(store, project_id, task_id,
-                                             content, should_stop=_should_stop):
-                    ev = dict(ev)
-                    kind = ev.get("type")
-                    if kind == "thinking":
-                        thinking_parts.append(ev.get("text") or "")
-                    elif kind in ("done", "stopped"):
-                        final = ev.get("answer") or ""
-                    elif kind == "error" and not final:
-                        final = ev.get("message") or ""
-                    _put(ev)
-            finally:
-                if final.strip():
-                    try:
-                        store.append_message(project_id, task_id, "assistant",
-                                             final.strip(),
-                                             thinking="".join(thinking_parts).strip())
-                    except Exception:
-                        pass
-                _put({"type": "_end"})
-
-        thread = threading.Thread(target=_produce, daemon=True)
-        thread.start()
+        threading.Thread(target=run.produce, args=(_events,), daemon=True).start()
 
         async def _iter():
             try:
                 while True:
                     try:
-                        ev = await asyncio.wait_for(queue.get(), 20)
-                    except asyncio.TimeoutError:
-                        yield "data: : keepalive\n\n"
+                        ev = await asyncio.to_thread(run.events.get, True, 1)
+                    except queue.Empty:
+                        yield ": keepalive\n\n"
                         continue
                     if ev.get("type") == "_end":
                         break
                     yield "data: " + json.dumps(ev, ensure_ascii=False) + "\n\n"
             finally:
-                # 客户端断开/自然结束都要停止后台线程并清理标记，
-                # 避免残留影响下一次同 key 请求。
-                _ACTIVE_STOPS[stop_key] = True
-                thread.join(timeout=5)
-                _ACTIVE_STOPS.pop(stop_key, None)
+                run.detach()
 
         return StreamingResponse(_iter(), media_type="text/event-stream",
                                  headers={"Cache-Control": "no-cache",
@@ -716,10 +707,7 @@ def create_ai_mode_app() -> FastAPI:
         store = _get_project_store()
         if store.get_task(project_id, task_id) is None:
             return _project_404("计算任务不存在或被删除")
-        stop_key = (project_id, task_id)
-        active = stop_key in _ACTIVE_STOPS
-        if active:
-            _ACTIVE_STOPS[stop_key] = True
+        active = request_stop(project_id, task_id)
         return {"mode": "ai", "stopped": active}
 
     @app.post("/ai/v1/projects/{project_id}/tasks/{task_id}/messages/consent")

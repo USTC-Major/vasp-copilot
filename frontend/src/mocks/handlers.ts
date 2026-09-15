@@ -548,7 +548,7 @@ export const aiHandlers = [
     const approved = !!body.approved;
     return HttpResponse.json({
       mode: "ai", ok: true, kind: "workspace", approved,
-      result: approved ? "已授权本批操作，后续同类操作将直接执行" : "已拒绝本批操作，后续同类操作不再弹卡",
+      result: approved ? "已批准本次操作；后续操作仍需单独确认" : "已拒绝本次操作；未执行任何变更",
     });
   }),
   http.get(`${AI_BASE}/projects/:projectId/tasks/:taskId/detail`, async ({ params }) => {
@@ -643,7 +643,7 @@ export const aiHandlers = [
 ];
 
 // 并入主 handlers：MSW server（测试）与 browser（?mock=1 演示）均依赖它。
-aiDemo.enqueue('本机等待队列未满时自动提交；此处演示队列界面。', 'Fe2O3 能带计算');
+aiDemo.enqueue('本机等待队列演示；条件满足后重新预检并确认提交。', 'Fe2O3 能带计算');
 if (aiDemo.waiting.length === 1) {
   aiDemo.enqueue('超算作业数已达上限，排队等待空位。', 'Fe2O3 DOS 计算');
   aiDemo.enqueue('排队顺序按确认先后回填。', 'Fe2O3 band 结构精修');

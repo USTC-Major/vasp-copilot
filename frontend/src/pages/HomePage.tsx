@@ -64,7 +64,7 @@ const HomePage: React.FC = () => {
               <div style={{ textAlign: 'center' }}>
                 <Title level={3} style={{ marginTop: 4, marginBottom: 8, fontWeight: 700 }}>智能模式</Title>
                 <Paragraph type="secondary" style={{ fontSize: 14, marginBottom: 16, textAlign: 'left' }}>
-                以项目为中心：创建项目，在项目内发起计算任务对话，Agent 自动排程并生成输入文件（平行任务并行执行，递进任务等待前置成功后再执行）。配套的全局设置（齿轮）在右上角。
+                以项目为中心：Agent 协助规划、排程并生成输入文件；任何文件写入与作业提交都按本次精确内容确认。递进任务等待前置成功后重新预检与确认，不会自动补提。配套的全局设置（齿轮）在右上角。
                 </Paragraph>
                 <Button type="primary" size="large" block icon={<ArrowRightOutlined />} onClick={() => navigate('/ai')}>
                   进入智能模式

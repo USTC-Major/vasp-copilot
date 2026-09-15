@@ -166,7 +166,7 @@ const AiProjectsPage: React.FC = () => {
         <Text strong>新建项目</Text>
       </Card>
 
-      {/* 等待空位队列（对应工作流 §9：无空位时按确认先后排队，补提自动提交） */}
+      {/* 等待空位队列：条件满足后重新预检与确认，不自动补提。 */}
       <Card
         style={{ marginTop: 20 }}
         title={
@@ -178,7 +178,7 @@ const AiProjectsPage: React.FC = () => {
         }
       >
         {queue.length === 0 ? (
-          <Empty description="当前无排队作业 — 有空位时自动提交" />
+          <Empty description="当前无排队作业 — 前置完成或有空位后仍会重新预检并确认提交" />
         ) : (
           <List
             size="small"
@@ -193,7 +193,7 @@ const AiProjectsPage: React.FC = () => {
                       <Tag color="default" style={{ marginLeft: 8, fontSize: 12 }}>排队中</Tag>
                     </div>
                     <Text type="secondary" style={{ fontSize: 12 }}>
-                      {entry.reason} · 排队时间 {formatTime(entry.queued_at)} · 有空位后自动提交
+                      {entry.reason} · 排队时间 {formatTime(entry.queued_at)} · 条件满足后重新预检并确认提交
                     </Text>
                   </div>
                 </Space>

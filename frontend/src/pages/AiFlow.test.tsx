@@ -7,8 +7,10 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { delay, http, HttpResponse } from 'msw';
 import { routes } from '../router';
 import { aiDemo } from '../mocks/aiStore';
+import { server } from '../mocks/server';
 import SecretInput from '../components/ai/SecretInput';
 
 function renderPath(path: string) {
@@ -36,6 +38,18 @@ describe('AI 前端整合（M12）', () => {
     expect(screen.getAllByText('新建项目').length).toBeGreaterThan(0);
     expect(screen.getByText('等待空位队列')).toBeInTheDocument();
     expect(screen.getAllByText('排队中').length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/条件满足后重新预检并确认提交/).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/有空位后自动提交/)).not.toBeInTheDocument();
+  });
+
+  it('空等待队列不承诺自动提交', async () => {
+    server.use(
+      http.get('/ai/v1/jobs/waiting', () => HttpResponse.json({ waiting: [], count: 0 })),
+    );
+    renderPath('/ai');
+
+    expect(await screen.findByText(/前置完成或有空位后仍会重新预检并确认提交/)).toBeInTheDocument();
+    expect(screen.queryByText(/有空位时自动提交/)).not.toBeInTheDocument();
   });
 
   it('新建项目 → 进入项目页（任务栏/聊天/额外设置入口可见）', async () => {
@@ -78,6 +92,72 @@ describe('AI 前端整合（M12）', () => {
     expect(input).toBeEnabled();
   });
 
+  it('SSE 提前 EOF 时保留可见错误，不把断流当成成功', async () => {
+    server.use(
+      http.post('/ai/v1/projects/:projectId/tasks/:taskId/messages/stream', () => (
+        new HttpResponse('data: {"type":"answer","text":"未完成的片段"}\n\n', {
+          headers: { 'Content-Type': 'text/event-stream' },
+        })
+      )),
+    );
+    const user = userEvent.setup();
+    renderPath('/ai/projects/prj_001');
+    await screen.findByText('结构优化 + 静态 + DOS');
+    await user.type(await screen.findByPlaceholderText(/描述计算需求/), '测试断流');
+    await user.click(screen.getByRole('button', { name: /发送/ }));
+
+    expect(await screen.findByText('回复连接中断')).toBeInTheDocument();
+    expect(screen.getByText(/未收到完成标记/)).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /发送/ }, { timeout: 5000 })).toBeInTheDocument();
+  });
+
+  it('业务 error 后继续接收 done，并使用生成提示而非连接故障', async () => {
+    server.use(
+      http.post('/ai/v1/projects/:projectId/tasks/:taskId/messages/stream', () => (
+        new HttpResponse([
+          'data: {"type":"error","message":"模型未配置"}\n\n',
+          'data: {"type":"done","answer":"模型未配置"}\n\n',
+        ].join(''), { headers: { 'Content-Type': 'text/event-stream' } })
+      )),
+    );
+    const user = userEvent.setup();
+    renderPath('/ai/projects/prj_001');
+    await screen.findByText('结构优化 + 静态 + DOS');
+    await user.type(await screen.findByPlaceholderText(/描述计算需求/), '测试业务错误');
+    await user.click(screen.getByRole('button', { name: /发送/ }));
+
+    expect(await screen.findByText('回复生成提示')).toBeInTheDocument();
+    expect(screen.getAllByText('模型未配置').length).toBeGreaterThan(0);
+    expect(screen.queryByText('回复连接中断')).not.toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /发送/ })).toBeInTheDocument();
+  });
+
+  it('刷新后恢复后台生成状态和持久化授权卡', async () => {
+    server.use(
+      http.get('/ai/v1/projects/:projectId/tasks/:taskId/messages', () => HttpResponse.json({
+        messages: [],
+        generation: { running: true },
+        pending_actions: [{
+          card_id: 'persisted-card',
+          tool: 'write_file',
+          args: { path: 'INCAR' },
+          risk: 'medium',
+          reason: '写入前需确认本次精确内容。',
+          options: ['同意本次', '拒绝'],
+          batch_key: 'write|INCAR|persisted',
+          kind: 'workspace',
+          summary: '恢复的 INCAR 写入确认',
+        }],
+      })),
+    );
+    renderPath('/ai/projects/prj_001');
+
+    expect(await screen.findByText('后台仍在生成回复')).toBeInTheDocument();
+    expect(await screen.findByText('恢复的 INCAR 写入确认')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText(/描述计算需求/)).toBeDisabled();
+    expect(screen.getByRole('button', { name: /停止/ })).toBeInTheDocument();
+  });
+
   it('进度页展示作业时间线', async () => {
     renderPath('/ai/projects/prj_001/progress/tsk_001');
     // 等待 GET .../detail 的 flow 数据真正渲染出来（作业链最深层 key）
@@ -118,6 +198,67 @@ describe('AI 前端整合（M12）', () => {
       const input = screen.getByPlaceholderText(/描述计算需求/) as HTMLInputElement;
       expect(input).toBeEnabled();
     });
+  });
+
+  it('授权响应缺少结果文案时明确仅批准本次操作', async () => {
+    server.use(
+      http.post('/ai/v1/projects/:projectId/tasks/:taskId/messages/consent', () => HttpResponse.json({
+        mode: 'ai', ok: true, kind: 'workspace', approved: true, result: '',
+      })),
+    );
+    const user = userEvent.setup();
+    renderPath('/ai/projects/prj_001');
+    await screen.findByText('结构优化 + 静态 + DOS');
+    await user.type(await screen.findByPlaceholderText(/描述计算需求/), '请生成 INCAR 草稿并弹卡');
+    await user.click(screen.getByRole('button', { name: /发送/ }));
+    await user.click(await screen.findByRole('button', { name: '同意本次' }));
+
+    expect(await screen.findByText('已批准本次操作；后续操作仍需单独确认')).toBeInTheDocument();
+  });
+
+  it('授权请求完成前切换任务，不让旧回调污染新任务界面', async () => {
+    const card = {
+      card_id: 'switch-card',
+      tool: 'write_file',
+      args: { path: 'INCAR' },
+      risk: 'medium',
+      reason: '写入前需确认本次精确内容。',
+      options: ['同意本次', '拒绝'],
+      batch_key: 'write|INCAR|switch',
+      kind: 'workspace',
+      summary: '待切换授权卡',
+    };
+    let oldTaskMessageGets = 0;
+    let consentFinished = false;
+    server.use(
+      http.get('/ai/v1/projects/:projectId/tasks/:taskId/messages', ({ params }) => {
+        const taskId = String(params.taskId);
+        if (taskId === 'tsk_002') oldTaskMessageGets += 1;
+        return HttpResponse.json({
+          messages: [],
+          generation: { running: false },
+          pending_actions: taskId === 'tsk_002' ? [card] : [],
+        });
+      }),
+      http.post('/ai/v1/projects/:projectId/tasks/:taskId/messages/consent', async () => {
+        await delay(180);
+        consentFinished = true;
+        return HttpResponse.json({
+          mode: 'ai', ok: true, kind: 'workspace', approved: true,
+          result: '已批准本次操作；后续操作仍需单独确认',
+        });
+      }),
+    );
+    const user = userEvent.setup();
+    renderPath('/ai/projects/prj_001');
+    await screen.findByText('待切换授权卡');
+    await user.click(screen.getByRole('button', { name: '同意本次' }));
+    await user.click(screen.getByText('结构优化 + 静态 + DOS'));
+
+    expect(await screen.findByRole('heading', { name: '结构优化 + 静态 + DOS' })).toBeInTheDocument();
+    await waitFor(() => expect(consentFinished).toBe(true));
+    expect(screen.queryByText('待切换授权卡')).not.toBeInTheDocument();
+    expect(oldTaskMessageGets).toBe(1);
   });
 
   it('设置页渲染全局设置表单与连通测试入口', async () => {

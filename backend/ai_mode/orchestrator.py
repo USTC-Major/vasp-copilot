@@ -9,6 +9,7 @@ capacity or dependency changes never trigger automatic submission.
 from __future__ import annotations
 
 import hashlib
+import copy
 import json
 import logging
 import re
@@ -21,7 +22,7 @@ from .config import AiModeConfig, execution_mode
 from .consent import task_lock as _task_lock
 from .jobs.scheduler import parse_slurm_output
 from .projects import ProjectStore
-from .report.extract import summarize_run
+from .report.extract import summarize_run, verify_run
 from .report.render import render_report
 from .schemas import JobEntry, JobStatus as SessionJobStatus, \
     PlanSnapshot, PlanStep, RequirementSnapshot, Session
@@ -193,6 +194,11 @@ class Orchestrator:
                       requirement: str) -> str:
         """确认「开始计算流程」：建 flow 并推进到第一个决策点。"""
         task = store.get_task(project_id, task_id) or {}
+        previous = task.get("flow") or {}
+        if any(j.get("status") in {"submitted", "queued", "running", "unknown", "failed", "not_converged"}
+               or j.get("attempt_history") or j.get("submission_state") == "unknown"
+               for j in previous.get("plan", {}).get("jobs", [])):
+            return "当前流程含在途、未知或失败/恢复作业；请先 diagnose_job，明确失败后由用户确认 retry_job，不能直接覆盖历史重新计算。"
         goal = (requirement or "").strip() or self._default_goal(task)
         flow = {
             "phase": "running",
@@ -372,7 +378,7 @@ class Orchestrator:
                     script_name = find_remote_submit_script(self.hpc, calc)
                     has_script = bool(script_name)
                     if script_name:
-                        actual = {"source": "remote", "script_name": script_name,
+                        actual = {"source": "remote", "directory": calc, "script_name": script_name,
                                   **fingerprint_remote_submit_script(
                                       self.hpc, calc, script_name)}
                 except RuntimeError:
@@ -382,7 +388,7 @@ class Orchestrator:
                 if has_script:
                     job_local = self._contained_job_dir(local_dir, job["key"]) or local_dir.resolve()
                     script = resolve_user_submit_script(job_local)
-                    actual = {"source": "local", "script_name": script.name,
+                    actual = {"source": "local", "directory": str(job_local), "script_name": script.name,
                               **fingerprint_local_submit_script(script)}
             level = "ok" if has_script else "error"
             msg = "提交脚本(*.sh) 存在" if has_script else (
@@ -393,7 +399,7 @@ class Orchestrator:
             attestation = (flow.get("script_attestations") or {}).get(job["key"])
             attested = (isinstance(attestation, dict) and isinstance(actual, dict)
                         and all(attestation.get(key) == actual.get(key)
-                                for key in ("source", "script_name",
+                                for key in ("source", "directory", "script_name",
                                             "normalized_path", "sha256", "size")))
             issues.append({"job": job["key"], "file": "提交脚本认领",
                            "level": "ok" if attested else "error",
@@ -536,6 +542,7 @@ class Orchestrator:
                 if not bad:
                     continue
                 j["status"] = "blocked"
+                j["blocked_by_dependency"] = True
                 j["wait_reason"] = (f"前置 {'、'.join(bad)} 失败或已阻断，"
                                     "禁止提交")
                 if j["key"] in (flow.get("waiting") or []):
@@ -658,6 +665,16 @@ class Orchestrator:
             try:
                 calc, script_name = self._verify_submit_target(
                     flow, remote, local_dir, job)
+                # Bind existing outputs to this attempt so an old successful
+                # OUTCAR cannot complete a newly submitted job.
+                baseline = {}
+                for name in ("OUTCAR", "OSZICAR"):
+                    info = self.hpc.stat(f"{calc}/{name}")
+                    if info and info.get("size", 0) > 0:
+                        data = self.hpc.read_file(f"{calc}/{name}")
+                        raw = data if isinstance(data, str) else bytes(data).decode("utf-8", "replace")
+                        baseline[name] = hashlib.sha256(raw.encode()).hexdigest()
+                job["output_baseline"] = baseline
             except Exception as exc:  # noqa: BLE001
                 submitted.append(f"- {job['key']} 预提交校验失败：{exc}（sbatch=0）")
                 continue
@@ -835,9 +852,19 @@ class Orchestrator:
                     "配置 SSH 后回到本会话即可看到实况与报告。")
         account = self.cfg.ssh_username
         try:
-            code, out, _ = self.hpc.run(self._squeue_command(account))
+            code, out, err = self.hpc.run(self._squeue_command(account))
+            if code != 0:
+                raise RuntimeError(f"squeue exit={code}: {(err or '')[:200]}")
+            for row in (out or "").splitlines():
+                tokens = row.split()
+                if tokens and tokens[0].upper() != "JOBID" and (
+                        len(tokens) < 5 or not re.fullmatch(r"[0-9][0-9_\[\],%-]*", tokens[0])):
+                    raise ValueError("unrecognized squeue output")
         except Exception as exc:  # noqa: BLE001
-            return f"查询 squeue 失败（{type(exc).__name__}），进度未知。"
+            flow["monitor_error"] = {"at": _now_iso(), "message": str(exc)[:500]}
+            self._save(store, project_id, task_id, flow)
+            return f"查询 squeue 失败（{type(exc).__name__}），进度未知；保留作业状态，稍后重查，禁止重提。"
+        flow.pop("monitor_error", None)
         states = _remote_state_map(out or "")
         pending, running = parse_slurm_output(out or "")
         free = max(0, self.cfg.max_jobs - pending - running)
@@ -849,10 +876,13 @@ class Orchestrator:
                 progress.append(
                     f"{job['key']}：{job.get('wait_reason') or '等待空位'}")
                 continue
-            if status not in ("submitted", "queued", "running"):
+            if status not in ("submitted", "queued", "running", "unknown"):
                 progress.append(f"{job['key']}：{status}")
                 continue
             sid = str(job.get("slurm_id") or "")
+            if not sid or job.get("submission_state") == "unknown":
+                progress.append(f"{job['key']}：提交结果未知，需人工核对作业号，禁止重提")
+                continue
             token = states.get(sid)
             if token in ("PD", "PENDING"):
                 job["status"] = "queued"
@@ -860,13 +890,30 @@ class Orchestrator:
             elif token in ("R", "RUN", "RUNNING"):
                 job["status"] = "running"
                 progress.append(f"{job['key']}：运行中（{sid}）")
-            else:
+            elif token is None or token in {"CD", "COMPLETED", "F", "FAILED", "CA", "CANCELLED", "TO", "TIMEOUT", "OOM", "OUT_OF_MEMORY", "NF", "NODE_FAIL"}:
                 result = self._finalize_job(flow, job)
+                if token in {"F", "FAILED", "CA", "CANCELLED", "TO", "TIMEOUT", "OOM", "OUT_OF_MEMORY", "NF", "NODE_FAIL"}:
+                    job["status"] = "failed"
+                    diagnosis = job.setdefault("diagnosis", {})
+                    diagnosis.update(status="failed", reason=f"Slurm 明确终态 {token}")
+                    diagnosis.setdefault("evidence", []).append({"file": "squeue", "text": f"{sid} {token}"})
+                    (flow.get("extractions", {}).get(job["key"], {}).get("outcar", {}))["converged"] = False
+                    diagnosis.setdefault("recommendations", []).append("核对 Slurm 失败日志；保留输出，用户要求重试时使用 retry_job。")
+                    result = diagnosis["reason"]
                 progress.append(f"{job['key']}：{result}")
+            else:
+                job["queue_state"] = token
+                progress.append(f"{job['key']}：调度状态 {token}，继续等待核验（{sid}）")
 
         # P0: monitoring is read-only with respect to submission. Dependency
         # completion never authorizes a later sbatch.
         stalled = self._cascade_blocks(flow)
+        gate = self._gate(flow)
+        for job in flow["plan"]["jobs"]:
+            if job.get("status") in {"waiting", "draft"}:
+                job["wait_reason"] = ("依赖已满足；需重新预检并确认提交"
+                                      if job["key"] in gate.eligible else gate.blocked.get(job["key"], "等待确认"))
+        flow["waiting"] = [j["key"] for j in flow["plan"]["jobs"] if j.get("status") == "waiting"]
         if flow.get("waiting"):
             progress.insert(0, "等待作业不会自动补提；条件满足后需重新预检并逐次确认")
         for note in stalled:
@@ -878,7 +925,8 @@ class Orchestrator:
                                 "canceled", "not_found", "skipped", "blocked")
             for j in flow["plan"]["jobs"])
         if all_done:
-            flow["phase"] = "done"
+            flow["phase"] = ("blocked" if any(j.get("status") in {"failed", "not_converged", "blocked"}
+                                             for j in flow["plan"]["jobs"]) else "done")
             self._cleanup_temp_logs(flow)
             report = self._render_report(store, project_id, task_id, flow)
             flow["report"] = report
@@ -896,32 +944,93 @@ class Orchestrator:
     def _finalize_job(self, flow: dict, job: dict) -> str:
         remote = flow.get("hpc_dir") or ""
         # M52：按作业定位计算目录（嵌套 key 如 relax/static 也能读到自己的 OUTCAR）
-        local_dir = (Path(flow["local_dir"])
-                     if flow.get("local_dir") else None)
+        local_dir = Path(flow.get("local_dir") or ".")
         base = (self._job_calc_dir(remote, local_dir, job["key"]).rstrip("/")
                 if remote else "")
+        texts, sources, errors = {}, [], []
+        for name in ("OUTCAR", "OSZICAR", "INCAR", "KPOINTS"):
+            try:
+                data = self.hpc.read_file(f"{base}/{name}")
+                texts[name] = data if isinstance(data, str) else bytes(data).decode("utf-8", "replace")
+                sources.append(name)
+            except Exception as exc:  # noqa: BLE001
+                texts[name] = ""
+                errors.append({"file": name, "text": f"读取不可用：{type(exc).__name__}"})
         try:
-            outcar = self.hpc.read_file(f"{base}/OUTCAR")
-            oszi = self.hpc.read_file(f"{base}/OSZICAR")
-        except Exception:  # noqa: BLE001
-            job["status"] = "failed"
-            return "失败（结果文件不可读，作业可能失败/被取消）"
-        text_out = bytes(outcar).decode("utf-8", "replace")
-        text_os = bytes(oszi).decode("utf-8", "replace")
+            info = self.hpc.stat(f"{base}/CHGCAR")
+            if info and info.get("size", 0) > 0:
+                sources.append("CHGCAR")
+        except Exception as exc:  # noqa: BLE001
+            errors.append({"file": "CHGCAR", "text": f"状态未知：{type(exc).__name__}"})
+        text_out, text_os = texts["OUTCAR"], texts["OSZICAR"]
         extraction = summarize_run(text_out, text_os)
-        flow["extractions"][job["key"]] = extraction
-        oc = extraction.get("outcar") or {}
-        if oc.get("unrecoverable_error"):
-            job["status"] = "failed"
-            return "失败（OUTCAR 含 Unrecoverable error）"
-        if oc.get("converged"):
-            job["status"] = "completed"
-            return "已完成（已收敛）"
-        if oc.get("n_ionic_steps", 0) > 0:
-            job["status"] = "completed"
-            return "已完成"
-        job["status"] = "failed"
-        return "完成但 OUTCAR 中未提取到有效结果"
+        diagnosis = verify_run(text_out, text_os, incar_text=texts["INCAR"],
+                               kpoints_text=texts["KPOINTS"], source_files=sources,
+                               job_kind=" ".join((str(job.get("kind") or ""),
+                                                  str(job.get("label") or job["key"].rsplit("/", 1)[-1]))))
+        diagnosis["evidence"].extend(errors)
+        diagnosis["checked_at"] = _now_iso()
+        extraction["verification"] = diagnosis
+        extraction["output_sha256"] = {name: hashlib.sha256(texts[name].encode()).hexdigest()
+                                        for name in ("OUTCAR", "OSZICAR") if name in sources}
+        baseline = job.get("output_baseline") or {}
+        if not baseline and job.get("attempt_history"):
+            baseline = (job["attempt_history"][-1].get("extraction") or {}).get("output_sha256") or {}
+        if baseline.get("OUTCAR") and baseline["OUTCAR"] == extraction["output_sha256"].get("OUTCAR"):
+            diagnosis.update(status="unknown", reason="OUTCAR 与提交前/上一尝试相同，尚无本次作业的新结果证据")
+            diagnosis["recommendations"] = ["保留旧输出，继续查询当前作业及调度日志；禁止自动重提。"]
+            diagnosis["evidence"].append({"file": "OUTCAR", "text": "SHA-256 与先前输出一致"})
+        # Reports must not turn an ionic stop marker into an overall success.
+        extraction["outcar"]["converged"] = diagnosis["status"] == "completed"
+        flow.setdefault("extractions", {})[job["key"]] = extraction
+        job["diagnosis"] = diagnosis
+        job["status"] = diagnosis["status"]
+        prefix = "已完成（已收敛）；" if diagnosis["status"] == "completed" else ""
+        return prefix + diagnosis["reason"] + "；" + "；".join(diagnosis["recommendations"])
+
+    def retry_job(self, store, project_id: str, task_id: str, action: dict) -> str:
+        """Reset only a confirmed terminal failure; never submit or touch outputs."""
+        from .consent import get_card
+        with _task_lock(project_id, task_id):
+            saved = get_card(store, project_id, task_id, action.get("action_id", ""))
+            if saved != action or action.get("state") != "executing":
+                raise ValueError("retry_job requires a claimed one-use action")
+            binding = action.get("binding") or {}
+            if (binding.get("operation") != "retry_job" or binding.get("project_id") != project_id
+                    or binding.get("task_id") != task_id or binding.get("execution_mode") != self.execution_mode):
+                raise ValueError("retry binding mismatch")
+            flow = copy.deepcopy((store.get_task(project_id, task_id) or {}).get("flow") or {})
+            jobs = flow.get("plan", {}).get("jobs", [])
+            job = next((j for j in jobs if j["key"] == binding.get("job_key")), None)
+            if (not job or job.get("status") not in {"failed", "not_converged"}
+                    or job.get("submission_state") == "unknown" or job != binding.get("job_snapshot")):
+                raise ValueError("only the unchanged, diagnosed terminal failure can be retried")
+            if not job.get("diagnosis"):
+                raise ValueError("diagnose the failure before retrying")
+            history = job.setdefault("attempt_history", [])
+            history.append({"at": _now_iso(), "job": {k: copy.deepcopy(v) for k, v in job.items() if k != "attempt_history"},
+                            "extraction": copy.deepcopy(flow.get("extractions", {}).get(job["key"])),
+                            "recovery_action_id": action["action_id"]})
+            for key in ("slurm_id", "submission_state", "submission_action_id", "submission_error", "wait_reason", "queue_state", "diagnosis"):
+                job.pop(key, None)
+            job["status"] = "draft"
+            for child in jobs:
+                if child.get("status") == "blocked" and child.get("blocked_by_dependency"):
+                    child["status"] = "waiting"
+                    child.pop("blocked_by_dependency", None)
+            self._cascade_blocks(flow)
+            flow["waiting"] = [j["key"] for j in jobs if j.get("status") == "waiting"]
+            flow.update(phase="await_submit", draft=[], precheck={"ok": False, "issues": []}, script_attestations={}, report="")
+            # Keep audit records, but no old preview or grant can authorize a retry.
+            cons = flow.get("consent") or {}
+            for previous in (cons.get("actions") or {}).values():
+                if previous.get("state") in {"pending", "approved"}:
+                    previous.update(state="expired", result="恢复作业后需重新确认", resolved_at=_now_iso())
+            cons["cards"] = {}
+            flow["consent"] = cons
+            self._save(store, project_id, task_id, flow)
+            return (f"{job['key']} 已恢复为待准备；历史作业号、诊断和输出摘要已保留，原输出文件未改动。"
+                    "请先保全旧输出并核对修复方案；所有写入/上传仍需逐次授权，然后重新认领脚本、硬预检、生成草稿及确认提交。此次 sbatch=0。")
 
     def _render_report(self, store: ProjectStore, project_id: str,
                        task_id: str, flow: dict) -> str:
@@ -951,18 +1060,28 @@ class Orchestrator:
         report = render_report(session,
                                extractions=flow.get("extractions") or {},
                                refine=self._refine)
-        return report.markdown
+        diagnostics = []
+        for job in flow.get("plan", {}).get("jobs", []):
+            diagnosis = job.get("diagnosis") or {}
+            if not diagnosis:
+                continue
+            diagnostics.append(f"### {job['key']}：{diagnosis.get('reason', '')}")
+            diagnostics.extend(f"- 证据 {e.get('file', '')}:{e.get('line', '')} {e.get('text', e.get('message', ''))}"
+                               for e in diagnosis.get("evidence", []))
+            diagnostics.extend(f"- 建议：{r}" for r in diagnosis.get("recommendations", []))
+        return report.markdown + ("\n\n## 结果核验与恢复\n\n" + "\n".join(diagnostics) if diagnostics else "")
 
 
     def _refine(self, items) -> str:
         llm = self._llm()
         if llm is None:
             return ""
-        rows = [f"- {item.job.job_key}: {item.keyword_text}"
+        rows = [f"- {item.job.job_key} ({item.job.status}): {item.keyword_text}"
                 for item in items if item.keyword_text]
         if not rows:
             return ""
-        prompt = ("根据以下 VASP 作业提取结果，用一段中文总结本次计算结论：\n"
+        prompt = ("根据以下 VASP 作业提取结果，用一段中文总结本次计算结论。"
+                  "能量值不代表正常结束或收敛，不得把失败/未知作业描述为成功：\n"
                   + "\n".join(rows))
         try:
             result = llm.complete([{"role": "user", "content": prompt}],
@@ -985,6 +1104,6 @@ class Orchestrator:
 
     def _idle_text(self, flow: dict) -> str:
         if flow.get("report"):
-            return "本次计算已完成，报告如下。\n\n" + flow["report"] + \
-                "\n回复新的计算需求即可开始下一轮。"
+            return "本次流程的结果核验报告如下。\n\n" + flow["report"] + \
+                "\n失败作业先 diagnose_job；用户明确要求重试时使用 retry_job。"
         return "本次流程已停止（未生成报告）。回复新的计算需求即可重新发起。"

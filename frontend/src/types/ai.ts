@@ -261,6 +261,15 @@ export interface AiConsentCard {
   summary: string;
 }
 
+export interface AiMessagesResponse {
+  messages: AiMessage[];
+  // 旧版后端与离线演示数据可能不返回以下恢复态，故保持可选。
+  generation?: {
+    running: boolean;
+  };
+  pending_actions?: AiConsentCard[];
+}
+
 export type AiStreamEvent =
   | { type: "thinking"; text: string }
   | { type: "answer"; text: string }

@@ -407,6 +407,8 @@ export function useAiMessages(projectId: string | null, taskId: string | null) {
     queryKey: ['aiMessages', projectId, taskId],
     queryFn: () => aiApi.getMessages(projectId!, taskId!),
     enabled: !!projectId && !!taskId,
+    // 页面刷新或 SSE 断开后，只在后端仍生成时短轮询；完成后自动停止。
+    refetchInterval: (query) => query.state.data?.generation?.running ? 1500 : false,
   });
 }
 
