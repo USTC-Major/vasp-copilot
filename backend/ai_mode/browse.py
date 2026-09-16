@@ -261,7 +261,9 @@ def create_hpc_ssh(cfg: AiModeConfig):
     from .ssh.credentials import KeyringCredentialStore
 
     manager = SSHManager(credentials=KeyringCredentialStore(),
-                         connect_timeout=15)
+                         connect_timeout=15,
+                         known_hosts_path=cfg.ssh_known_hosts_path or None,
+                         identity_file=cfg.ssh_identity_file or None)
     manager.switch(host=cfg.ssh_host, username=cfg.ssh_username,
                    port=cfg.ssh_port or 22)
     return manager

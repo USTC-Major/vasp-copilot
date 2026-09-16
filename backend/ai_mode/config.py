@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Literal, Mapping
 
 from pydantic import BaseModel, Field
 
@@ -23,6 +23,7 @@ ENV_PREFIX = "AI_MODE_"
 
 #: 环境变量名 -> 配置字段名（扁平映射，免嵌套魔法）。
 _ENV_MAP: dict[str, str] = {
+    f"{ENV_PREFIX}SCHEDULER_BACKEND": "scheduler_backend",
     f"{ENV_PREFIX}MAX_JOBS": "max_jobs",
     f"{ENV_PREFIX}POLL_INTERVAL_SECONDS": "poll_interval_seconds",
     f"{ENV_PREFIX}BILLING_ESTIMATE_ENABLED": "billing_estimate_enabled",
@@ -40,6 +41,7 @@ _ENV_MAP: dict[str, str] = {
     f"{ENV_PREFIX}SSH_PORT": "ssh_port",
     f"{ENV_PREFIX}SSH_USERNAME": "ssh_username",
     f"{ENV_PREFIX}SSH_KNOWN_HOSTS_PATH": "ssh_known_hosts_path",
+    f"{ENV_PREFIX}SSH_IDENTITY_FILE": "ssh_identity_file",
     f"{ENV_PREFIX}MP_API_KEY": "mp_api_key",
 }
 
@@ -71,6 +73,8 @@ class AiModeConfig(BaseModel):
     ssh_port: int = 22
     ssh_username: str = ""
     ssh_known_hosts_path: str = ""
+    ssh_identity_file: str = ""  # Explicit backend-local key path, never key contents.
+    scheduler_backend: Literal["slurm", "paracloud"] = "slurm"
 
     mp_api_key: str = ""
 

@@ -391,7 +391,8 @@ def _ready_flow(store, pid, tid, hpc, jobs, *, root="/home/user/calc/r1"):
         "draft": drafts, "waiting": [], "extractions": {}, "report": "",
         "logs": [], "plan": {"strategy": "test", "jobs": jobs},
     }
-    checker = Orchestrator(AiModeConfig(data_dir=ws.parent), hpc=hpc)
+    # Precheck and submission must refer to the same fixture SSH identity.
+    checker = Orchestrator(AiModeConfig(data_dir=ws.parent, ssh_username="vaspuser"), hpc=hpc)
     checker._precheck(flow, ws, True, root, [])
     store.update_task(pid, tid, flow=flow)
     return flow

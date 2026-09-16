@@ -638,8 +638,10 @@ class ToolExecutor:
                                "message": "缺少有效脚本认领"})
             else:
                 script_records.append({"job_key": key, **actual_script})
+        from ..scheduler_profile import target_binding
         snapshot, digest = precheck_snapshot(
-            execution_mode=mode, inputs=input_records, scripts=script_records)
+            execution_mode=mode, inputs=input_records, scripts=script_records,
+            scheduler_target=target_binding(self.cfg))
         flow["precheck"] = {"ok": ok, "issues": issues, "hard": True,
                             "execution_mode": mode, "snapshot": snapshot,
                             "digest": digest}
@@ -1372,7 +1374,7 @@ class ToolExecutor:
                 "script_path": fingerprint["normalized_path"],
                 "attestation_action_id": attestation["action_id"],
                 "attestation_binding_hash": attestation["binding_hash"],
-                "submit_cmd": " ".join(submit_command(script_name)),
+                "submit_cmd": " ".join(submit_command(script_name, self.cfg.scheduler_backend)),
             })
             where = "超算作业目录" if source == "remote" else "本地计算目录"
             lines.append(f"- {job['key']}（{job.get('label') or job['key']}）"

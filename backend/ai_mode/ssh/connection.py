@@ -95,10 +95,12 @@ class SSHManager:
                  client_factory=None, connect_timeout: int = 15,
                  cmd_timeout: int = 60,
                  max_output_bytes: int = 64 * 1024,
-                 known_hosts_path: str | None = None):
+                 known_hosts_path: str | None = None,
+                 identity_file: str | None = None):
         self.credentials = credentials or MemoryCredentialStore()
         self.client_factory = client_factory
         self.known_hosts_path = known_hosts_path
+        self.identity_file = identity_file
         self.connect_timeout = connect_timeout
         self.cmd_timeout = cmd_timeout
         self.max_output_bytes = max_output_bytes
@@ -164,9 +166,19 @@ class SSHManager:
                 return self._client
             self._cleanup_client(self._client)
             self._client = None
+        key_options = {}
+        if self.identity_file:
+            identity = Path(self.identity_file).expanduser()
+            if not identity.is_absolute() or not identity.is_file():
+                raise SSHAuthError("SSH 密钥路径必须是后端本机现有文件的绝对路径")
+            key_options["key_filename"] = str(identity)
         client = (self.client_factory() if self.client_factory is not None
                   else _default_client_factory(self.known_hosts_path))
-        password = self.credentials.get_password(active["host"], active["username"])
+        # Explicit key authentication must not depend on password/keyring access
+        # or silently fall back to another identity. Encrypted keys require a
+        # separately designed local unlock flow; never solicit secrets in logs.
+        password = (None if key_options else
+                    self.credentials.get_password(active["host"], active["username"]))
         try:
             client.connect(
                 hostname=active["host"],
@@ -178,8 +190,10 @@ class SSHManager:
                 auth_timeout=self.connect_timeout,
                 look_for_keys=False,
                 allow_agent=False,
+                **key_options,
             )
         except SSHError:
+            self._cleanup_client(client)
             raise
         except Exception as exc:
             self._cleanup_client(client)

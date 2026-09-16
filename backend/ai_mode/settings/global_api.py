@@ -82,6 +82,8 @@ SETTABLE_FIELDS: dict[str, Callable[[object], Optional[str]]] = {
     "ssh_port": _port,
     "ssh_username": _str,
     "ssh_known_hosts_path": _str,
+    "ssh_identity_file": _str,
+    "scheduler_backend": _str,
     "mp_api_key": _str,
 }
 
@@ -124,6 +126,8 @@ def mask_config(config: AiModeConfig) -> dict:
             "port": config.ssh_port,
             "username": config.ssh_username,
             "known_hosts_path": config.ssh_known_hosts_path,
+            "identity_file": config.ssh_identity_file,
+            "scheduler_backend": config.scheduler_backend,
         },
         "materials_project": {"api_key": MASK if config.mp_api_key else ""},
     }
@@ -309,7 +313,8 @@ def _ssh_test(cfg: AiModeConfig) -> dict:
     try:
         manager = SSHManager(credentials=KeyringCredentialStore(),
                              connect_timeout=10,
-                             known_hosts_path=cfg.ssh_known_hosts_path or None)
+                             known_hosts_path=cfg.ssh_known_hosts_path or None,
+                             identity_file=cfg.ssh_identity_file or None)
         try:
             ok, msg = manager.test_connection(host=cfg.ssh_host,
                                               username=cfg.ssh_username,

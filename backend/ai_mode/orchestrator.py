@@ -20,7 +20,9 @@ from typing import Callable, Optional
 from .agent.tools import _label_slug
 from .config import AiModeConfig, execution_mode
 from .consent import task_lock as _task_lock
-from .jobs.scheduler import parse_slurm_output
+from .scheduler_profile import (target_binding, queue_command, parse_queue,
+                                occupied, parse_receipt, accounting_command,
+                                parse_accounting, PENDING, RUNNING, TERMINAL, profile)
 from .projects import ProjectStore
 from .report.extract import summarize_run, verify_run
 from .report.render import render_report
@@ -147,7 +149,8 @@ class Orchestrator:
             from .ssh.credentials import KeyringCredentialStore
             manager = SSHManager(credentials=KeyringCredentialStore(),
                                  connect_timeout=15,
-                                 known_hosts_path=cfg.ssh_known_hosts_path or None)
+                                 known_hosts_path=cfg.ssh_known_hosts_path or None,
+                                 identity_file=cfg.ssh_identity_file or None)
             manager.switch(host=cfg.ssh_host, username=cfg.ssh_username,
                            port=cfg.ssh_port or 22)
         return cls(cfg=cfg, hpc=manager, llm_factory=llm_factory)
@@ -409,7 +412,7 @@ class Orchestrator:
                 script_records.append({"job_key": job["key"], **actual})
         snapshot, digest = precheck_snapshot(
             execution_mode=self.execution_mode, inputs=input_records,
-            scripts=script_records)
+            scripts=script_records, scheduler_target=target_binding(self.cfg))
         flow["precheck"] = {
             "ok": all(i["level"] == "ok" for i in issues),
             "hard": True,
@@ -502,7 +505,7 @@ class Orchestrator:
                 "script_size": fingerprint["size"],
                 "attestation_action_id": attestation.get("action_id"),
                 "attestation_binding_hash": attestation.get("binding_hash"),
-                "submit_cmd": " ".join(submit_command(script_name)),
+                "submit_cmd": " ".join(submit_command(script_name, self.cfg.scheduler_backend)),
             })
             lines.append(
                 f"- {job['key']}（{job['label']}）→ 目录 `{calc_dir}`，"
@@ -604,6 +607,9 @@ class Orchestrator:
         if executing_action is None:
             return ("[AI_SUBMIT_CONFIRMATION_REQUIRED] 缺少与当前草稿和目标绑定的"
                     "单次提交确认；sbatch 次数为 0。")
+        bound_target = ((flow.get("precheck") or {}).get("snapshot") or {}).get("scheduler_target")
+        if bound_target != target_binding(self.cfg):
+            return "[AI_SCHEDULER_CHANGED] SSH或调度配置已变化；需重新预检和确认，提交次数为0。"
         if self.hpc is None:
             return ("未配置/未连接 SSH，无法真实提交到超算（我不会伪造作业号）。"
                     "草稿已保留。请在「设置 → SSH」填写主机/用户名/密码后，"
@@ -662,6 +668,9 @@ class Orchestrator:
                 job["wait_reason"] = reason
                 submitted.append(f"- {key} 未提交：{reason}；依赖满足后需重新确认")
                 continue
+            if free <= 0:
+                submitted.append(f"- {key} 本次可用空位已用完；需稍后重新确认")
+                continue
             try:
                 calc, script_name = self._verify_submit_target(
                     flow, remote, local_dir, job)
@@ -679,9 +688,11 @@ class Orchestrator:
                 submitted.append(f"- {job['key']} 预提交校验失败：{exc}（sbatch=0）")
                 continue
             job["submission_state"] = "executing"
+            job["scheduler_target"] = target_binding(self.cfg)
             job["submission_action_id"] = executing_action["action_id"]
             self._save(store, project_id, task_id, flow)
             try:
+                free -= 1  # Unknown receipts also consume this batch's budget.
                 slurm_id = self._submit_one(calc, script_name)
             except Exception as exc:  # noqa: BLE001
                 job["submission_state"] = "unknown"
@@ -712,19 +723,16 @@ class Orchestrator:
 
     def _free_slots(self, account: str) -> Optional[int]:
         try:
-            code, out, _ = self.hpc.run(self._squeue_command(account))
-            if code != 0:
+            code, out, err = self.hpc.run(self._squeue_command(account))
+            if code != 0 or (self.cfg.scheduler_backend == "paracloud" and (err or "").strip()):
                 return None
-            pending, running = parse_slurm_output(out or "")
-            return max(0, self.cfg.max_jobs - pending - running)
+            states = parse_queue(self.cfg.scheduler_backend, out or "")
+            return max(0, self.cfg.max_jobs - occupied(states))
         except Exception:  # noqa: BLE001
             return None
 
-    @staticmethod
-    def _squeue_command(account: str) -> str:
-        if not re.fullmatch(r"[A-Za-z0-9_.@-]{1,128}", str(account or "")):
-            raise ValueError("invalid scheduler account")
-        return f"squeue -u {account}"
+    def _squeue_command(self, account: str) -> str:
+        return queue_command(self.cfg.scheduler_backend, account)
 
     def _job_calc_dir(self, base: str, local_dir: Path, key: str) -> str:
         """作业计算目录：本地/远端已存在 <base>/<key> 子目录时用该子目录，
@@ -761,18 +769,16 @@ class Orchestrator:
                 or draft.get("script_size") != fingerprint["size"]
                 or draft.get("script_path") != fingerprint["normalized_path"]):
             raise RuntimeError("远端脚本与草稿绑定不一致")
+        if draft.get("submit_cmd") != " ".join(submit_command(script_name, self.cfg.scheduler_backend)):
+            raise RuntimeError("草稿提交命令与当前调度平台不一致")
         return calc, script_name
 
-    def _submit_one(self, calc: str, script_name: str) -> int:
+    def _submit_one(self, calc: str, script_name: str) -> int | str:
         if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}\.sh", script_name):
             raise RuntimeError("非法提交脚本名")
-        code, out, err = self.hpc.run(f"sbatch {script_name}", cwd=calc)
-        match = re.search(r"Submitted batch job (\d+)", out or "")
-        if match:
-            return int(match.group(1))
-        raise RuntimeError(
-            f"sbatch 未返回作业号: exit={code} out={(out or '')[:80]} "
-            f"err={(err or '')[:80]}")
+        command = " ".join(submit_command(script_name, self.cfg.scheduler_backend))
+        code, out, _ = self.hpc.run(command, cwd=calc)
+        return parse_receipt(self.cfg.scheduler_backend, code, out)
 
     # ---------------- 监控 + 收尾 ----------------
     # ---------------- 公共封装（供 agent 的 monitor/report 工具调用真实原语） ----------------
@@ -826,7 +832,7 @@ class Orchestrator:
         if on_hpc:
             out += ("\n注意：以下作业已提交到超算，本地仅标记取消，超算上可能"
                     "仍在运行（会继续占额度）。如需停止请在超算执行：\n"
-                    + "\n".join(f"scancel {s.split('（')[0]}" for s in on_hpc)
+                    + "\n".join(f"{profile(self.cfg.scheduler_backend)[2]} {s.split('（')[0]}" for s in on_hpc)
                     + "\n（scancel 属高风险命令，AI 模式不会代执行。）")
         return out
 
@@ -852,23 +858,20 @@ class Orchestrator:
                     "配置 SSH 后回到本会话即可看到实况与报告。")
         account = self.cfg.ssh_username
         try:
+            current_target = target_binding(self.cfg)
+            for job in flow["plan"]["jobs"]:
+                if job.get("slurm_id") and job.get("scheduler_target", current_target) != current_target:
+                    raise ValueError("SSH/scheduler target changed; restore original configuration")
             code, out, err = self.hpc.run(self._squeue_command(account))
-            if code != 0:
+            if code != 0 or (self.cfg.scheduler_backend == "paracloud" and (err or "").strip()):
                 raise RuntimeError(f"squeue exit={code}: {(err or '')[:200]}")
-            for row in (out or "").splitlines():
-                tokens = row.split()
-                if tokens and tokens[0].upper() != "JOBID" and (
-                        len(tokens) < 5 or not re.fullmatch(r"[0-9][0-9_\[\],%-]*", tokens[0])):
-                    raise ValueError("unrecognized squeue output")
+            states = parse_queue(self.cfg.scheduler_backend, out or "")
         except Exception as exc:  # noqa: BLE001
             flow["monitor_error"] = {"at": _now_iso(), "message": str(exc)[:500]}
             self._save(store, project_id, task_id, flow)
             return f"查询 squeue 失败（{type(exc).__name__}），进度未知；保留作业状态，稍后重查，禁止重提。"
         flow.pop("monitor_error", None)
-        states = _remote_state_map(out or "")
-        pending, running = parse_slurm_output(out or "")
-        free = max(0, self.cfg.max_jobs - pending - running)
-
+        free = max(0, self.cfg.max_jobs - occupied(states))
         progress: list[str] = []
         for job in flow["plan"]["jobs"]:
             status = job.get("status")
@@ -884,12 +887,25 @@ class Orchestrator:
                 progress.append(f"{job['key']}：提交结果未知，需人工核对作业号，禁止重提")
                 continue
             token = states.get(sid)
-            if token in ("PD", "PENDING"):
+            if self.cfg.scheduler_backend == "paracloud" and (token is None or token in TERMINAL):
+                try:
+                    command = accounting_command(sid)
+                    acct_code, acct_out, acct_err = self.hpc.run(command)
+                    if acct_code != 0 or (acct_err or "").strip():
+                        raise ValueError("accounting unavailable")
+                    token, exit_code = parse_accounting(sid, acct_out)
+                    job["accounting_evidence"] = {"command": command, "state": token,
+                                                  "exit_code": exit_code, "at": _now_iso()}
+                except Exception:
+                    progress.append(f"{job['key']}：云作业离队但历史状态尚不可核实；继续等待，不重提")
+                    continue
+            if token in PENDING:
                 job["status"] = "queued"
                 progress.append(f"{job['key']}：排队中（{sid}）")
-            elif token in ("R", "RUN", "RUNNING"):
+            elif token in RUNNING:
                 job["status"] = "running"
-                progress.append(f"{job['key']}：运行中（{sid}）")
+                label = "运行中" if token in {"R", "RUN", "RUNNING"} else f"运行或传输中 {token}"
+                progress.append(f"{job['key']}：{label}（{sid}）")
             elif token is None or token in {"CD", "COMPLETED", "F", "FAILED", "CA", "CANCELLED", "TO", "TIMEOUT", "OOM", "OUT_OF_MEMORY", "NF", "NODE_FAIL"}:
                 result = self._finalize_job(flow, job)
                 if token in {"F", "FAILED", "CA", "CANCELLED", "TO", "TIMEOUT", "OOM", "OUT_OF_MEMORY", "NF", "NODE_FAIL"}:
@@ -948,9 +964,17 @@ class Orchestrator:
         base = (self._job_calc_dir(remote, local_dir, job["key"]).rstrip("/")
                 if remote else "")
         texts, sources, errors = {}, [], []
+        # Result evidence must not inherit SSH's 64 KiB preview limit: the
+        # normal-termination marker is at the end of OUTCAR. Read a bounded
+        # whole file; never diagnose a silently truncated prefix as complete.
+        result_read_limit = 16 * 1024 * 1024
         for name in ("OUTCAR", "OSZICAR", "INCAR", "KPOINTS"):
             try:
-                data = self.hpc.read_file(f"{base}/{name}")
+                data = self.hpc.read_file(f"{base}/{name}", max_bytes=result_read_limit + 1)
+                if len(data) > result_read_limit:
+                    texts[name] = ""
+                    errors.append({"file": name, "text": "超过结果证据读取上限（16 MiB）；不使用截断内容判定成功"})
+                    continue
                 texts[name] = data if isinstance(data, str) else bytes(data).decode("utf-8", "replace")
                 sources.append(name)
             except Exception as exc:  # noqa: BLE001

@@ -99,7 +99,8 @@ class MonitorLoop:
                   cfg: AiModeConfig) -> Any:
         """按任务+SSH 账号缓存 Orchestrator，复用 SSH 连接。"""
         key = (project_id, task_id, cfg.ssh_host or "", cfg.ssh_username or "",
-               int(cfg.ssh_port or 22))
+               int(cfg.ssh_port or 22), cfg.scheduler_backend,
+               cfg.ssh_identity_file, cfg.ssh_known_hosts_path)
         with self._orch_lock:
             orch = self._orcs.get(key)
             if orch is None:
@@ -110,7 +111,8 @@ class MonitorLoop:
     def _drop_orch(self, project_id: str, task_id: str,
                    cfg: AiModeConfig) -> None:
         key = (project_id, task_id, cfg.ssh_host or "", cfg.ssh_username or "",
-               int(cfg.ssh_port or 22))
+               int(cfg.ssh_port or 22), cfg.scheduler_backend,
+               cfg.ssh_identity_file, cfg.ssh_known_hosts_path)
         with self._orch_lock:
             self._orcs.pop(key, None)
 

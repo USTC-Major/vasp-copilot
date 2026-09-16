@@ -112,13 +112,20 @@ describe('AI 前端整合（M12）', () => {
   });
 
   it('业务 error 后继续接收 done，并使用生成提示而非连接故障', async () => {
+    let terminalSent = false;
+    let messagesRefreshedAfterTerminal = false;
     server.use(
-      http.post('/ai/v1/projects/:projectId/tasks/:taskId/messages/stream', () => (
-        new HttpResponse([
+      http.get('/ai/v1/projects/:projectId/tasks/:taskId/messages', () => {
+        if (terminalSent) messagesRefreshedAfterTerminal = true;
+        return HttpResponse.json({ messages: [], generation: { running: false } });
+      }),
+      http.post('/ai/v1/projects/:projectId/tasks/:taskId/messages/stream', () => {
+        terminalSent = true;
+        return new HttpResponse([
           'data: {"type":"error","message":"模型未配置"}\n\n',
           'data: {"type":"done","answer":"模型未配置"}\n\n',
-        ].join(''), { headers: { 'Content-Type': 'text/event-stream' } })
-      )),
+        ].join(''), { headers: { 'Content-Type': 'text/event-stream' } });
+      }),
     );
     const user = userEvent.setup();
     renderPath('/ai/projects/prj_001');
@@ -129,7 +136,13 @@ describe('AI 前端整合（M12）', () => {
     expect(await screen.findByText('回复生成提示')).toBeInTheDocument();
     expect(screen.getAllByText('模型未配置').length).toBeGreaterThan(0);
     expect(screen.queryByText('回复连接中断')).not.toBeInTheDocument();
-    expect(await screen.findByRole('button', { name: /发送/ })).toBeInTheDocument();
+    // done 后 finally 还要刷新持久化消息；提示上屏不代表输入区已回到 idle。
+    await waitFor(() => {
+      expect(messagesRefreshedAfterTerminal).toBe(true);
+      expect(screen.getByRole('button', { name: /发送/ })).toBeInTheDocument();
+      expect(screen.getByPlaceholderText(/描述计算需求/)).toBeEnabled();
+      expect(screen.queryByRole('button', { name: /停止/ })).not.toBeInTheDocument();
+    }, { timeout: 5000 });
   });
 
   it('刷新后恢复后台生成状态和持久化授权卡', async () => {

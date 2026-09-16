@@ -136,7 +136,10 @@ def summarize_run(outcar_text: str, osziacar_text: str = "") -> dict:
     z = parse_osziacar(osziacar_text)
     return {
         "outcar": {
-            "n_ionic_steps": o.n_ionic_steps,
+            # OUTCAR repeats TOTEN during electronic iterations; its count
+            # is not an ionic-step count. Use explicit OSZICAR summaries,
+            # preserving repeated numbering across restart blocks.
+            "n_ionic_steps": len(z.ionic_energies) if z.ionic_energies else None,
             "final_energy": o.final_energy,
             "efermi": o.efermi,
             "converged": o.converged,

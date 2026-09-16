@@ -78,25 +78,24 @@ def _receipt_stall(prose: str) -> bool:
     """命中「等收到工具回执再继续」这类中间态措辞（未真正收尾，需继续推进）。"""
     if not prose or "回执" not in prose:
         return False
-    return any(link in prose
-               for link in ("继续", "推进", "再", "接着", "稍后", "之后", "等待"))
-
-
-#: 等待性话术判定词（与 _receipt_stall 一致）。
-_WAIT_WORDS = ("继续", "推进", "等待", "稍后", "之后", "接着", "再")
+    # Match a future receipt wait within a clause, not two unrelated words
+    # anywhere in a completed reply ("已按回执上传。等待用户下一步指令").
+    return bool(re.search(
+        r"(?:等(?:待)?(?:收到)?|待收到)\s*(?:工具\s*)?回执"
+        r"|收到\s*(?:工具\s*)?回执\s*(?:后|之后|再)", prose))
 
 
 def _strip_receipt_wait(text: str) -> str:
     """从正文里剔除「收到回执后继续/等回执」这类等待性句子，保留其余内容。
 
-    按句号/问号/分号/换行切句，只删除同时含「回执」与等待词的句子；
+    按句号/问号/分号/换行切句，只删除明确等待未来工具回执的句子；
     防止模型把等待话术复读进回答/落库（M49 防刷屏）。
     """
     if not text or "回执" not in text:
         return text
     kept: list[str] = []
     for sent in re.split(r"(?<=[。！？!?；;\n])", text):
-        if "回执" in sent and any(w in sent for w in _WAIT_WORDS):
+        if _receipt_stall(sent):
             continue
         kept.append(sent)
     return "".join(kept).strip()
@@ -192,7 +191,9 @@ def build_messages(store: ProjectStore, task: dict, history: list[dict],
         f"- 计算意图声明：{INTENT_MARK}{{\"intent\": \"compute\"}}"
         "（放在正文最前；普通闲聊可省略，系统会默认你是聊天）\n"
         f"- 工具请求：{TOOL_MARK}"
-        "{{\"name\": \"工具名\", \"args\": {{...}}, \"reason\": \"为什么调它\"}}\n"
+        "{\"name\": \"ws_list\", \"args\": {}, \"reason\": \"只读列出工作区文件\"}\n"
+        "上例是合法 JSON；实际调用时按下方工具清单替换 name 与 args。工具标记必须写在"
+        "最终回复的正文 content 中，不能只出现在思考内容中；不要在 JSON 外再套一层花括号。\n"
         "系统会真实执行该工具，并把执行回执作为下一条消息返回给你；你看到回执后系统会自动继续，"
         "你不需要（也不应该）把「等回执」「收到回执后继续」这类话写进回复。\n"
         "回执仅供你参考：最终回复里不要复述「工具回执 · xx」这类原文，只对工具结果做简洁总结。"

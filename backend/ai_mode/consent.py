@@ -329,7 +329,9 @@ def spawn_submit_card(store, project_id: str, task_id: str) -> dict:
         "operation": "submit",
         "project_id": project_id,
         "task_id": task_id,
-        "execution_kind": "slurm_sbatch",
+        "execution_kind": ("paracloud_cbatch" if
+            ((precheck.get("snapshot") or {}).get("scheduler_target") or {}).get("scheduler") == "paracloud"
+            else "slurm_sbatch"),
         "remote_root": remote,
         "drafts": flow.get("draft") or [],
         "execution_mode": mode,
@@ -339,7 +341,8 @@ def spawn_submit_card(store, project_id: str, task_id: str) -> dict:
         tool="confirm_submit", args={}, risk="high",
         reason="这是真实的提交动作；确认只对当前绑定草稿生效。",
         batch_key=f"submit|{_stable_key(json.dumps(binding, sort_keys=True, ensure_ascii=False))}",
-        kind="submit", summary=f"确认提交到超算工作区 `{remote}`？\n{lines}",
+        kind="submit", summary=f"确认提交到超算工作区 `{remote}`？\n{lines}\n"
+            + "执行命令：" + ", ".join(str(d.get("submit_cmd", "")) for d in flow.get("draft") or []),
         options=["确认提交", "取消"], binding=binding,
     )
     return save_card(store, project_id, task_id, dict(flow), payload)

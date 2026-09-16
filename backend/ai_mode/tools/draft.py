@@ -29,9 +29,10 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def submit_command(script_name: str) -> list[str]:
+def submit_command(script_name: str, backend: str = "slurm") -> list[str]:
     """提交命令（argv 形式，供执行器安全执行；从计算目录内发起）。"""
-    return [SUBMIT_BIN, script_name]
+    from ..scheduler_profile import submit_argv
+    return submit_argv(script_name, backend)
 
 
 def input_fingerprint_local(path: Path) -> dict:
@@ -62,7 +63,7 @@ def input_fingerprint_remote(hpc, path: str) -> dict:
 
 
 def precheck_snapshot(*, execution_mode: str, inputs: list[dict],
-                      scripts: list[dict]) -> tuple[dict, str]:
+                      scripts: list[dict], scheduler_target: dict | None = None) -> tuple[dict, str]:
     """Canonical immutable snapshot used by precheck and submit consent."""
     snapshot = {
         "execution_mode": execution_mode,
@@ -72,6 +73,8 @@ def precheck_snapshot(*, execution_mode: str, inputs: list[dict],
         "scripts": sorted((dict(item) for item in scripts),
                           key=lambda item: str(item.get("job_key"))),
     }
+    if scheduler_target is not None:
+        snapshot["scheduler_target"] = dict(scheduler_target)
     encoded = json.dumps(snapshot, ensure_ascii=False, sort_keys=True,
                          separators=(",", ":")).encode("utf-8")
     return snapshot, hashlib.sha256(encoded).hexdigest()

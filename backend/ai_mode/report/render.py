@@ -118,7 +118,7 @@ def _render_body(session: Session, jobs: Sequence[JobResultItem],
     lines.append("## 结论")
     if refine is not None:
         try:
-            conclusion = refine(list(jobs)) or "（提炼回调未返回内容）"
+            conclusion = refine(list(jobs)) or _fallback_conclusion(jobs)
         except Exception as exc:  # noqa: BLE001
             conclusion = f"（提炼失败：{exc}）"
     else:

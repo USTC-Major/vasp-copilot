@@ -151,7 +151,7 @@ export interface AiSettingsOut {
   poll_interval_seconds?: number;
   billing_estimate_enabled?: boolean;
   llm: AiSettingsLlm;
-  ssh: { name: string; host: string; port: number; username: string; known_hosts_path?: string };
+  ssh: { name: string; host: string; port: number; username: string; known_hosts_path?: string; identity_file?: string; scheduler_backend?: "slurm" | "paracloud" };
   materials_project: { api_key: string };
 }
 

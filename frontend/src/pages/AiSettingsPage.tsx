@@ -1,6 +1,6 @@
 // 全局设置页 — secrets are write-only: status + replace/clear, never reveal.
 import React, { useEffect, useState } from "react";
-import { Card, Typography, Space, Button, Input, Col, Row, Spin, Collapse, Switch, message } from "antd";
+import { Card, Typography, Space, Button, Input, Col, Row, Spin, Collapse, Switch, Select, message } from "antd";
 import { LinkOutlined, SafetyCertificateOutlined, RocketOutlined } from "@ant-design/icons";
 import ErrorAlert from "../components/common/ErrorAlert";
 import SecretInput from "../components/ai/SecretInput";
@@ -30,6 +30,8 @@ interface Form {
   ssh_port: string;
   ssh_username: string;
   ssh_known_hosts_path: string;
+  ssh_identity_file: string;
+  scheduler_backend: "slurm" | "paracloud";
   ssh_password: string;
 }
 
@@ -65,6 +67,8 @@ const AiSettingsPage: React.FC = () => {
         ssh_port: String(settings.ssh.port ?? 22),
         ssh_username: settings.ssh.username ?? "",
         ssh_known_hosts_path: settings.ssh.known_hosts_path ?? "",
+        ssh_identity_file: settings.ssh.identity_file ?? "",
+        scheduler_backend: settings.ssh.scheduler_backend ?? "slurm",
         ssh_password: "",
       });
     }
@@ -72,13 +76,14 @@ const AiSettingsPage: React.FC = () => {
 
   // Non-secret fields are replaceable (including clearing strings). Secrets use
   // the dedicated write-only endpoint and blank means "leave unchanged".
-  const patchFields = ["max_jobs", "poll_interval_seconds", "llm_provider", "llm_base_url", "llm_model", "ssh_name", "ssh_host", "ssh_username", "ssh_port", "ssh_known_hosts_path"]
+  const patchFields = ["max_jobs", "poll_interval_seconds", "llm_provider", "llm_base_url", "llm_model", "ssh_name", "ssh_host", "ssh_username", "ssh_port", "ssh_known_hosts_path", "ssh_identity_file"]
     .reduce<Record<string, unknown>>((acc, k) => {
       if (k === "max_jobs" || k === "ssh_port" || k === "poll_interval_seconds") acc[k] = Number(form[k as keyof Form]);
       else acc[k] = (form[k as keyof Form] as unknown as string);
       return acc;
     }, {});
   patchFields.llm_enable_thinking = form.llm_enable_thinking;
+  patchFields.scheduler_backend = form.scheduler_backend;
 
   const onSubmit = async () => {
     try {
@@ -165,6 +170,10 @@ const AiSettingsPage: React.FC = () => {
           <Col span={12}><Text strong>用户名</Text><Input value={form.ssh_username} onChange={set("ssh_username")} /></Col>
           <Col span={12}><Text strong>密码</Text><SecretInput hasSecret={secrets.ssh.configured} manageable={secrets.ssh.manageable} source={secrets.ssh.source} value={form.ssh_password} onChange={(v) => setForm((p) => ({ ...p, ssh_password: v }))} onClear={clearSecret("ssh")} placeholder={secrets.ssh.configured ? "输入新值以整体替换" : "未配置密码，填写后保存" } /></Col>
           <Col span={24}><Text strong>known_hosts 路径</Text><Input value={form.ssh_known_hosts_path} onChange={set("ssh_known_hosts_path")} placeholder="留空则使用系统 known_hosts" /></Col>
+          <Col span={24}><Text strong>SSH 密钥文件路径（可选）</Text><Input aria-label="SSH 密钥文件路径" value={form.ssh_identity_file} onChange={set("ssh_identity_file")} placeholder="后端所在电脑上的绝对路径；只填路径，不粘贴私钥" /></Col>
+          <Col span={24}><Text strong>调度平台</Text><Select aria-label="调度平台" style={{ width: "100%" }} value={form.scheduler_backend} onChange={(v) => setForm(p => ({ ...p, scheduler_backend: v }))} options={[{ value: "slurm", label: "标准 Slurm（sbatch / squeue）" }, { value: "paracloud", label: "ParaCloud 云超算（cbatch / cqueue）" }]} /></Col>
+          <Col span={24}><Text type="secondary">按实际平台选择，不能仅凭命令存在判断。更换平台或SSH身份后必须重新预检和确认；已有作业应保持原连接配置。</Text></Col>
+          <Col span={24}><Text type="secondary">填写密钥路径时仅使用该密钥，不回退密码或自动寻找其他密钥。当前不支持需口令解锁的密钥；换电脑需重新配置当地路径。</Text></Col>
           <Col span={24}><Text type="secondary" style={{ fontSize: 12 }}>SSH 仅信任系统或指定 known_hosts 中的主机密钥；未知或不匹配会在认证前拒绝。密码只可替换/清除。</Text></Col>
         </Row>
       ))}
