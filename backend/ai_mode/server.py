@@ -54,7 +54,7 @@ from .streaming import ChatRun, GenerationBusy, generation_status, request_stop
 logger = logging.getLogger("ai_mode")
 
 APP_TITLE = "VASP-Doctor 智能模式"
-APP_VERSION = "0.2.1"
+APP_VERSION = "0.2.2"
 
 
 def _mask(config) -> dict:

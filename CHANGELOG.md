@@ -9,6 +9,47 @@
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-09-16
+
+### Added
+
+- AI Mode 设置页支持显式 SSH 私钥路径与 Slurm/ParaCloud 调度平台选择。
+- ParaCloud 适配 `cbatch`/`cqueue`/`cacct`：严格解析云作业号、历史状态和
+  退出码，区分排队、运行、传输和未知状态，不以离队或文件存在推断成功。
+- 项目额外设置增加常用计算流程与精度要求模板，供用户选择、修改和确认。
+- 失败作业增加有文件证据的诊断与受控恢复入口；重试仍需重新预检和单次授权。
+
+### Fixed
+
+- 流式聊天在页面重载或连接中断后可同步已持久化消息和后台生成状态，减少
+  前端断连被误认为后端停止的问题；增加重复发送防护和启动回归测试。
+- 修正模型工具调用提示中的非法 JSON 示例，以及已完成回执被误判为仍在
+  等待工具结果、触发额外模型调用的问题。
+- 结果核验不再沿用 SSH 默认 64 KiB 文本截断；允许的结果文本显式读取至
+  16 MiB 上限，超限拒绝使用残缺前缀判定成功。
+- 报告离子步数改由 OSZICAR 汇总记录计算，不再把 OUTCAR 中的电子能量打印
+  次数当成离子步；可选 LLM 总结为空时回退到确定性结论。
+- Golden 文件固定 LF；发布校验和改按 Git 源码归档字节生成，避免工作区
+  CRLF 转换造成下载源码与清单不一致。
+
+### Security
+
+- 显式 SSH 私钥仅使用指定本机文件，不搜索其他密钥、不启用 agent 或密码
+  回退；保留严格 known_hosts 校验，不上传或展示私钥内容。
+- 授权快照绑定调度平台和 SSH 连接身份；提交与监控拒绝静默切换连接。
+- 非零退出码、格式异常、传输中和不确定提交结果均不能冒充成功；不自动
+  改用另一套调度命令或重复提交。提交脚本仍由用户提供并按哈希认领。
+
+### Validation and known limitations
+
+- 已在真实 ParaCloud 环境通过应用完成一个 Si 静态作业的授权提交、监控、
+  输出核验与报告链路；输入/目录准备、计划纠正及报告更正包含人工维护步骤，
+  不代表全程自主、多步 band 自动纠错或计算精度已收敛。
+- Docker build/up、跨机器部署和通用 Slurm 实机兼容性仍待目标环境验证。
+- 模型响应与排队耗时不可控；结果文本当前上限 16 MiB；加密 SSH 私钥尚不支持。
+- 全局模拟环境提示可能与任务级 Real 标签不同；以任务实际执行后端与作业
+  证据为准。仍限单用户、本地/可信网络使用，不具备公网多人安全隔离。
+
 ## [0.2.1] - 2026-09-05
 
 ### Fixed
@@ -177,7 +218,8 @@
 - 建立 Recipe Pack 驱动的 INCAR、KPOINTS、POSCAR 与提交脚本生成流程。
 - 建立 FastAPI 后端、React 前端、自动化测试、Docker 配置和演示用例。
 
-[Unreleased]: https://github.com/USTC-Major/vasp-copilot/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/USTC-Major/vasp-copilot/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/USTC-Major/vasp-copilot/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/USTC-Major/vasp-copilot/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/USTC-Major/vasp-copilot/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/USTC-Major/vasp-copilot/compare/v0.1.1...v0.1.2

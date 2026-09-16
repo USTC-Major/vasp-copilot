@@ -1,12 +1,12 @@
-# VASP-Copilot v0.2.1（VASP-Doctor × Workflow Builder）
+# VASP-Copilot v0.2.2（VASP-Doctor × Workflow Builder）
 
 VASP 计算**诊断**（vasp-doctor）与**工作流生成**（vasp-copilot / Workflow Builder）一体化后端 + 前端源码包。
 
-> v0.2.1 修正 KPOINTS 科学语义并收紧**智能模式（AI Mode）**的授权、
-> 文件写入、SSH、密钥与 Slurm 提交边界；v0.2.0 引入的三服务部署方式保持
-> 兼容。详见 [CHANGELOG.md](./CHANGELOG.md) `[0.2.1]` 与本文 2.4/6 节。
+> v0.2.2 改善**智能模式（AI Mode）**的流式恢复、计算模板、结果核验与
+> 报告，新增显式 SSH 私钥及 ParaCloud 调度适配；延续 v0.2.1 的结构化输入、
+> 脚本认领和单次授权边界。详见 [CHANGELOG.md](./CHANGELOG.md) `[0.2.2]`。
 
-- 当前稳定版本：[v0.2.1](https://github.com/USTC-Major/vasp-copilot/releases/tag/v0.2.1)
+- 当前稳定版本：[v0.2.2](https://github.com/USTC-Major/vasp-copilot/releases/tag/v0.2.2)
 - 完整更新记录：[CHANGELOG.md](./CHANGELOG.md)
 
 - 上传一个 VASP 运行目录 zip，依次完成：`安全解压 → 文件识别 → 解析 → 规则诊断 → 修复建议 → Markdown 报告 → （可选）LLM 通俗解释与追问`；
@@ -154,15 +154,18 @@ docker compose down -v               # 彻底清理（连同全部数据）
 
 ### 2.4 智能模式（AI Mode，本项目的核心亮点）
 
-智能模式让用户用**自然语言**驱动完整的 VASP 计算闭环：
+智能模式让用户用**自然语言**规划并在逐次确认下推进 VASP 计算流程：
 
-> 规划 → 建目录 → 生成/准备输入 → 预检 → 单次确认 sbatch → 提交 → 后台监控 → 下游重新预检/确认 → 查错 → 结果报告
+> 规划 → 建目录 → 生成/准备输入 → 预检 → 单次确认调度提交 → 后台监控 → 下游重新预检/确认 → 查错 → 结果报告
 
 - 双工作区：本地工作区与超算工作区（SSH）同名对应，计算与提交都发生在超算侧；本地 Fake HPC 可离线演示全流程；
 - 依赖链：多作业（如 relax → relax/static → relax/static/dos）自动排序；前序完成后下游作业重新预检并等待新的单次确认，失败则级联阻断；
-- 安全边界：LLM 不可自由执行本地/远端命令，也不能代写提交脚本；用户提供的 `*.sh` 必须按路径、大小和 SHA-256 认领；INCAR 仅接受结构化提案并经差异预览与精确确认；每次 `sbatch` 都需要与当前预检快照绑定的一次性确认；
+- 安全边界：LLM 不可自由执行本地/远端命令，也不能代写提交脚本；用户提供的 `*.sh` 必须按路径、大小和 SHA-256 认领；INCAR 仅接受结构化提案并经差异预览与精确确认；每次 `sbatch`/`cbatch` 都需要与当前预检快照绑定的一次性确认；
 - 后台监控：提交后无需人工盯梢，按可配置间隔（默认 60s，设置页可改）自动推进，全部完成后自动生成报告；作业失败时报告开头点名失败作业与原因；
 - 进度页：「查看当前进度」实时展示作业依赖链、等待队列、预检问题与计算报告。
+- 交互恢复：后台生成状态与消息持久化，页面重载/流式断连后可重新同步；项目额外设置提供可编辑的常用计算模板。
+- 调度适配：设置页显式选择 Slurm 或 ParaCloud，并可指定后端本机 SSH 私钥；连接身份变更须重新预检和确认，不自动猜测或切换平台。
+- 结果核验与恢复：结合调度退出码和实际输出判断结束；失败诊断提供受控恢复入口，重试仍需预检与授权，不保证任意计算自动修复。
 
 无超算环境时智能模式内置本地 Fake HPC 适配器（默认开启），可完整演示从规划到报告的全流程。
 
@@ -170,7 +173,7 @@ docker compose down -v               # 彻底清理（连同全部数据）
 
 1. 启动三服务（2.0 节），打开 http://127.0.0.1:5173；
 2. **诊断链路**：进入诊断页，上传 `backend/examples/sample_run/` 打包的 zip（或用 `demo_cases/failed_runs/` 里的故障样例，如 `scf_reached_nelm`），查看规则诊断报告与修复建议；
-3. **智能模式**：进入智能模式 → 新建项目 → 新建任务 → 确认页面显示的实际运行环境为 Fake/Real → 输入目标（如「对 Si 做结构优化，然后算态密度」）→ 审核结构化输入提案、用户提交脚本及预检摘要 → 对每次写入/上传/`sbatch` 分别作一次性确认；依赖作业完成后需重新预检并确认；
+3. **智能模式**：进入智能模式 → 新建项目 → 新建任务 → 确认任务显示的实际运行环境为 Fake/Real → 输入目标（如「对 Si 做结构优化，然后算态密度」）→ 审核结构化输入提案、用户提交脚本及预检摘要 → 对每次写入/上传/调度提交分别作一次性确认；依赖作业完成后需重新预检并确认；
 4. **进度页**：点击聊天区上方「查看当前进度」，查看作业依赖链与报告；
 5. **全链路冒烟**：`cd backend && python scripts/smoke_test.py`（上传 → 诊断 → 报告 → 预览 → 下载修复）。
 
@@ -209,15 +212,16 @@ python -B -m pytest tests -q              # 全量测试（doctor 诊断 + BE-A 
 python scripts/export_openapi.py          # 导出 backend/openapi.json（供前端 TS 类型）
 ```
 
-v0.2.1 发布验证：
+v0.2.2 发布验证：
 
-- 后端测试：`985 passed`（含工具箱主后端与 ai_mode）；
-- AI Mode 定向测试：`495 passed`；
-- 前端测试：`38 passed`；
+- 后端测试：`1106 passed, 0 failed`（含工具箱主后端与 ai_mode，46 warnings）；
+- 前端测试：`51 passed, 0 failed`；
 - lint 0 errors（保留既有 Fast Refresh warnings）；Vite production build 成功，页面级代码分包；
-- 完整性校验：`SHA256SUMS.txt` 共 501 项，0 项失败。
+- 完整性校验：`SHA256SUMS.txt` 共 515 项，0 项失败（按 Git 源码归档字节校验）。
 
 Compose/YAML、端口和持久化映射已完成静态校验；真实 docker compose build/up 尚待具备 Docker 的环境验证。
+
+已通过应用完成一个真实 ParaCloud Si 静态作业的授权提交、监控、输出核验与报告链路。输入/目录准备、计划纠正及报告更正包含人工维护步骤；该案例不等于全程自主、多步 band 自动纠错或计算精度验证。
 
 一键 CI（Windows / Linux）：
 
@@ -246,17 +250,19 @@ powershell -ExecutionPolicy Bypass -File backend\run_ci.ps1   # Windows
 
 - POTCAR：本项目**不下载、不内置、不拼接**（`ENABLE_POTCAR_ASSEMBLY=false`，VASP 许可证限制）；无 POTCAR 时生成 POTCAR_REQUIRED.md 且全部 step `runnable=false`；
 - 存储为**内存 + TTL 临时文件**，单用户本地/演示定位；公网/多人使用前必须补认证、CSRF 与租户隔离；
-- 二进制文件（WAVECAR/CHGCAR/POTCAR 等）预览一律拒绝；OUTCAR 预览限 500 行；
+- 受限文件（WAVECAR/CHGCAR/POTCAR 等）预览一律拒绝；OUTCAR 预览限 500 行；
 - `vasp_binary_hint` 已有前端 token 白名单（仅允许安全的可执行文件名或 POSIX 路径，拒绝 shell 运算符）；后端 SchedulerSettings 的 shell 字段统一服务端校验仍是启用真实 HPC 自动提交前的阻塞项；
 - AI Mode 禁止 LLM 任意执行命令、通用写文件或代写 shell 脚本；INCAR/KPOINTS、上传和提交分别受结构化校验、哈希绑定与一次性确认约束；
 - SSH 只接受系统或用户明确配置的 known_hosts，未知/变化主机密钥 fail closed；密钥 API 不提供明文回显，环境变量秘密不会持久化到 config.json；
 - `Real`/`Fake`/`None` 表示实际 HPC 执行后端，不表示 LLM 类型；`None` 不会生成提交确认卡；
 - 主工作流的确定性生成链路仍为零 LLM、零 HPC、零网络，可离线运行；AI Mode 的自然语言规划可调用用户配置的 LLM，但所有副作用由确定性边界控制；
-- 当前仍是单用户、本地/可信网络定位；真实 Docker、SSH、HPC、Slurm 尚未在本版本环境完成端到端实机验证。
+- 当前仍是单用户、本地/可信网络定位；虽已验证一个人工协助的真实 ParaCloud Si 静态案例，Docker、跨机器部署及通用 Slurm 实机兼容性仍待验证。
+- 显式 SSH 私钥不支持口令解锁，换电脑需重新配置本机路径；结果核验文本上限 16 MiB，超限保留异常证据而不把截断文本判为成功。
+- 模型响应、排队与结果回传耗时不可控；全局模拟环境提示可能与任务级 Real 标签不同，应以任务执行后端和调度/文件证据为准。
 
 ## 7. 完整性校验（SHA256SUMS.txt）
 
-包内 `SHA256SUMS.txt` 记录了**除自身外全部文件**的 SHA-256 校验和。解压后核对：
+包内 `SHA256SUMS.txt` 记录了 **Git 源码归档中除自身外全部跟踪文件**的 SHA-256 校验和，不包含运行数据和未跟踪文件。请在 GitHub Source code 归档解压后核对；Windows checkout 若由 `core.autocrlf` 转为 CRLF，字节会与归档不同，不能直接据此认定源码被篡改。
 
 ```bash
 # 解压后，在包根目录执行
@@ -267,9 +273,9 @@ Get-FileHash -Algorithm SHA256 <file>   # 与清单逐项比对
 
 ## 8. 打包信息
 
-- 当前稳定版本：v0.2.1
-- 发布页面：https://github.com/USTC-Major/vasp-copilot/releases/tag/v0.2.1
+- 当前稳定版本：v0.2.2
+- 发布页面：https://github.com/USTC-Major/vasp-copilot/releases/tag/v0.2.2
 - GitHub 自动提供 Source code (zip) 与 Source code (tar.gz)
-- 当前 Git 工作目录为精简源码副本，不包含虚拟环境、`node_modules`、缓存或运行数据
-- `SHA256SUMS.txt` 已按当前源码快照重新生成，覆盖除自身外的源码、测试、前端与 demo case 文件，并通过 501 项校验
+- 发布源码归档不包含虚拟环境、`node_modules`、缓存、私有输入或运行数据
+- `SHA256SUMS.txt` 按 Git 归档中的原始文件字节生成，覆盖源码、测试、前端与 demo case 文件；条目数与结果见第 4 节发布验证
 - 所有路径均为相对路径，无绝对路径/符号链接
