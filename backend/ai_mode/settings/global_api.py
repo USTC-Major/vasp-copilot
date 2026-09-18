@@ -270,12 +270,12 @@ def _llm_test(cfg: AiModeConfig) -> dict:
 
 
 def _mp_connect(cfg: AiModeConfig, *, timeout: float = 10.0) -> dict:
-    """最小真实 MP 校验：get /materials/summary/?limit=1，看 key 是否有效。"""
+    """最小真实 MP 校验：GET /materials/summary/?_limit=1，看 key 是否有效。"""
     import httpx
     url = "https://api.materialsproject.org/materials/summary/"
     headers = {"X-API-KEY": cfg.mp_api_key, "Accept": "application/json"}
     try:
-        resp = httpx.get(url, headers=headers, params={"limit": 1},
+        resp = httpx.get(url, headers=headers, params={"_limit": 1},
                          timeout=timeout, follow_redirects=True)
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "provider": "mp",
