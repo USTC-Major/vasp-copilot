@@ -137,6 +137,11 @@ export const materialsApi = {
 };
 // ---- Workflows API ----
 export const workflowsApi = {
+  recent: (limit = 10) =>
+    request<import('../types/history').RecentHistoryResponse>('/workflows/recent', {
+      params: { limit },
+    }),
+
   plan: (body: import('../types/workflow-contract').WorkflowPlanRequestBody) =>
     request<{ request_id: string } & import('../types/generated-api').WorkflowPlan>('/workflows/plan', {
       method: 'POST',
@@ -163,6 +168,11 @@ export const workflowsApi = {
 
 // ---- Diagnosis API ----
 export const diagnosisApi = {
+  recent: (limit = 10) =>
+    request<import('../types/history').RecentHistoryResponse>('/diagnosis/recent', {
+      params: { limit },
+    }),
+
   upload: (file: File) => {
     const formData = new FormData();
     formData.append('file', file);
@@ -385,6 +395,9 @@ async function aiRequest<T>(endpoint: string, options: RequestOptions = {}): Pro
 
 export const aiApi = {
   ping: () => aiRequest<{ mode: string; enabled: boolean; version: string }>("/ping"),
+
+  recentHistory: (limit = 10) =>
+    aiRequest<import('../types/history').RecentHistoryResponse>(`/history/recent?limit=${limit}`),
 
   getSettings: () =>
     aiRequest<{ mode: string; enabled: boolean; settings: import("../types/ai").AiSettingsOut; writable: string[] }>("/settings"),

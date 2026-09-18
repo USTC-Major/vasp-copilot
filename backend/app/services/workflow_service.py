@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Dict, List
 
 from backend.app.core.errors import NotFoundError
@@ -176,3 +177,60 @@ class WorkflowService:
                                 "unknown or expired workflow id")
         artifact.touched_at = time.time()
         return artifact
+
+    def list_recent(self, limit: int = 10,
+                    now: float | None = None) -> list[dict[str, object]]:
+        """Return unexpired workflow summaries without refreshing their TTL.
+
+        Plans and generated artifacts share an id.  They are folded into one
+        entry, with a live artifact taking precedence over its plan.  Expired
+        objects are filtered but deliberately not deleted here.
+        """
+        current = time.time() if now is None else now
+        rows: dict[str, dict[str, object]] = {}
+        for plan in self._plans.values():
+            if current - plan.touched_at > self._ttl_seconds:
+                continue
+            rows[plan.workflow_id] = {
+                "id": plan.workflow_id,
+                "kind": "workflow",
+                "title": f"工作流 {plan.workflow_id}",
+                "status": plan.workflow_status,
+                "created_at": _iso(plan.created_at),
+                "updated_at": _iso(plan.touched_at),
+                "expires_at": _iso(plan.touched_at + self._ttl_seconds),
+                "_sort": plan.touched_at,
+            }
+        for artifact in self._artifacts.values():
+            if current - artifact.touched_at > self._ttl_seconds:
+                continue
+            existing = rows.get(artifact.workflow_id)
+            created_at = min(
+                artifact.created_at,
+                _parse_iso_timestamp(existing["created_at"])
+                if existing is not None else artifact.created_at,
+            )
+            rows[artifact.workflow_id] = {
+                "id": artifact.workflow_id,
+                "kind": "workflow",
+                "title": f"工作流 {artifact.workflow_id}",
+                "status": str(artifact.body.get("workflow_status") or "generated"),
+                "created_at": _iso(created_at),
+                "updated_at": _iso(artifact.touched_at),
+                "expires_at": _iso(artifact.touched_at + self._ttl_seconds),
+                "_sort": artifact.touched_at,
+            }
+        ordered = sorted(rows.values(), key=lambda row: float(row["_sort"]),
+                         reverse=True)
+        for row in ordered:
+            row.pop("_sort", None)
+        return ordered[:max(0, limit)]
+
+
+def _iso(timestamp: float) -> str:
+    return datetime.fromtimestamp(timestamp, timezone.utc).isoformat().replace(
+        "+00:00", "Z")
+
+
+def _parse_iso_timestamp(value: object) -> float:
+    return datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()

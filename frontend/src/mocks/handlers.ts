@@ -87,6 +87,20 @@ export const handlers = [
   // ============================================================
   // Workflows
   // ============================================================
+  http.get(`${API_BASE}/workflows/recent`, async () => {
+    await delay(150);
+    return HttpResponse.json({
+      request_id: 'req_recent_workflows',
+      source: 'workflows',
+      retention: 'ttl',
+      demo: true,
+      records: [{
+        id: 'wf_mock_01', kind: 'workflow', title: '演示工作流 wf_mock_01',
+        status: 'generated', updated_at: new Date(Date.now() - 300_000).toISOString(), demo: true,
+      }],
+    });
+  }),
+
   http.post(`${API_BASE}/workflows/plan`, async () => {
     await delay(600);
     return HttpResponse.json({ request_id: 'req_plan', ...workflowPlanFixture });
@@ -130,6 +144,20 @@ export const handlers = [
   // ============================================================
   // Diagnosis
   // ============================================================
+  http.get(`${API_BASE}/diagnosis/recent`, async () => {
+    await delay(150);
+    return HttpResponse.json({
+      request_id: 'req_recent_diagnoses',
+      source: 'diagnoses',
+      retention: 'ttl',
+      demo: true,
+      records: [{
+        id: 'diag_mock_01', kind: 'diagnosis', title: '演示诊断 diag_mock_01',
+        status: 'succeeded', updated_at: new Date(Date.now() - 600_000).toISOString(), demo: true,
+      }],
+    });
+  }),
+
   http.post(`${API_BASE}/diagnosis/upload`, async () => {
     await delay(800);
     return HttpResponse.json(diagnosisUploadFixture);
@@ -406,6 +434,23 @@ const aiStreamKey = (projectId: string, taskId: string) => `${projectId}:${taskI
 const AI_BASE = '/ai/v1';
 
 export const aiHandlers = [
+  http.get(`${AI_BASE}/history/recent`, async () => {
+    await delay(150);
+    const records = aiDemo.tasks.map((task) => ({
+      id: `${task.project_id}:${task.id}`,
+      kind: 'ai_task' as const,
+      project_id: task.project_id,
+      task_id: task.id,
+      project_name: aiDemo.getProject(task.project_id)?.name || '演示项目',
+      title: task.title,
+      status: task.status,
+      execution_mode: task.execution_mode || 'None',
+      updated_at: task.updated_at,
+      demo: true,
+    }));
+    return HttpResponse.json({ mode: 'ai', source: 'ai', retention: 'persistent', demo: true, records });
+  }),
+
   http.get(`${AI_BASE}/projects`, async () => {
     await delay(250);
     return HttpResponse.json({ projects: aiDemo.listProjects() });

@@ -3,6 +3,7 @@
 import shutil
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -62,6 +63,34 @@ class RunStore:
         record.touch()
         self._records[record.diagnosis_id] = record
 
+    def list_recent(self, limit: int = 10,
+                    now: Optional[float] = None) -> list[dict[str, object]]:
+        """Return live diagnosis summaries without touching TTL or stored files.
+
+        History browsing must not extend a run's lifetime and must not trigger the
+        destructive cleanup performed by :meth:`get`/``cleanup_expired``.  Only
+        presentation-safe metadata is exposed; uploaded paths and contents stay
+        private.
+        """
+        current = time.time() if now is None else now
+        records = [
+            record for record in self._records.values()
+            if current - record.touched_at <= self._ttl
+        ]
+        records.sort(key=lambda record: record.touched_at, reverse=True)
+        return [
+            {
+                "id": record.diagnosis_id,
+                "kind": "diagnosis",
+                "title": f"诊断记录 {record.diagnosis_id}",
+                "status": record.diagnosis_status,
+                "created_at": _iso(record.created_at),
+                "updated_at": _iso(record.touched_at),
+                "expires_at": _iso(record.touched_at + self._ttl),
+            }
+            for record in records[:max(0, limit)]
+        ]
+
     def cleanup_expired(self, now: Optional[float] = None) -> int:
         now = now or time.time()
         stale = [k for k, r in self._records.items()
@@ -115,3 +144,8 @@ class RunStore:
                 shutil.rmtree(target)
         except OSError:
             return
+
+
+def _iso(timestamp: float) -> str:
+    return datetime.fromtimestamp(timestamp, timezone.utc).isoformat().replace(
+        "+00:00", "Z")

@@ -14,6 +14,7 @@ import AiSettingsPage from './pages/AiSettingsPage';
 import PageLoading from './components/common/PageLoading';
 
 const WorkflowBuilderPage = lazy(() => import('./pages/WorkflowBuilderPage'));
+const WorkflowHistoryPage = lazy(() => import('./pages/WorkflowHistoryPage'));
 const DiagnosisUploadPage = lazy(() => import('./pages/DiagnosisUploadPage'));
 const DiagnosisResultPage = lazy(() => import('./pages/DiagnosisResultPage'));
 const HpcDeploymentPage = lazy(() => import('./pages/HpcDeploymentPage'));
@@ -35,6 +36,7 @@ export const routes: RouteObject[] = [
       { path: 'ai/settings', element: <AiSettingsPage /> },
       { index: true, element: <HomePage /> },
       { path: 'workflow', element: withSuspense(<WorkflowBuilderPage />) },
+      { path: 'workflow/history/:id', element: withSuspense(<WorkflowHistoryPage />) },
       { path: 'diagnosis/upload', element: withSuspense(<DiagnosisUploadPage />) },
       { path: 'diagnosis/:id', element: withSuspense(<DiagnosisResultPage />) },
       { path: 'hpc/deploy', element: withSuspense(<HpcDeploymentPage />) },

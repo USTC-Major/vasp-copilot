@@ -16,7 +16,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -252,6 +252,19 @@ async def generate(
     workflow_id = data["workflow_id"]
     data["download_url"] = f"/api/v1/workflows/{workflow_id}/download"
     return ApiEnvelope(request_id=x_request_id, data=data)
+
+
+@router.get("/workflows/recent", response_model=ApiEnvelope, tags=["workflows"])
+async def recent_workflows(
+    limit: int = Query(default=10, ge=1, le=20),
+    x_request_id: str = Depends(get_request_id),
+) -> ApiEnvelope:
+    """List live in-memory workflow summaries without extending their TTL."""
+    return ApiEnvelope(request_id=x_request_id, data={
+        "source": "workflows",
+        "retention": "ttl",
+        "records": workflow_service.list_recent(limit=limit),
+    })
 
 
 @router.get("/workflows/{workflow_id}", tags=["workflows"])

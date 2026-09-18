@@ -6,7 +6,7 @@ import zipfile
 from pathlib import Path
 from typing import Any, Optional, Union
 
-from fastapi import APIRouter, Depends, File, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Query, Request, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict
 
@@ -187,6 +187,19 @@ def _report_compat(record, report: dict) -> dict:
         "ready": ready,
         "download_url": (f"/api/v1/diagnosis/{record.diagnosis_id}/report" if ready else None),
     }
+
+
+@router.get("/diagnosis/recent", response_model=ApiEnvelope)
+async def recent_diagnoses(
+    limit: int = Query(default=10, ge=1, le=20),
+    x_request_id: str = Depends(get_request_id),
+) -> ApiEnvelope:
+    """List live diagnosis summaries without touching or cleaning stored runs."""
+    return ApiEnvelope(request_id=x_request_id, data={
+        "source": "diagnoses",
+        "retention": "ttl",
+        "records": store.list_recent(limit=limit),
+    })
 
 
 @router.get("/diagnosis/{diagnosis_id}", response_model=ApiEnvelope)

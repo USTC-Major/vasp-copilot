@@ -69,9 +69,9 @@ const App: React.FC = () => {
           onClick={({ key }) => navigate(key)}
           style={{ flex: 1, minWidth: 0, background: 'transparent', borderBottom: 'none', fontWeight: 500 }}
         />
-        {fakeHpcEnabled && (
-          <Tag color="warning" style={{ marginLeft: 8, borderRadius: 999, padding: '2px 12px' }}>模拟环境</Tag>
-        )}
+        <Tooltip title="智能模式的 Real / Fake / None 以具体任务记录为准；工具箱远程部署是独立的离线演示。">
+          <Tag style={{ marginLeft: 8, borderRadius: 999, padding: '2px 12px' }}>任务级运行环境</Tag>
+        </Tooltip>
         <Tooltip title='智能设置'>
           <Button
             type="text"

@@ -93,6 +93,60 @@ class ProjectStore:
                       reverse=True)
         return projects
 
+    def list_recent_history(self, limit: int = 10) -> list[dict[str, Any]]:
+        """Read-only, presentation-safe project/task history snapshot.
+
+        This path intentionally does not decorate tasks, synchronize execution
+        backends, or persist anything.  Workspace paths, goals, messages, and
+        credentials are never included.
+        """
+        with self._lock:
+            projects = [dict(p) for p in self._data.get("projects", [])]
+            tasks = [dict(t) for t in self._data.get("tasks", [])]
+        project_names = {
+            str(project.get("id") or ""): str(project.get("name") or "未命名项目")[:80]
+            for project in projects
+        }
+        rows: list[dict[str, Any]] = []
+        projects_with_tasks = {
+            str(task.get("project_id") or "") for task in tasks
+        }
+        for task in tasks:
+            project_id = str(task.get("project_id") or "")
+            task_id = str(task.get("id") or "")
+            if not project_id or not task_id:
+                continue
+            flow = task.get("flow") if isinstance(task.get("flow"), dict) else {}
+            execution = str(flow.get("execution_mode") or "None")
+            if execution not in {"Fake", "Real", "None"}:
+                execution = "None"
+            rows.append({
+                "id": f"{project_id}:{task_id}",
+                "kind": "ai_task",
+                "project_id": project_id,
+                "task_id": task_id,
+                "title": str(task.get("title") or "未命名任务")[:80],
+                "project_name": project_names.get(project_id, "未命名项目"),
+                "status": str(task.get("status") or "idle")[:40],
+                "execution_mode": execution,
+                "updated_at": str(task.get("updated_at") or ""),
+            })
+        for project in projects:
+            project_id = str(project.get("id") or "")
+            if not project_id or project_id in projects_with_tasks:
+                continue
+            rows.append({
+                "id": project_id,
+                "kind": "ai_project",
+                "project_id": project_id,
+                "title": str(project.get("name") or "未命名项目")[:80],
+                "status": "project",
+                "updated_at": str(project.get("updated_at")
+                                  or project.get("created_at") or ""),
+            })
+        rows.sort(key=lambda row: str(row.get("updated_at") or ""), reverse=True)
+        return rows[:max(0, limit)]
+
     def get_project(self, project_id: str) -> Optional[dict]:
         with self._lock:
             for p in self._data.get("projects", []):

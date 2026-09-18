@@ -23,7 +23,7 @@ import queue
 import threading
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from .config import load_settings
@@ -342,6 +342,20 @@ def create_ai_mode_app() -> FastAPI:
         store = _get_project_store()
         return {"mode": "ai", "enabled": True,
                 "projects": store.list_projects()}
+
+    @app.get("/ai/v1/history/recent")
+    async def recent_history(limit: int = Query(default=10, ge=1, le=20)):
+        """Return a read-only project/task summary without backend synchronization."""
+        cfg = load_settings()
+        resp = _require_enabled(cfg)
+        if resp is not None:
+            return resp
+        return {
+            "mode": "ai",
+            "source": "ai",
+            "retention": "persistent",
+            "records": _get_project_store().list_recent_history(limit=limit),
+        }
 
     @app.post("/ai/v1/projects")
     async def create_project(payload: dict):
