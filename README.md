@@ -1,12 +1,12 @@
-# VASP-Copilot v0.2.2（VASP-Doctor × Workflow Builder）
+# VASP-Copilot v0.2.3（VASP-Doctor × Workflow Builder）
 
 VASP 计算**诊断**（vasp-doctor）与**工作流生成**（vasp-copilot / Workflow Builder）一体化后端 + 前端源码包。
 
-> v0.2.2 改善**智能模式（AI Mode）**的流式恢复、计算模板、结果核验与
-> 报告，新增显式 SSH 私钥及 ParaCloud 调度适配；延续 v0.2.1 的结构化输入、
-> 脚本认领和单次授权边界。详见 [CHANGELOG.md](./CHANGELOG.md) `[0.2.2]`。
+> v0.2.3 修复 Materials Project API key 连通测试的分页参数兼容性，
+> 澄清任务级 Real/Fake/None 运行环境，并将首页示例记录替换为真实历史汇总。
+> 保留既有结构化输入、脚本认领和单次授权边界。详见 [CHANGELOG.md](./CHANGELOG.md) `[0.2.3]`。
 
-- 当前稳定版本：[v0.2.2](https://github.com/USTC-Major/vasp-copilot/releases/tag/v0.2.2)
+- 当前稳定版本：[v0.2.3](https://github.com/USTC-Major/vasp-copilot/releases/tag/v0.2.3)
 - 完整更新记录：[CHANGELOG.md](./CHANGELOG.md)
 
 - 上传一个 VASP 运行目录 zip，依次完成：`安全解压 → 文件识别 → 解析 → 规则诊断 → 修复建议 → Markdown 报告 → （可选）LLM 通俗解释与追问`；
@@ -212,12 +212,14 @@ python -B -m pytest tests -q              # 全量测试（doctor 诊断 + BE-A 
 python scripts/export_openapi.py          # 导出 backend/openapi.json（供前端 TS 类型）
 ```
 
-v0.2.2 发布验证：
+v0.2.3 发布验证：
 
-- 后端测试：`1106 passed, 0 failed`（含工具箱主后端与 ai_mode，46 warnings）；
-- 前端测试：`51 passed, 0 failed`；
+- 后端测试：`1118 passed, 0 failed`（含工具箱主后端与 ai_mode，46 warnings）；
+- 前端测试：`61 passed, 0 failed`；
 - lint 0 errors（保留既有 Fast Refresh warnings）；Vite production build 成功，页面级代码分包；
-- 完整性校验：`SHA256SUMS.txt` 共 515 项，0 项失败（按 Git 源码归档字节校验）。
+- 完整性校验：`SHA256SUMS.txt` 共 521 项，0 项失败（按 Git 源码归档字节校验）。
+
+首页汇总真实 AI 项目/任务、工作流与诊断记录。AI 历史持久保存；工作流与诊断仅列当前进程未过期的 TTL 快照，过期或服务重启后不可恢复。MP 连通测试参数已通过回归测试，本轮未用真实 key 联网复测。
 
 Compose/YAML、端口和持久化映射已完成静态校验；真实 docker compose build/up 尚待具备 Docker 的环境验证。
 
@@ -249,7 +251,7 @@ powershell -ExecutionPolicy Bypass -File backend\run_ci.ps1   # Windows
 ## 6. 安全边界与已知限制
 
 - POTCAR：本项目**不下载、不内置、不拼接**（`ENABLE_POTCAR_ASSEMBLY=false`，VASP 许可证限制）；无 POTCAR 时生成 POTCAR_REQUIRED.md 且全部 step `runnable=false`；
-- 存储为**内存 + TTL 临时文件**，单用户本地/演示定位；公网/多人使用前必须补认证、CSRF 与租户隔离；
+- 工具箱存储为**内存 + TTL 临时文件**，AI 项目/任务另行持久保存；公网/多人使用前必须补认证、CSRF 与租户隔离；
 - 受限文件（WAVECAR/CHGCAR/POTCAR 等）预览一律拒绝；OUTCAR 预览限 500 行；
 - `vasp_binary_hint` 已有前端 token 白名单（仅允许安全的可执行文件名或 POSIX 路径，拒绝 shell 运算符）；后端 SchedulerSettings 的 shell 字段统一服务端校验仍是启用真实 HPC 自动提交前的阻塞项；
 - AI Mode 禁止 LLM 任意执行命令、通用写文件或代写 shell 脚本；INCAR/KPOINTS、上传和提交分别受结构化校验、哈希绑定与一次性确认约束；
@@ -258,7 +260,7 @@ powershell -ExecutionPolicy Bypass -File backend\run_ci.ps1   # Windows
 - 主工作流的确定性生成链路仍为零 LLM、零 HPC、零网络，可离线运行；AI Mode 的自然语言规划可调用用户配置的 LLM，但所有副作用由确定性边界控制；
 - 当前仍是单用户、本地/可信网络定位；虽已验证一个人工协助的真实 ParaCloud Si 静态案例，Docker、跨机器部署及通用 Slurm 实机兼容性仍待验证。
 - 显式 SSH 私钥不支持口令解锁，换电脑需重新配置本机路径；结果核验文本上限 16 MiB，超限保留异常证据而不把截断文本判为成功。
-- 模型响应、排队与结果回传耗时不可控；全局模拟环境提示可能与任务级 Real 标签不同，应以任务执行后端和调度/文件证据为准。
+- 模型响应、排队与结果回传耗时不可控；环境以具体智能任务的 Real/Fake/None 标识及调度/文件证据为准，工具箱离线演示不代表全局环境。
 
 ## 7. 完整性校验（SHA256SUMS.txt）
 
@@ -273,8 +275,8 @@ Get-FileHash -Algorithm SHA256 <file>   # 与清单逐项比对
 
 ## 8. 打包信息
 
-- 当前稳定版本：v0.2.2
-- 发布页面：https://github.com/USTC-Major/vasp-copilot/releases/tag/v0.2.2
+- 当前稳定版本：v0.2.3
+- 发布页面：https://github.com/USTC-Major/vasp-copilot/releases/tag/v0.2.3
 - GitHub 自动提供 Source code (zip) 与 Source code (tar.gz)
 - 发布源码归档不包含虚拟环境、`node_modules`、缓存、私有输入或运行数据
 - `SHA256SUMS.txt` 按 Git 归档中的原始文件字节生成，覆盖源码、测试、前端与 demo case 文件；条目数与结果见第 4 节发布验证

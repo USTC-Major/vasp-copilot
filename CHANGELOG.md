@@ -9,6 +9,8 @@
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-09-18
+
 ### Fixed
 
 - 智能模式的 Materials Project 连通测试改用 `_limit=1`，避免旧分页参数
@@ -17,6 +19,20 @@
   智能模式仍在具体任务上显示 Real/Fake/None，远程部署入口明示为离线演示。
 - 移除首页硬编码的工作流和诊断示例，改为汇总真实智能项目/任务、
   未过期工作流与诊断快照；单一来源失败时保留其他来源，Mock 记录显式标记为演示。
+- 返回首页时刷新三类历史来源，避免短时间内沿用旧缓存；工作流详情区分
+  记录失效与临时网络/服务故障，后者可重试。
+
+### Added
+
+- 新增三类历史摘要只读接口及工作流历史详情页，支持真实记录的排序、去重和跳转。
+
+### Validation and known limitations
+
+- 后端 1118 项、前端 61 项测试通过；lint 无错误，生产构建成功。
+- AI 项目/任务历史持久保存；工作流和诊断仍是当前后端进程的未过期 TTL
+  快照，不提供服务重启后或过期记录的恢复能力。
+- MP 参数兼容性通过隔离回归测试验证，本轮未使用真实 API key 联网复测。
+- 保留单用户、本地/可信网络及原有授权边界；本次未新增真实 HPC 或 Docker 实机验证。
 
 ## [0.2.2] - 2026-09-16
 
@@ -227,7 +243,8 @@
 - 建立 Recipe Pack 驱动的 INCAR、KPOINTS、POSCAR 与提交脚本生成流程。
 - 建立 FastAPI 后端、React 前端、自动化测试、Docker 配置和演示用例。
 
-[Unreleased]: https://github.com/USTC-Major/vasp-copilot/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/USTC-Major/vasp-copilot/compare/v0.2.3...HEAD
+[0.2.3]: https://github.com/USTC-Major/vasp-copilot/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/USTC-Major/vasp-copilot/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/USTC-Major/vasp-copilot/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/USTC-Major/vasp-copilot/compare/v0.1.2...v0.2.0
