@@ -54,7 +54,7 @@ from .streaming import ChatRun, GenerationBusy, generation_status, request_stop
 logger = logging.getLogger("ai_mode")
 
 APP_TITLE = "VASP-Doctor 智能模式"
-APP_VERSION = "0.2.4"
+APP_VERSION = "0.2.5"
 
 
 def _resolve_mp_import(store, project_id: str, task_id: str, card_id: str,

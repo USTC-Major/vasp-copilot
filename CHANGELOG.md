@@ -9,7 +9,28 @@
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-09-18
+
+### Fixed
+
+- 修复 v0.2.4 校验清单中 468/523 项不匹配 GitHub 源码归档的问题。
+  根因是本机 `core.autocrlf=true` 影响 `git archive` 的文本输出，
+  本机同配置生成/验证不能代表 GitHub 归档字节。旧 tag 保持不变。
+- 发布校验工具固定归档换行配置，以二进制方式读取 ZIP/tar.gz，
+  不经过文本管道或落盘解包转换；同时检查清单覆盖范围、重复项和哈希。
+- 本版只修复发布完整性与版本/说明文件，应用功能与 v0.2.4 相同。
+
+### Validation
+
+- 新增 9 项归档校验回归，覆盖 CRLF 工作区、二进制/中文路径、
+  ZIP/tar.gz、缺失/多余/重复条目及错误内容；重现默认 Windows 归档差异。
+- 发布前检查最终提交归档及实际 GitHub Source code ZIP/tar.gz；
+  不把本地工作区校验替代下载包校验。
+
 ## [0.2.4] - 2026-09-18
+
+> 发布后勘误：本 tag 的 `SHA256SUMS.txt` 有 468/523 项不匹配 GitHub
+> 源码归档，不可用来验包；请使用 v0.2.5。功能测试结论不因此改变。
 
 ### Fixed
 
@@ -273,7 +294,8 @@
 - 建立 Recipe Pack 驱动的 INCAR、KPOINTS、POSCAR 与提交脚本生成流程。
 - 建立 FastAPI 后端、React 前端、自动化测试、Docker 配置和演示用例。
 
-[Unreleased]: https://github.com/USTC-Major/vasp-copilot/compare/v0.2.4...HEAD
+[Unreleased]: https://github.com/USTC-Major/vasp-copilot/compare/v0.2.5...HEAD
+[0.2.5]: https://github.com/USTC-Major/vasp-copilot/compare/v0.2.4...v0.2.5
 [0.2.4]: https://github.com/USTC-Major/vasp-copilot/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/USTC-Major/vasp-copilot/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/USTC-Major/vasp-copilot/compare/v0.2.1...v0.2.2

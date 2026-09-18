@@ -1,12 +1,12 @@
-# VASP-Copilot v0.2.4（VASP-Doctor × Workflow Builder）
+# VASP-Copilot v0.2.5（VASP-Doctor × Workflow Builder）
 
 VASP 计算**诊断**（vasp-doctor）与**工作流生成**（vasp-copilot / Workflow Builder）一体化后端 + 前端源码包。
 
-> v0.2.4 为智能聊天新增受控 Materials Project 检索与 POSCAR 导入，
-> 修复确认卡在服务恢复后的本地写入链路，并移除首页和顶栏的冗余环境说明。
-> 自由命令仍保持禁用，导入不会自动上传或提交。详见 [CHANGELOG.md](./CHANGELOG.md) `[0.2.4]`。
+> v0.2.5 修复 v0.2.4 的源码归档校验清单换行问题，保留全部应用功能。
+> 采用固定换行配置的二进制归档校验，并新增跨换行回归测试。
+> 旧 v0.2.4 tag 不变，其错误清单请勿用于验包。详见 [CHANGELOG.md](./CHANGELOG.md) `[0.2.5]`。
 
-- 当前稳定版本：[v0.2.4](https://github.com/USTC-Major/vasp-copilot/releases/tag/v0.2.4)
+- 当前稳定版本：[v0.2.5](https://github.com/USTC-Major/vasp-copilot/releases/tag/v0.2.5)
 - 完整更新记录：[CHANGELOG.md](./CHANGELOG.md)
 
 - 上传一个 VASP 运行目录 zip，依次完成：`安全解压 → 文件识别 → 解析 → 规则诊断 → 修复建议 → Markdown 报告 → （可选）LLM 通俗解释与追问`；
@@ -226,12 +226,12 @@ python -B -m pytest tests -q              # 全量测试（doctor 诊断 + BE-A 
 python scripts/export_openapi.py          # 导出 backend/openapi.json（供前端 TS 类型）
 ```
 
-v0.2.4 发布验证：
+v0.2.5 发布验证：
 
-- 后端测试：`1166 passed, 0 failed`（含工具箱主后端与 ai_mode，46 warnings）；
+- 后端测试：`1175 passed, 0 failed`（含工具箱主后端、ai_mode 与 9 项发布完整性回归，46 warnings）；
 - 前端测试：`61 passed, 0 failed`；
 - lint 0 errors（保留既有 Fast Refresh warnings）；Vite production build 成功，页面级代码分包；
-- 端到端冒烟通过；`SHA256SUMS.txt` 共 523 项，0 项失败（按 Git 源码归档字节校验）。
+- v0.2.4 的端到端冒烟已通过，本版未改动应用功能；`SHA256SUMS.txt` 共 525 项，按最终 Git 归档字节逐项校验。
 
 MP 合约、响应边界、结构转换、密钥隔离和单次确认已通过隔离回归测试；
 本轮环境未配置真实 MP API key，因此未做真实联网结构下载验收。
@@ -279,7 +279,9 @@ powershell -ExecutionPolicy Bypass -File backend\run_ci.ps1   # Windows
 
 ## 7. 完整性校验（SHA256SUMS.txt）
 
-包内 `SHA256SUMS.txt` 记录了 **Git 源码归档中除自身外全部跟踪文件**的 SHA-256 校验和，不包含运行数据和未跟踪文件。请在 GitHub Source code 归档解压后核对；Windows checkout 若由 `core.autocrlf` 转为 CRLF，字节会与归档不同，不能直接据此认定源码被篡改。
+包内 `SHA256SUMS.txt` 记录了 **Git 源码归档中除自身外全部归档文件**的 SHA-256 校验和，不包含运行数据和未跟踪文件。请在 GitHub Source code 归档解压后核对；Windows checkout 若由 `core.autocrlf` 转为 CRLF，字节会与归档不同，不能直接据此认定源码被篡改。v0.2.4 的清单存在发布错误，请改用 v0.2.5。
+
+维护者生成流程：先暂存全部发布文件，再执行 `python backend/scripts/release_checksums.py --write --ref INDEX`；暂存新清单并提交后，执行 `python backend/scripts/release_checksums.py --ref HEAD`。工具强制 `core.autocrlf=false` 和 `core.eol=lf`，直接读取二进制归档，不修改用户全局 Git 设置。最后必须下载 GitHub ZIP 和 tar.gz，分别用 `--archive <路径>` 校验通过后才发布 Release；清单不包括自身。
 
 ```bash
 # 解压后，在包根目录执行
@@ -290,8 +292,8 @@ Get-FileHash -Algorithm SHA256 <file>   # 与清单逐项比对
 
 ## 8. 打包信息
 
-- 当前稳定版本：v0.2.4
-- 发布页面：https://github.com/USTC-Major/vasp-copilot/releases/tag/v0.2.4
+- 当前稳定版本：v0.2.5
+- 发布页面：https://github.com/USTC-Major/vasp-copilot/releases/tag/v0.2.5
 - GitHub 自动提供 Source code (zip) 与 Source code (tar.gz)
 - 发布源码归档不包含虚拟环境、`node_modules`、缓存、私有输入或运行数据
 - `SHA256SUMS.txt` 按 Git 归档中的原始文件字节生成，覆盖源码、测试、前端与 demo case 文件；条目数与结果见第 4 节发布验证

@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "vasp-doctor",
-    "version": "0.2.4"
+    "version": "0.2.5"
   },
   "paths": {
     "/api/v1/diagnosis/upload": {

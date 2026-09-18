@@ -1,3 +1,5 @@
 # Golden artifacts are compared byte-for-byte across operating systems.
 backend/tests/be_a/golden/** text eol=lf
 backend/tests/be_a/golden/**/*.zip binary
+# The checksum manifest is generated for canonical release archive bytes.
+SHA256SUMS.txt text eol=lf
