@@ -4,7 +4,7 @@
 
 import React, { useState } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
-import { Layout, Menu, Typography, Space, Tag, Button, Tooltip } from 'antd';
+import { Layout, Menu, Typography, Space, Button, Tooltip } from 'antd';
 import {
   HomeOutlined, BuildOutlined, BugOutlined, RobotOutlined,
   CloudUploadOutlined, SettingOutlined, ToolOutlined,
@@ -69,9 +69,6 @@ const App: React.FC = () => {
           onClick={({ key }) => navigate(key)}
           style={{ flex: 1, minWidth: 0, background: 'transparent', borderBottom: 'none', fontWeight: 500 }}
         />
-        <Tooltip title="智能模式的 Real / Fake / None 以具体任务记录为准；工具箱远程部署是独立的离线演示。">
-          <Tag style={{ marginLeft: 8, borderRadius: 999, padding: '2px 12px' }}>任务级运行环境</Tag>
-        </Tooltip>
         <Tooltip title='智能设置'>
           <Button
             type="text"

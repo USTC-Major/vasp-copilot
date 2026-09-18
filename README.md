@@ -1,12 +1,12 @@
-# VASP-Copilot v0.2.3（VASP-Doctor × Workflow Builder）
+# VASP-Copilot v0.2.4（VASP-Doctor × Workflow Builder）
 
 VASP 计算**诊断**（vasp-doctor）与**工作流生成**（vasp-copilot / Workflow Builder）一体化后端 + 前端源码包。
 
-> v0.2.3 修复 Materials Project API key 连通测试的分页参数兼容性，
-> 澄清任务级 Real/Fake/None 运行环境，并将首页示例记录替换为真实历史汇总。
-> 保留既有结构化输入、脚本认领和单次授权边界。详见 [CHANGELOG.md](./CHANGELOG.md) `[0.2.3]`。
+> v0.2.4 为智能聊天新增受控 Materials Project 检索与 POSCAR 导入，
+> 修复确认卡在服务恢复后的本地写入链路，并移除首页和顶栏的冗余环境说明。
+> 自由命令仍保持禁用，导入不会自动上传或提交。详见 [CHANGELOG.md](./CHANGELOG.md) `[0.2.4]`。
 
-- 当前稳定版本：[v0.2.3](https://github.com/USTC-Major/vasp-copilot/releases/tag/v0.2.3)
+- 当前稳定版本：[v0.2.4](https://github.com/USTC-Major/vasp-copilot/releases/tag/v0.2.4)
 - 完整更新记录：[CHANGELOG.md](./CHANGELOG.md)
 
 - 上传一个 VASP 运行目录 zip，依次完成：`安全解压 → 文件识别 → 解析 → 规则诊断 → 修复建议 → Markdown 报告 → （可选）LLM 通俗解释与追问`；
@@ -169,6 +169,20 @@ docker compose down -v               # 彻底清理（连同全部数据）
 
 无超算环境时智能模式内置本地 Fake HPC 适配器（默认开启），可完整演示从规划到报告的全流程。
 
+#### 智能聊天导入 MP 结构
+
+在智能设置中保存 MP API key，并为任务选择本地工作区。可对 AI 说：
+“搜索 BaTiO3 的 Materials Project 候选，列出材料 ID 和空间群号，先不要导入”。
+选择具体材料后，再要求“导入选定的 MP 材料 ID，生成 POSCAR 确认卡，不上传、不提交”。
+也可直接指定已知的材料 ID。
+
+AI 使用专用 `mp_search` / `mp_import_poscar` 工具；结构由后端确定性转换，
+确认前不写文件。默认目标为任务本地工作区根目录 `POSCAR`，也可指定已规划作业目录；
+覆盖已有文件会在卡片中明示。拒绝、过期或文件变化后旧确认不能写入。
+获取结构仅访问 MP 官方固定 HTTPS 端点，不接受任意 URL 或命令，
+不把密钥发送给 LLM。无序/部分占位、异常结构或超出大小限制时明确报错。
+上传超算仍需单独确认。智能设置的 MP key 与工具箱的 `MP_API_KEY` 配置相互独立。
+
 ### 2.5 五分钟演示路径
 
 1. 启动三服务（2.0 节），打开 http://127.0.0.1:5173；
@@ -212,14 +226,15 @@ python -B -m pytest tests -q              # 全量测试（doctor 诊断 + BE-A 
 python scripts/export_openapi.py          # 导出 backend/openapi.json（供前端 TS 类型）
 ```
 
-v0.2.3 发布验证：
+v0.2.4 发布验证：
 
-- 后端测试：`1118 passed, 0 failed`（含工具箱主后端与 ai_mode，46 warnings）；
+- 后端测试：`1166 passed, 0 failed`（含工具箱主后端与 ai_mode，46 warnings）；
 - 前端测试：`61 passed, 0 failed`；
 - lint 0 errors（保留既有 Fast Refresh warnings）；Vite production build 成功，页面级代码分包；
-- 完整性校验：`SHA256SUMS.txt` 共 521 项，0 项失败（按 Git 源码归档字节校验）。
+- 端到端冒烟通过；`SHA256SUMS.txt` 共 523 项，0 项失败（按 Git 源码归档字节校验）。
 
-首页汇总真实 AI 项目/任务、工作流与诊断记录。AI 历史持久保存；工作流与诊断仅列当前进程未过期的 TTL 快照，过期或服务重启后不可恢复。MP 连通测试参数已通过回归测试，本轮未用真实 key 联网复测。
+MP 合约、响应边界、结构转换、密钥隔离和单次确认已通过隔离回归测试；
+本轮环境未配置真实 MP API key，因此未做真实联网结构下载验收。
 
 Compose/YAML、端口和持久化映射已完成静态校验；真实 docker compose build/up 尚待具备 Docker 的环境验证。
 
@@ -275,8 +290,8 @@ Get-FileHash -Algorithm SHA256 <file>   # 与清单逐项比对
 
 ## 8. 打包信息
 
-- 当前稳定版本：v0.2.3
-- 发布页面：https://github.com/USTC-Major/vasp-copilot/releases/tag/v0.2.3
+- 当前稳定版本：v0.2.4
+- 发布页面：https://github.com/USTC-Major/vasp-copilot/releases/tag/v0.2.4
 - GitHub 自动提供 Source code (zip) 与 Source code (tar.gz)
 - 发布源码归档不包含虚拟环境、`node_modules`、缓存、私有输入或运行数据
 - `SHA256SUMS.txt` 按 Git 归档中的原始文件字节生成，覆盖源码、测试、前端与 demo case 文件；条目数与结果见第 4 节发布验证

@@ -202,6 +202,8 @@ def tool_schema_text() -> str:
         "- get_state：查看当前计算流程状态（phase/规划/作业/precheck/草稿）。args: {}\n"
         "- ws_list：列出任务本地工作区文件（只读快照，有界）。args: {}\n"
         "- ws_read：读取本地工作区某个文件全文（只读、有界）。args: {\"path\":\"相对路径\"}\n"
+        "- mp_search：按化学式只读搜索 Materials Project，返回材料 ID、空间群号和能量信息。后端使用智能设置里的 MP key，不向你暴露密钥。args: {\"formula\":\"BaTiO3\",\"limit\":5}\n"
+        "- mp_import_poscar：按明确材料 ID 获取真实结构，由确定性代码生成 POSCAR 预览和一次性确认卡；确认前不写本地文件，绝不上传或提交。默认保存任务本地工作区根目录 POSCAR，可用已规划 job_key 指定子目录。多个候选须先让用户选 ID/晶相，不得擅自挑选。args: {\"material_id\":\"mp-149\",\"job_key\":\"\"}\n"
         "- hpc_list：列出超算工作区（hpc_dir）远端目录内容（只读；计算发生地，超算上的文件一律用它看）。args: {\"path\":\"相对子目录，可空\"}\n"
         "- hpc_read：读取超算工作区内某个文本文件（只读、有界）。args: {\"path\":\"相对路径\"}\n"
         "- hpc_upload：请求把已登记的本地工作区文件上传到超算工作区；该操作只生成逐次确认卡，确认前绝不写远端。args: {\"artifact_id\":\"用户已登记文件 ID\",\"job_key\":\"作业 key\"}\n"
@@ -409,6 +411,8 @@ class ToolExecutor:
         "get_state": "tool_get_state",
         "ws_list": "tool_ws_list",
         "ws_read": "tool_ws_read",
+        "mp_search": "tool_mp_search",
+        "mp_import_poscar": "tool_mp_import_poscar",
         "hpc_list": "tool_hpc_list",
         "hpc_read": "tool_hpc_read",
         "hpc_upload": "tool_hpc_upload",
@@ -666,7 +670,8 @@ class ToolExecutor:
         binding = action.get("binding") or {}
         operation = binding.get("operation")
         try:
-            if binding.get("execution_mode") != self._execution_mode():
+            # MP import is a local-only action and must not require an HPC adapter.
+            if operation != "mp_poscar_write" and binding.get("execution_mode") != self._execution_mode():
                 raise ValueError("HPC execution mode changed after confirmation")
             if operation == "incar_write":
                 result = commit_incar_action(action, root=self.local_dir())
@@ -676,6 +681,21 @@ class ToolExecutor:
                 result = self._execute_upload_action(binding)
             elif operation == "kpoints_write":
                 result = self._execute_deterministic_text_action(binding)
+            elif operation == "mp_poscar_write":
+                if not str(self._task().get("local_workspace") or "").strip():
+                    raise ValueError("local workspace is no longer selected")
+                self._mp_poscar_target(binding["relative_path"])
+                result = self._execute_deterministic_text_action(binding)
+                flow = self._load_flow()
+                imported = dict(flow.get("material_imports") or {})
+                imported[binding["relative_path"]] = {
+                    "material_id": binding["material_id"],
+                    "source_url": binding["source_url"],
+                    "sha256": binding["proposal_sha256"],
+                }
+                flow["material_imports"] = imported
+                self._save_flow(flow)
+                result += f"，来源 Materials Project {binding['material_id']}；未上传或提交。"
             elif operation == "script_attestation":
                 result = self._execute_script_attestation(action)
             elif operation == "retry_job":
@@ -1185,6 +1205,73 @@ class ToolExecutor:
         )
         saved = save_card(self.store, self.project_id, self.task_id,
                           self._load_flow(), payload)
+        raise PendingConsentError(saved)
+
+    def tool_mp_search(self, args: dict) -> str:
+        from ..materials import MaterialsError, search
+        if set(args) - {"formula", "limit"}:
+            return "[MP_INVALID_QUERY] 仅接受 formula 与 limit，不接受 URL、命令或密钥"
+        try:
+            rows = search(self.cfg.mp_api_key, args.get("formula"), args.get("limit", 5))
+        except MaterialsError as exc:
+            return str(exc)
+        return json.dumps({"source": "Materials Project", "materials": rows,
+                           "next": "请用户确认材料 ID/晶相，再调用 mp_import_poscar；尚未写入文件"},
+                          ensure_ascii=False)
+
+    def _mp_poscar_target(self, relative: str) -> Path:
+        # Fixed filename only; reject links even when they resolve within the workspace.
+        if Path(relative).name != "POSCAR":
+            raise ValueError("MP import only writes POSCAR")
+        root = self.local_dir().resolve()
+        current = root
+        for part in Path(relative).parts:
+            current = current / part
+            if current.is_symlink() or getattr(current, "is_junction", lambda: False)():
+                raise ValueError("MP target cannot contain symbolic links or junctions")
+        target = check_path_in_bounds(relative, root, write=True)
+        from ..materials import MAX_POSCAR_BYTES
+        if target.exists() and (not target.is_file() or target.stat().st_size > MAX_POSCAR_BYTES):
+            raise ValueError("existing POSCAR is not a bounded regular file")
+        return target
+
+    def tool_mp_import_poscar(self, args: dict) -> str:
+        from ..materials import MaterialsError, fetch_poscar
+        if set(args) - {"material_id", "job_key"}:
+            return "[MP_INVALID_QUERY] 仅接受 material_id 与 job_key，不接受 URL、正文、命令或密钥"
+        if not str(self._task().get("local_workspace") or "").strip():
+            return "[MP_WORKSPACE_REQUIRED] 请先为任务选择本地工作区"
+        job_key = self._clean_job_subdir(args.get("job_key"))
+        jobs = (self._load_flow().get("plan") or {}).get("jobs") or []
+        if job_key is None or (job_key and job_key not in {job.get("key") for job in jobs}):
+            return "[MP_INVALID_TARGET] 目标仅限工作区根目录或已规划作业目录"
+        relative = f"{job_key}/POSCAR" if job_key else "POSCAR"
+        target = self._mp_poscar_target(relative)
+        base_hash = self._sha256_file(target) if target.is_file() else ""
+        try:
+            proposal = fetch_poscar(self.cfg.mp_api_key, args.get("material_id"))
+        except MaterialsError as exc:
+            return str(exc)
+        data = proposal["content"].encode("utf-8")
+        binding = {
+            "operation": "mp_poscar_write", "project_id": self.project_id,
+            "task_id": self.task_id, "job_key": job_key,
+            "execution_kind": "local_materials_project_import", "execution_mode": "None",
+            "workspace_root": str(self.local_dir().resolve()), "relative_path": relative,
+            "base_sha256": base_hash, "proposal_sha256": hashlib.sha256(data).hexdigest(),
+            "proposal_size": len(data), **proposal,
+        }
+        verb = "覆盖现有文件" if target.exists() else "新建文件"
+        payload = card_payload(
+            tool="mp_import_poscar", args={"material_id": proposal["material_id"], "job_key": job_key},
+            risk="medium", reason="仅本地写入，绑定所选材料、目标路径、原文件和新内容哈希；不会上传或提交。",
+            batch_key=f"mp|{binding['workspace_root']}|{relative}|{base_hash}|{binding['proposal_sha256']}",
+            kind="mp_poscar_write",
+            summary=(f"Materials Project {proposal['material_id']} / {proposal['formula']} / "
+                     f"{proposal['atom_count']} 原子\n{verb}：`{relative}`\n"
+                     f"SHA-256：{binding['proposal_sha256']}\n```\n{proposal['content']}```"),
+            binding=binding)
+        saved = save_card(self.store, self.project_id, self.task_id, self._load_flow(), payload)
         raise PendingConsentError(saved)
 
     def tool_copy_inputs(self, args: dict) -> str:

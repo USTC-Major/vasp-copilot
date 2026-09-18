@@ -54,7 +54,58 @@ from .streaming import ChatRun, GenerationBusy, generation_status, request_stop
 logger = logging.getLogger("ai_mode")
 
 APP_TITLE = "VASP-Doctor 智能模式"
-APP_VERSION = "0.2.3"
+APP_VERSION = "0.2.4"
+
+
+def _resolve_mp_import(store, project_id: str, task_id: str, card_id: str,
+                       approved: bool, note: str, cfg) -> dict:
+    """Resolve and execute a local MP import without relying on a live chat run.
+
+    Browser disconnects already leave ``ChatRun`` alive, but a service restart
+    cannot resume its waiting generator.  This deterministic local action is
+    therefore claimed and executed by the consent request itself.  The shared
+    task lock makes a concurrently waiting chat run observe the same terminal
+    action instead of writing twice.
+    """
+    from .agent.tools import ToolExecutor
+
+    with _task_state_lock(project_id, task_id):
+        before = _get_consent_card(store, project_id, task_id, card_id) or {}
+        resolved = _resolve_consent_card(
+            store, project_id, task_id, card_id,
+            approved=approved, note=note)
+        state = str(resolved.get("state") or before.get("state") or "")
+        if not approved:
+            return {"ok": state == "rejected", "approved": False,
+                    "state": state,
+                    "result": "已拒绝本次操作；未执行任何变更"}
+        if state not in {"approved", "executed"}:
+            result = str((_get_consent_card(
+                store, project_id, task_id, card_id) or {}).get("result") or
+                "该确认已处理、过期或失效；未执行任何变更")
+            return {"ok": False, "approved": False, "state": state,
+                    "result": result}
+
+        def no_hpc():
+            raise RuntimeError("MP import must not construct an HPC adapter")
+
+        executor = ToolExecutor(
+            store=store, project_id=project_id, task_id=task_id,
+            cfg=cfg, orch_factory=no_hpc)
+        result = executor.execute_action(card_id)
+        current = _get_consent_card(store, project_id, task_id, card_id) or {}
+        state = str(current.get("state") or "")
+        result = str(current.get("result") or result or "")
+
+        # With no producer to persist the resumed result (for example after a
+        # service restart), keep one user-visible audit message.  A live run
+        # will consume the same terminal action and persist its own final reply.
+        newly_terminal = before.get("state") in {"pending", "approved"}
+        if newly_terminal and not generation_status(
+                store, project_id, task_id).get("running") and result:
+            store.append_message(project_id, task_id, "assistant", result)
+        return {"ok": state == "executed", "approved": state == "executed",
+                "state": state, "result": result}
 
 
 def _mask(config) -> dict:
@@ -753,6 +804,11 @@ def create_ai_mode_app() -> FastAPI:
                 store.append_message(project_id, task_id, "assistant", final)
             return {"mode": "ai", "ok": True, "kind": "submit",
                     "approved": approved, "result": final}
+        if kind == "mp_poscar_write":
+            outcome = await asyncio.to_thread(
+                _resolve_mp_import, store, project_id, task_id, card_id,
+                approved, note, cfg)
+            return {"mode": "ai", "kind": kind, **outcome}
         resolved = _resolve_consent_card(store, project_id, task_id, card_id,
                                          approved=approved, note=note)
         return {"mode": "ai", "ok": True, "kind": kind,

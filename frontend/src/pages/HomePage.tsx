@@ -90,9 +90,6 @@ const HomePage: React.FC = () => {
         <Paragraph style={{ fontSize: 17, maxWidth: 600, margin: '0 auto 16px', color: '#6e6e73' }}>
           面向材料计算初学者的 VASP 输入文件生成与计算结果诊断平台
         </Paragraph>
-        <Tag style={{ marginTop: 8, fontSize: 13, padding: '4px 14px', borderRadius: 999 }}>
-          运行环境以具体智能任务的 Real / Fake / None 标识为准
-        </Tag>
       </div>
 
       {/* 两大板块 */}

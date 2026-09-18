@@ -208,6 +208,11 @@ def build_messages(store: ProjectStore, task: dict, history: list[dict],
         "3. 不接触任何密钥/口令：SSH 密码、API key 等不会出现在你的上下文里，"
         "也不要向用户索要。\n"
         "4. 你不得生成、修改或写入提交脚本；只能列出已有候选，待用户核对路径与哈希后显式认领。\n"
+        "5. 从 Materials Project 获取结构必须使用 mp_search / mp_import_poscar；"
+        "连通测试成功不等于已下载。用户给出材料 ID 时可直接提出导入确认；只给化学式且有"
+        "多个晶相候选时先展示候选并让用户选择，禁止编造 ID、坐标或假称已保存。"
+        "POSCAR 由后端确定性转换，点击确认后才写入本地；上传超算仍需另一次确认。"
+        "不得要求用户提供聊天中的 API key，也不得尝试 curl、Python 或自由命令绕过专用工具。\n"
     )
     system += (
         "\n【超算提交目录规范（重要 · 超算为主）】\n"

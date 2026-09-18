@@ -12,6 +12,14 @@ from __future__ import annotations
 import io
 import sys
 import zipfile
+from pathlib import Path
+
+# Make the documented direct invocation work without a pre-existing
+# PYTHONPATH.  ``python scripts/smoke_test.py`` otherwise exposes only the
+# scripts directory on sys.path.
+BACKEND_ROOT = Path(__file__).resolve().parent.parent
+if str(BACKEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(BACKEND_ROOT))
 
 from fastapi.testclient import TestClient
 
@@ -107,14 +115,14 @@ def main() -> int:
           r.status_code == 200 and r.headers["content-type"].startswith("text/markdown"))
 
     # --- preview（设计 6.2：结构化 JSON、OUTCAR 限行、普通文本截断+游标翻页） ---
-    r = CLIENT.get(f"/api/v1/files/{diag}/preview", params={"path": "OUTCAR"})
+    r = CLIENT.get(f"/api/v1/diagnosis/{diag}/preview", params={"path": "OUTCAR"})
     ok = r.status_code == 200
     if ok:
         pd = r.json()["data"]
         ok = pd["kind"] == "outcar" and pd["policy"]["max_preview_lines"] == 500
     check("preview OUTCAR 结构化且限 500 行", ok)
 
-    r = CLIENT.get(f"/api/v1/files/{diag}/preview",
+    r = CLIENT.get(f"/api/v1/diagnosis/{diag}/preview",
                    params={"path": "notes.txt", "max_lines": 50})
     ok = r.status_code == 200
     p = None
@@ -123,13 +131,13 @@ def main() -> int:
         ok = p["truncated"] is True and bool(p["next_cursor"])
     check("普通文本截断并返回 next_cursor", ok, f"next_cursor={p and p['next_cursor']}")
     if ok:
-        r2 = CLIENT.get(f"/api/v1/files/{diag}/preview",
+        r2 = CLIENT.get(f"/api/v1/diagnosis/{diag}/preview",
                         params={"path": "notes.txt", "cursor": p["next_cursor"]})
         ok2 = (r2.status_code == 200
                and r2.json()["data"]["preview"]["start_line"] == 51)
         check("用 next_cursor 翻到下一页", ok2)
 
-    r = CLIENT.get(f"/api/v1/files/{diag}/preview", params={"path": "../secret"})
+    r = CLIENT.get(f"/api/v1/diagnosis/{diag}/preview", params={"path": "../secret"})
     check("preview 路径穿越 403", r.status_code == 403)
 
     # --- explain（LLM 默认关闭时返回降级文案，开启时返回回答） ---

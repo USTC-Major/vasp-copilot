@@ -9,6 +9,36 @@
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-09-18
+
+### Fixed
+
+- 移除首页和顶栏冗余的运行环境说明标签；保留智能任务上的
+  Real/Fake/None 标识和工具箱远程部署入口的演示提示。
+- 补齐智能模式聊天中的 Materials Project 结构获取能力：此前连通测试成功
+  仅说明密钥可用，禁用自由命令后没有专用结构导入工具可供 AI 调用。
+- 恢复出的 MP 导入确认卡改由同意接口直接 claim 并执行确定性本地写入，
+  不再依赖原聊天线程仍然存活；活跃线程与重复请求仍只会执行一次。
+- 修正端到端冒烟脚本的诊断预览接口，并使文档中的直接运行命令不依赖
+  调用方预先设置 `PYTHONPATH`。
+
+### Added
+
+- 新增受控 `mp_search` 和 `mp_import_poscar` 工具，使用智能设置中的 MP key，
+  按化学式检索候选并按明确材料 ID 获取结构；由确定性代码生成 POSCAR。
+- POSCAR 写入须逐次确认，绑定目标路径、原文件和新内容哈希；记录 MP 来源，
+  拒绝无序/部分占位及异常结构，限制响应大小并禁止任意下载地址和重定向。
+  导入不自动上传或提交超算，未重新开放自由命令权限。
+
+### Validation and known limitations
+
+- 后端 1166 项、前端 61 项测试通过；lint 无错误，生产构建和端到端冒烟成功。
+- Materials Project 官方 API 合约通过文档核对，HTTP、结构、密钥隔离、
+  授权过期/篡改/重放和前后端恢复均有隔离回归；当前环境未配置真实 MP key，
+  本轮未做真实联网结构下载验收。
+- 未新增或执行 HPC 提交，也未重启有在途计算的服务；保留单用户、本地/可信网络
+  及既有一次性授权边界。
+
 ## [0.2.3] - 2026-09-18
 
 ### Fixed
@@ -243,7 +273,8 @@
 - 建立 Recipe Pack 驱动的 INCAR、KPOINTS、POSCAR 与提交脚本生成流程。
 - 建立 FastAPI 后端、React 前端、自动化测试、Docker 配置和演示用例。
 
-[Unreleased]: https://github.com/USTC-Major/vasp-copilot/compare/v0.2.3...HEAD
+[Unreleased]: https://github.com/USTC-Major/vasp-copilot/compare/v0.2.4...HEAD
+[0.2.4]: https://github.com/USTC-Major/vasp-copilot/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/USTC-Major/vasp-copilot/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/USTC-Major/vasp-copilot/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/USTC-Major/vasp-copilot/compare/v0.2.0...v0.2.1

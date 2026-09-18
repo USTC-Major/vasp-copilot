@@ -53,7 +53,7 @@ describe('HomePage recent history', () => {
       ],
     })));
     renderHome();
-    expect(screen.getByText('运行环境以具体智能任务的 Real / Fake / None 标识为准')).toBeInTheDocument();
+    expect(screen.queryByText('运行环境以具体智能任务的 Real / Fake / None 标识为准')).not.toBeInTheDocument();
     expect(screen.getByText('远程部署（离线演示）')).toBeInTheDocument();
     expect(screen.queryByText(/模拟环境 - Fake HPC 模式/)).not.toBeInTheDocument();
     expect(await screen.findByText('真实后端任务')).toBeInTheDocument();

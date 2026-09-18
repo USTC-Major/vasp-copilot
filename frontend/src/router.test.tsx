@@ -25,6 +25,8 @@ describe('路由懒加载', () => {
     expect(await screen.findAllByText(/VASP-Copilot/)).not.toHaveLength(0);
     expect(screen.getByText(/任何文件写入与作业提交都按本次精确内容确认/)).toBeInTheDocument();
     expect(screen.getByText(/不会自动补提/)).toBeInTheDocument();
+    expect(screen.queryByText('任务级运行环境')).not.toBeInTheDocument();
+    expect(screen.queryByText('运行环境以具体智能任务的 Real / Fake / None 标识为准')).not.toBeInTheDocument();
   });
 
   it('工作流页可渲染（懒加载）', async () => {
