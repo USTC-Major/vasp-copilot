@@ -437,11 +437,6 @@ export const aiApi = {
   browseHpc: (path?: string) =>
     aiRequest<import("../types/ai").AiBrowseResponse>(`/browse/hpc${path ? `?path=${encodeURIComponent(path)}` : ""}`),
 
-  mkdirLocal: (path: string, name: string) =>
-    aiRequest<import("../types/ai").AiMkdirResponse>("/browse/local/mkdir", { method: "POST", body: { path, name } }),
-  mkdirHpc: (path: string, name: string) =>
-    aiRequest<import("../types/ai").AiMkdirResponse>("/browse/hpc/mkdir", { method: "POST", body: { path, name } }),
-
   pickLocal: (initialDir?: string) =>
     aiRequest<import("../types/ai").AiPickResponse>("/browse/local/pick", {
       method: "POST",
@@ -536,9 +531,6 @@ export const aiApi = {
     aiRequest<import("../types/ai").AiContextSummary>("/context"),
   getTaskContext: (projectId: string, taskId: string) =>
     aiRequest<import("../types/ai").AiContextSummary>(`/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(taskId)}/context`),
-  getTaskDetail: (projectId: string, taskId: string) =>
-    aiRequest<{ mode: string; task_id: string; flow: import("../types/ai").AiFlowDetail }>(
-      `/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(taskId)}/detail`),
   getWaitQueue: () =>
     aiRequest<{ waiting: import("../types/ai").AiWaitQueueEntry[]; count: number }>("/jobs/waiting"),
 };

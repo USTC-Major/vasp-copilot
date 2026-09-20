@@ -1,14 +1,11 @@
-"""M032/M33 本地/超算工作区「图形化浏览点选 + 新建文件夹」后端测试。
+"""M032/M33 本地/超算工作区「图形化浏览点选」后端测试。
 
 覆盖：
 - browse_local：空 path 返回盘符/主目录起点；有效目录列出条目并按目录优先
   排序；隐藏/系统目录与进不去的目录被过滤；不存在返回 notice 信封（200 不抛）。
 - browse_hpc：内存 FakeSSH 注入 SSHManager 同签名能力，空 path 返回 / 与
   主目录起点、过滤点开头隐藏目录与无关目录。
-- mkdir_local / mkdir_hpc：合法名建目录成功且可被重新列出；非法名返回
-  ok=False + 中文提示。
-- 路由：/ai/v1/browse/local|hpc 与 /ai/v1/browse/local|hpc/mkdir 的
-  启用 / 未配置超算 400 面。
+- 路由：/ai/v1/browse/local|hpc 的启用 / 未配置超算 400 面。
 
 
 - pick 路由：/ai/v1/browse/local/pick 由后端弹系统原生目录选择窗（子进程 Tk），
@@ -22,15 +19,13 @@ from ai_mode.browse import (
     browse_hpc,
     browse_local,
     local_roots,
-    mkdir_hpc,
-    mkdir_local,
 )
 from ai_mode.server import create_ai_mode_app
 from ai_mode.ssh.errors import SSHSFTPError
 
 
 class FakeSSH:
-    """具备 SSHManager 同签名浏览/建目录能力的假超算层（离线测试）。"""
+    """具备 SSHManager 同签名浏览能力的假超算层（离线测试）。"""
 
     def __init__(self):
         self.tree = {
@@ -38,7 +33,6 @@ class FakeSSH:
                   "lost+found": "dir"},
             "/a": {"c": "dir", "INCAR": "file"},
         }
-        self.made = []
 
     def list_dir_info(self, path):
         key = path.rstrip("/") or "/"
@@ -55,11 +49,6 @@ class FakeSSH:
         if command == "pwd":
             return 0, "/home/alice\n", ""
         return 0, "", ""
-
-    def mkdir(self, remote):
-        self.made.append(remote)
-        key = remote.rstrip("/") or "/"
-        self.tree.setdefault(key, {})
 
 
 def test_local_roots_contain_home():
@@ -140,37 +129,6 @@ def test_browse_hpc_missing_returns_notice():
     assert data["entries"] == []
 
 
-def test_mkdir_local_creates(tmp_path):
-    result = mkdir_local(str(tmp_path), "newdir")
-    assert result["ok"] is True
-    assert (tmp_path / "newdir").is_dir()
-    names = [e["name"] for e in browse_local(str(tmp_path))["entries"]]
-    assert "newdir" in names
-
-
-def test_mkdir_local_rejects_bad_names(tmp_path):
-    for bad in ("", "a/b", "..", "a\\b", "x" * 121):
-        result = mkdir_local(str(tmp_path), bad)
-        assert result["ok"] is False
-        assert result["notice"]
-
-
-def test_mkdir_hpc_creates():
-    ssh = FakeSSH()
-    result = mkdir_hpc(ssh, "/a", "newdir")
-    assert result["ok"] is True
-    assert result["path"] == "/a/newdir"
-    assert "/a/newdir" in ssh.made
-
-
-def test_mkdir_hpc_rejects_bad_names():
-    ssh = FakeSSH()
-    result = mkdir_hpc(ssh, "/a", "../b")
-    assert result["ok"] is False
-    assert result["notice"]
-    assert ssh.made == []
-
-
 @pytest.fixture
 def enabled_client(monkeypatch, tmp_path):
     monkeypatch.setenv("VASP_AI_HOME", str(tmp_path))
@@ -221,45 +179,6 @@ def test_browse_hpc_route_with_fake_ssh(enabled_client, monkeypatch):
     roots = r2.json()["roots"]
     assert any(rr["name"] == "/home/alice" for rr in roots)
 
-
-def test_mkdir_local_route(enabled_client, tmp_path):
-    r = enabled_client.post("/ai/v1/browse/local/mkdir",
-                            json={"path": str(tmp_path), "name": "dir1"})
-    assert r.status_code == 200
-    body = r.json()
-    assert body["kind"] == "local"
-    assert body["ok"] is True
-    assert (tmp_path / "dir1").is_dir()
-    bad = enabled_client.post("/ai/v1/browse/local/mkdir",
-                              json={"path": str(tmp_path), "name": "a/b"})
-    assert bad.status_code == 200
-    assert bad.json()["ok"] is False
-
-
-def test_mkdir_hpc_route_unconfigured(enabled_client):
-    r = enabled_client.post("/ai/v1/browse/hpc/mkdir",
-                            json={"path": "/", "name": "dir1"})
-    assert r.status_code == 400
-    assert r.json()["error"]["code"] == "AI_MODE_HPC_UNCONFIGURED"
-
-
-def test_mkdir_hpc_route_with_fake_ssh(enabled_client, monkeypatch):
-    import ai_mode.browse as browse_module
-
-    class FakeManager(FakeSSH):
-        def close(self):
-            pass
-
-    def fake_factory(cfg):
-        return FakeManager()
-
-    monkeypatch.setattr(browse_module, "create_hpc_ssh", fake_factory)
-    r = enabled_client.post("/ai/v1/browse/hpc/mkdir",
-                            json={"path": "/a", "name": "newdir"})
-    assert r.status_code == 200
-    body = r.json()
-    assert body["kind"] == "hpc"
-    assert body["ok"] is True
 
 def test_local_pick_program_compiles():
     import ai_mode.browse as browse_module

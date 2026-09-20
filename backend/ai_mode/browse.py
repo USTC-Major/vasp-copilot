@@ -5,10 +5,9 @@
 - 过滤隐藏与系统目录：本地忽略点开头名、Windows 隐藏/系统属性及常见系统目录；
   超算忽略点开头目录与 lost+found 等无关目录。
 - 本地对进不了的目录实地探测后跳过（不展示无权目录）。
-- 新建文件夹：本地 mkdir / 超算 SFTP mkdir；仅命名校验，不做越权路径操作。
 
 安全边界：
-- 本模块只做目录列举与「用户显式」新建文件夹，不写不删已存在文件、不执行命令；
+- 本模块只做只读目录列举，不写不删文件、不建目录、不执行命令；
   出错只回简明提示，不携带敏感系统信息。
 - 超算操作复用 M6 SSH 层（SFTP），路线与 Orchestrator 相同；密码只经凭据管理器。
 - 返回前端的是目录树（路径文本），不进 LLM 上下文。
@@ -44,9 +43,6 @@ _HPC_SKIP_NAMES = {
     "lost+found",
     "lost_found",
 }
-
-_ILLEGAL_WINDOWS_CHARS = set('<>:"|?*')
-
 
 def local_roots() -> list[dict]:
     """本地图形化点选的起点：Windows 现有盘符 + 用户主目录。"""
@@ -194,63 +190,6 @@ def browse_hpc(ssh, path: str) -> dict:
                           key=lambda e: (not e.get("is_dir", False),
                                          str(e.get("name", "")).lower())),
     }
-
-
-def validate_new_name(name) -> tuple[bool, str]:
-    """校验新建文件夹名；返回 (ok, 错误信息)。"""
-    name = (name or "").strip()
-    if not name:
-        return False, "文件夹名不能为空"
-    if len(name) > 120:
-        return False, "文件夹名过长（超过 120 字符）"
-    if "/" in name or "\\" in name or name in (".", ".."):
-        return False, "文件夹名不能包含路径分隔符"
-    if any(ord(ch) < 32 for ch in name):
-        return False, "文件夹名包含非法控制字符"
-    if os.name == "nt":
-        if any(ch in _ILLEGAL_WINDOWS_CHARS for ch in name):
-            return False, "文件夹名包含非法字符（<>:\"/|?*）"
-        if name.endswith((" ", ".")):
-            return False, "Windows 文件夹名不能以空格或点结尾"
-    return True, ""
-
-
-def _mkdir_result(ok: bool, *, path: str = "", notice: str = "") -> dict:
-    return {"ok": ok, "path": path, "notice": notice}
-
-
-def mkdir_local(path: str, name: str) -> dict:
-    """在本地目录下新建文件夹（仅单层；名称名校验严格）。"""
-    ok, reason = validate_new_name(name)
-    if not ok:
-        return _mkdir_result(False, notice=reason)
-    path = (path or "").strip() or str(Path.home())
-    try:
-        target = Path(path) / name
-        target.mkdir(exist_ok=True)
-        return _mkdir_result(True, path=str(target))
-    except PermissionError:
-        return _mkdir_result(False, notice="无权限在该目录下新建文件夹")
-    except OSError as exc:
-        return _mkdir_result(False,
-                             notice=f"新建文件夹失败（{exc.__class__.__name__}）")
-
-
-def mkdir_hpc(ssh, path: str, name: str) -> dict:
-    """在远端目录下新建文件夹（SFTP mkdir，仅单层）。"""
-    ok, reason = validate_new_name(name)
-    if not ok:
-        return _mkdir_result(False, notice=reason)
-    path = (path or "").strip()
-    try:
-        target = posixpath.join(path, name) if path else name
-        ssh.mkdir(target)
-        return _mkdir_result(True, path=target)
-    except SSHError as exc:
-        return _mkdir_result(False, notice=str(exc) or "新建文件夹失败")
-    except Exception as exc:  # noqa: BLE001
-        return _mkdir_result(False,
-                             notice=f"新建文件夹失败（{exc.__class__.__name__}）")
 
 
 def create_hpc_ssh(cfg: AiModeConfig):

@@ -435,16 +435,6 @@ export function useAiTaskContext(projectId: string | null, taskId: string | null
   });
 }
 
-export function useAiTaskDetail(projectId: string | null, taskId: string | null) {
-  return useQuery({
-    queryKey: ['aiTaskDetail', projectId, taskId],
-    queryFn: () => aiApi.getTaskDetail(projectId!, taskId!),
-    enabled: !!projectId && !!taskId,
-    // 监控中状态变化频繁，进度页轮询 15s 自动刷新
-    refetchInterval: 15 * 1000,
-  });
-}
-
 export function useAiWaitQueue() {
   return useQuery({
     queryKey: ['aiWaitQueue'],

@@ -9,7 +9,6 @@ import App from './App';
 import HomePage from './pages/HomePage';
 import AiProjectsPage from './pages/AiProjectsPage';
 import AiProjectPage from './pages/AiProjectPage';
-import AiProgressPage from './pages/AiProgressPage';
 import AiSettingsPage from './pages/AiSettingsPage';
 import PageLoading from './components/common/PageLoading';
 
@@ -32,7 +31,6 @@ export const routes: RouteObject[] = [
     children: [
       { path: 'ai', element: <AiProjectsPage /> },
       { path: 'ai/projects/:projectId', element: <AiProjectPage /> },
-      { path: 'ai/projects/:projectId/progress/:taskId', element: <AiProgressPage /> },
       { path: 'ai/settings', element: <AiSettingsPage /> },
       { index: true, element: <HomePage /> },
       { path: 'workflow', element: withSuspense(<WorkflowBuilderPage />) },

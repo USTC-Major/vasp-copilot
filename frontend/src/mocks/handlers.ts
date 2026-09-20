@@ -662,29 +662,10 @@ export const aiHandlers = [
     });
   }),
 
-  http.post(`${AI_BASE}/browse/local/mkdir`, async ({ request }) => {
-    const body = (await request.json()) as { path?: string; name?: string };
-    const name = (body.name || "").trim();
-    if (!name) {
-      return HttpResponse.json({ mode: "ai", ok: false, notice: "文件夹名不能为空" });
-    }
-    const p = ((body.path || "D:/").replace(/[/]+$/, "") + "/" + name);
-    return HttpResponse.json({ mode: "ai", kind: "local", ok: true, path: p, notice: "" });
-  }),
-
   http.post(`${AI_BASE}/browse/local/pick`, () =>
     HttpResponse.json({ mode: "ai", kind: "local", ok: true, path: "D:\\mock\\workspace\\picked" }),
   ),
 
-  http.post(`${AI_BASE}/browse/hpc/mkdir`, async ({ request }) => {
-    const body = (await request.json()) as { path?: string; name?: string };
-    const name = (body.name || "").trim();
-    if (!name) {
-      return HttpResponse.json({ mode: "ai", ok: false, notice: "文件夹名不能为空" });
-    }
-    const p = ((body.path || "/").replace(/[/]+$/, "") + "/" + name);
-    return HttpResponse.json({ mode: "ai", kind: "hpc", ok: true, path: p, notice: "" });
-  }),
 ];
 
 // 并入主 handlers：MSW server（测试）与 browser（?mock=1 演示）均依赖它。
