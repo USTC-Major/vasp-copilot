@@ -596,43 +596,6 @@ def create_ai_mode_app() -> FastAPI:
             except Exception:
                 pass
 
-    @app.post("/ai/v1/browse/local/mkdir")
-    async def browse_local_mkdir(payload: dict):
-        cfg = load_settings()
-        resp = _require_enabled(cfg)
-        if resp is not None:
-            return resp
-        from .browse import mkdir_local as _mkdir_local
-        return {"mode": "ai", "kind": "local",
-                **_mkdir_local(str(payload.get("path") or ""),
-                               str(payload.get("name") or ""))}
-
-    @app.post("/ai/v1/browse/hpc/mkdir")
-    async def browse_hpc_mkdir(payload: dict):
-        cfg = load_settings()
-        resp = _require_enabled(cfg)
-        if resp is not None:
-            return resp
-        from . import browse as _browse_mod
-        ssh = _browse_mod.create_hpc_ssh(cfg)
-        if ssh is None:
-            return JSONResponse(status_code=400, content={"mode": "ai", "error": {
-                "code": "AI_MODE_HPC_UNCONFIGURED",
-                "message": "未配置超算账号：请在设置页添加 SSH 账号后再管理超算目录。",
-                "retryable": False}})
-        try:
-            return {"mode": "ai", "kind": "hpc",
-                    **_browse_mod.mkdir_hpc(ssh,
-                                            str(payload.get("path") or ""),
-                                            str(payload.get("name") or ""))}
-        finally:
-            try:
-                ssh.close()
-            except Exception:
-                pass
-
-
-
     @app.post("/ai/v1/browse/local/pick")
     def browse_local_pick(payload: dict = None):
         cfg = load_settings()

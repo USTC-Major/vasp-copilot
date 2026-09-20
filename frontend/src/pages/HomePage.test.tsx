@@ -41,7 +41,7 @@ describe('HomePage recent history', () => {
     expect(historyRecordPath({
       id: 'p:t', kind: 'ai_task', project_id: 'p', task_id: 't', title: 'task',
       status: 'idle', execution_mode: 'Real', updated_at: '2026-01-01T00:00:00Z',
-    })).toBe('/ai/projects/p/progress/t');
+    })).toBe('/ai/projects/p');
   });
 
   it('does not present the toolbox Fake switch as a global environment', async () => {

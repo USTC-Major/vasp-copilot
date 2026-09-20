@@ -216,10 +216,8 @@ def tool_schema_text() -> str:
         "- draft：为已规划作业生成只读提交预览；发现脚本候选后必须由用户显式认领，系统不会自动认领或生成脚本。args: {}\n"
         "- submit：把流程停在「待你确认提交」边界（同样不会代替用户执行；真实提交由系统在用户确认后执行）。args: {}\n"
         "- select_jobs：按用户要求选择本次提交哪些作业/跳过哪些（只调规划不提交；跳过作业不生成草稿也不提交）。args: {\"submit\":[\"relax\"],\"skip\":[\"static\"]}\n"
-        "- monitor：查询超算作业进度（squeue 实况 + 状态推进；未连接超算如实说明）。args: {}\n"
         "- diagnose_job：查询作业并返回有文件证据的诊断及恢复建议。args: {\"job_key\":\"band\"}\n"
-        "- retry_job：仅在用户明确要求重试时调用；只为已有诊断的 failed/not_converged 作业生成恢复确认卡。批准后仅恢复待准备状态，保留历史与输出；unknown 禁止重试，后续写入、上传、硬预检和提交必须重新逐次授权。args: {\"job_key\":\"band\"}\n"
-        "- report：作业全部终态后生成结果报告（从 OUTCAR/OSZICAR 提取真报告）。args: {}"
+        "- retry_job：仅在用户明确要求重试时调用；只为已有诊断的 failed/not_converged 作业生成恢复确认卡。批准后仅恢复待准备状态，保留历史与输出；unknown 禁止重试，后续写入、上传、硬预检和提交必须重新逐次授权。args: {\"job_key\":\"band\"}"
     )
 
 
@@ -425,10 +423,8 @@ class ToolExecutor:
         "draft": "tool_draft",
         "submit": "tool_submit",
         "select_jobs": "tool_select_jobs",
-        "monitor": "tool_monitor",
         "diagnose_job": "tool_diagnose_job",
         "retry_job": "tool_retry_job",
-        "report": "tool_report",
     }
 
     def handle(self, name: str, args: dict) -> str:
@@ -1539,7 +1535,7 @@ class ToolExecutor:
                 + "- 跳过：" + ("、".join(skipped) or "（无）") + "\n"
                 + "请重新调用 draft 生成本次提交草稿后停在「待确认」。")
 
-    # ---------------- 监控 / 报告（复用真实 Orchestrator 原语） ----------------
+    # ---------------- 作业诊断与恢复（复用真实 Orchestrator 原语） ----------------
     def tool_diagnose_job(self, args: dict) -> str:
         key = args.get("job_key")
         if not isinstance(key, str) or set(args) != {"job_key"}:
@@ -1583,6 +1579,12 @@ class ToolExecutor:
         raise PendingConsentError(save_card(self.store, self.project_id, self.task_id, flow, payload))
 
     def tool_monitor(self, args: dict) -> str:
+        """内部原语：推进一次真实 squeue 状态（auto_pump / diagnose_job 调用）。
+
+        自本版起已从 _LLM_TOOL_METHODS 移除，LLM 不能再调用它；
+        进度查询与状态推进改为流程内部行为（后台监控线程 + 每次消息前的
+        自动推进），不再作为智能模式对外工具暴露。
+        """
         flow = self._load_flow()
         orch = self._ensure_orch()
         hpc = getattr(orch, "hpc", None)
@@ -1611,22 +1613,3 @@ class ToolExecutor:
         except Exception as exc:  # noqa: BLE001
             return f"终止失败：{type(exc).__name__}（{exc}）"
 
-    def tool_report(self, args: dict) -> str:
-        flow = self._load_flow()
-        jobs = (flow.get("plan") or {}).get("jobs") or []
-        terminal = {"completed", "failed", "not_converged", "canceled", "not_found", "skipped"}
-        if not jobs or not all(j.get("status") in terminal for j in jobs):
-            return ("作业尚未全部终态（仍有作业在模拟/等待，或尚未提交/无结果），"
-                    "暂无法生成最终报告。可先调用 monitor 推进状态。")
-        orch = self._ensure_orch()
-        finalize = getattr(orch, "finalize_report", None)
-        if finalize is None:
-            return "当前环境不支持生成报告（Orchestrator 缺少 finalize_report）"
-        try:
-            report = finalize(self.store, self.project_id, self.task_id, flow)
-        except Exception as exc:  # noqa: BLE001
-            return f"报告生成失败：{type(exc).__name__}（{exc}）"
-        flow["phase"] = "done"
-        flow["report"] = report
-        self._save_flow(flow)
-        return f"作业已全部终态，报告如下：\n\n{report}"

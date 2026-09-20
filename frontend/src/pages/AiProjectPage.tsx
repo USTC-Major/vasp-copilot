@@ -1,14 +1,14 @@
 // ============================================================
-// AiProjectPage — 项目聊天主界面（任务栏 + 对话 + 查看进度 + 额外设置）
+// AiProjectPage — 项目聊天主界面（任务栏 + 对话 + 额外设置）
 // 布局：左侧任务栏贴左，单分隔线；右侧聊天栏占满其余全部，无空白。
 // 聊天：发送后立即显示用户消息，LLM 思考与正文流式实时展示。
 // M032：新建任务的工作区支持「浏览」按钮图形化点选目录。
 // ============================================================
 
 import React, { useEffect, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import { Alert, Layout, Button, Input, Space, Typography, Tag, Modal, message } from 'antd';
-import { PlusOutlined, SendOutlined, BarChartOutlined, SettingOutlined, RobotOutlined, FolderOutlined, FolderOpenOutlined, CloudServerOutlined, LoadingOutlined, StopOutlined, DeleteOutlined } from '@ant-design/icons';
+import { PlusOutlined, SendOutlined, SettingOutlined, RobotOutlined, FolderOutlined, FolderOpenOutlined, CloudServerOutlined, LoadingOutlined, StopOutlined, DeleteOutlined } from '@ant-design/icons';
 import AiChatBubble from '../components/ai/AiChatBubble';
 import AiTaskSidebar from '../components/ai/AiTaskSidebar';
 import AiProjectExtraSettings from '../components/ai/AiProjectExtraSettings';
@@ -36,7 +36,6 @@ interface StreamIssue {
 
 const AiProjectPage: React.FC = () => {
   const { projectId = '' } = useParams();
-  const navigate = useNavigate();
   const tasksQuery = useAiTasks(projectId);
   const createTaskMutation = useAiTaskCreate();
   const updateTaskMutation = useAiTaskUpdate();
@@ -364,9 +363,6 @@ const AiProjectPage: React.FC = () => {
                 {selectedTask.local_workspace && <Tag icon={<FolderOutlined />} color="geekblue" style={{ margin: 0 }}>{selectedTask.local_workspace}</Tag>}
                 {selectedTask.hpc_workspace && <Tag icon={<CloudServerOutlined />} color="purple" style={{ margin: 0 }}>{selectedTask.hpc_workspace}</Tag>}
                 <AiContextBar context={taskContextQuery.data} />
-                <Button size="small" icon={<BarChartOutlined />} onClick={() => navigate(`/ai/projects/${projectId}/progress/${selectedTask.id}`)}>
-                  查看当前进度
-                </Button>
                 <Button size="small" danger icon={<DeleteOutlined />} onClick={() => {
                   Modal.confirm({
                     title: "删除该计算任务？",

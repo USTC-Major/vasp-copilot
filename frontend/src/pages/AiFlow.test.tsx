@@ -1,5 +1,5 @@
 // ============================================================
-// M12 前端整合测试：项目列表 → 新建项目 → 任务对话 → 进度页 → 设置页
+// M12 前端整合测试：项目列表 → 新建项目 → 任务对话 → 设置页
 // （数据来自 MSW 演示后端 aiDemo / aiSettingsHandlers）
 // ============================================================
 
@@ -171,24 +171,15 @@ describe('AI 前端整合（M12）', () => {
     expect(screen.getByRole('button', { name: /停止/ })).toBeInTheDocument();
   });
 
-  it('进度页展示作业时间线', async () => {
+  it('进度监控已从智能模式移除：不再注册进度页，旧地址不渲染作业链', async () => {
+    const childPaths = routes.flatMap((r) => (r.children ?? []).map((c) => c.path ?? ''));
+    expect(childPaths.some((p) => p.includes('/progress/'))).toBe(false);
+
     renderPath('/ai/projects/prj_001/progress/tsk_001');
-    // 等待 GET .../detail 的 flow 数据真正渲染出来（作业链最深层 key）
-    expect(await screen.findByText('relax/static/dos')).toBeInTheDocument();
-    expect(screen.getByText('计算目标')).toBeInTheDocument();
-    expect(screen.getByText('作业链与进度')).toBeInTheDocument();
-    // 作业链：relax 已提交（含 Slurm 号），static/dos 依赖嵌套等待前置
-    expect(screen.getByText('结构优化 relax')).toBeInTheDocument();
-    expect(screen.getByText('relax/static')).toBeInTheDocument();
-    expect(screen.getByText('已提交')).toBeInTheDocument();
-    expect(screen.getByText('Slurm 作业号 12001')).toBeInTheDocument();
-    expect(screen.getAllByText('等待前置').length).toBe(2);
-    expect(screen.getByText(/依赖：relax（满足后需重新确认提交）/)).toBeInTheDocument();
-    expect(screen.getAllByText('运行环境: None').length).toBeGreaterThan(0);
-    // 等待队列：依赖闸门未放行的作业
-    expect(screen.getByText('等待队列')).toBeInTheDocument();
-    // 左任务栏保留：任务标题仍可见
-    expect(await screen.findByText('结构优化 + 静态 + DOS')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByText('作业链与进度')).not.toBeInTheDocument();
+    });
+    expect(screen.queryByText('计算目标')).not.toBeInTheDocument();
   });
 
   it('结构化 INCAR 草稿在写入前生成单次授权卡片，可拒绝', async () => {

@@ -27,7 +27,8 @@ export const historyRecordPath = (item: HistoryRecord): string => {
   if (item.kind === 'workflow') return `/workflow/history/${encodeURIComponent(item.id)}`;
   if (item.kind === 'diagnosis') return `/diagnosis/${encodeURIComponent(item.id)}`;
   if (item.kind === 'ai_task' && item.project_id && item.task_id) {
-    return `/ai/projects/${encodeURIComponent(item.project_id)}/progress/${encodeURIComponent(item.task_id)}`;
+    // 智能模式已移除独立进度页：历史记录回到任务所在的项目页（聊天区）。
+    return `/ai/projects/${encodeURIComponent(item.project_id)}`;
   }
   if (item.project_id) return `/ai/projects/${encodeURIComponent(item.project_id)}`;
   return '/ai';
