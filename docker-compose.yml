@@ -1,5 +1,6 @@
-# VASP-Doctor 交付 Compose（三服务一键起：frontend(nginx) -> backend 8000 + ai_mode 8500）
-#   docker compose up --build -d
+# VASP-Doctor Compose：Toolbox 独立运行，AI 服务按需启用
+#   docker compose up --build -d             # Toolbox + 前端
+#   docker compose --profile ai up --build -d # 另外启用 AI 客户端
 #   浏览器访问 http://127.0.0.1:5173（nginx 内已反代 /api/v1 -> 8000、/ai/v1 -> 8500）
 # .env 为可选（不存在也能启动，仅使用默认值；LLM API key 等自定义项写在这里）。
 # 安全默认：仅前端 5173 发布到宿主机且只绑 127.0.0.1；8000/8500 无用户级鉴权，
@@ -15,6 +16,7 @@ services:
     environment:
       DATA_DIR: /data/tmp
       TTL_SECONDS: 86400
+      VASP_AI_HOME: /data/app/ai_mode  # 兼容旧数据根；8000 独占执行库与监控
     # 安全：8000 无鉴权，默认不发布到宿主机；前端经 Docker 内部网络反代访问。
     # 如需本机调试可直接访问，可自行加回：
     # ports:
@@ -30,8 +32,9 @@ services:
       retries: 5
     restart: unless-stopped
 
-  # 智能模式后端：复用同一后端镜像，仅切换启动命令与开关（与本地 start_services.ps1 等价）
+  # 可选智能模式：仅聊天/模型，通过 HTTP 调用 backend 的执行工具
   ai_mode:
+    profiles: ["ai"]
     build:
       context: ./backend
     image: vasp-doctor:local
@@ -39,19 +42,23 @@ services:
               "--host", "0.0.0.0", "--port", "8500", "--log-level", "info"]
     environment:
       ENABLE_AI_MODE: "true"
-      VASP_AI_HOME: /data/app/ai_mode   # 项目/设置/会话持久化到 app_data 卷，容器重建不丢数据
+      TOOLBOX_URL: http://backend:8000
+      VASP_AI_HOME: /data/app/ai_mode   # 聊天与执行分文件存储；旧 ai_store.json 只读导入
       DATA_DIR: /data/tmp
       TTL_SECONDS: 86400
     env_file:
       - path: .env
         required: false
-    # 安全：8500（AI 对话/SSH 远程执行接口，无用户级鉴权）默认不发布到宿主机。
+    # 安全：8500（AI 对话与 Toolbox 客户端，无用户级鉴权）默认不发布到宿主机。
     # 如需本机调试可直接访问，可自行加回：
     # ports:
     #   - "127.0.0.1:8500:8500"
     volumes:
       - app_data:/data/app
       - temp_data:/data/tmp
+    depends_on:
+      backend:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8500/docs', timeout=3)"]
       interval: 10s
@@ -66,12 +73,10 @@ services:
     depends_on:
       backend:
         condition: service_healthy
-      ai_mode:
-        condition: service_healthy
     ports:
       - "127.0.0.1:5173:80"
     restart: unless-stopped
 
 volumes:
-  app_data:   # /data/app —— ai_mode 持久化（VASP_AI_HOME=/data/app/ai_mode：config/项目/会话）
+  app_data:   # /data/app —— 执行库、聊天库与设置分文件持久化（保留旧数据根）
   temp_data:  # /data/tmp  —— TTL 临时数据：uploads / runs / reports

@@ -9,7 +9,7 @@ from ai_mode.orchestrator import Orchestrator
 from ai_mode.settings.global_api import mask_config, update_from_patch
 from ai_mode.scheduler_profile import (queue_command, submit_argv, parse_receipt,
     parse_queue, occupied, parse_accounting, target_binding)
-from ai_mode.consent import spawn_submit_card
+from backend.toolbox.consent import spawn_submit_card
 from tests.ai_mode.test_orchestrator import (FakeHPC, _ready_flow, _confirmed_submit,
     env, OUTCAR_OK, OSZICAR_OK)
 

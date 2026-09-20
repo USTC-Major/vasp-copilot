@@ -315,6 +315,86 @@ export const llmApi = {
     }),
 };
 
+// ---- Toolbox execution owner (port 8000) ----
+// These endpoints never require the AI service. Read endpoints are passive snapshots:
+// they do not trigger SSH polling or model calls.
+const toolboxTaskPath = (projectId: string, taskId: string) =>
+  `/toolbox/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(taskId)}`;
+
+export const toolboxApi = {
+  listProjects: () =>
+    request<{ mode: 'toolbox'; projects: import('../types/toolbox').ToolboxProject[] }>('/toolbox/projects'),
+  createProject: (body: { name: string; description?: string }) =>
+    request<{ mode: 'toolbox'; project: import('../types/toolbox').ToolboxProject }>('/toolbox/projects', {
+      method: 'POST', body,
+    }),
+  deleteProject: (projectId: string) =>
+    request<{ mode: 'toolbox'; deleted: true }>(`/toolbox/projects/${encodeURIComponent(projectId)}`, { method: 'DELETE' }),
+
+  listTasks: (projectId: string) =>
+    request<{ mode: 'toolbox'; tasks: import('../types/toolbox').ToolboxTask[] }>(
+      `/toolbox/projects/${encodeURIComponent(projectId)}/tasks`,
+    ),
+  createTask: (projectId: string, body: { title?: string; goal?: string; local_workspace?: string; hpc_workspace?: string }) =>
+    request<{ mode: 'toolbox'; task: import('../types/toolbox').ToolboxTask }>(
+      `/toolbox/projects/${encodeURIComponent(projectId)}/tasks`, { method: 'POST', body },
+    ),
+  updateTask: (projectId: string, taskId: string, body: { title?: string; goal?: string; local_workspace?: string; hpc_workspace?: string }) =>
+    request<{ mode: 'toolbox'; task: import('../types/toolbox').ToolboxTask }>(toolboxTaskPath(projectId, taskId), {
+      method: 'PATCH', body,
+    }),
+  deleteTask: (projectId: string, taskId: string) =>
+    request<{ mode: 'toolbox'; deleted: true; task_id: string }>(toolboxTaskPath(projectId, taskId), { method: 'DELETE' }),
+  getTaskDetail: (projectId: string, taskId: string, signal?: AbortSignal) =>
+    request<import('../types/toolbox').ToolboxTaskDetail>(`${toolboxTaskPath(projectId, taskId)}/detail`, { signal }),
+  getEvents: (projectId: string, taskId: string, after = 0) =>
+    request<{ mode: 'toolbox'; events: import('../types/toolbox').ToolboxExecutionEvent[]; cursor: number }>(
+      `${toolboxTaskPath(projectId, taskId)}/events`, { params: { after } },
+    ),
+  recentHistory: (limit = 10) =>
+    request<{ mode: 'toolbox'; items: import('../types/toolbox').ToolboxHistoryItem[] }>('/toolbox/recent-history', {
+      params: { limit },
+    }),
+
+  runTool: (projectId: string, taskId: string, name: string, args: Record<string, unknown> = {}) =>
+    request<import('../types/toolbox').ToolboxToolResult>(`${toolboxTaskPath(projectId, taskId)}/tools`, {
+      method: 'POST', body: { name, args },
+    }),
+  listConsents: (projectId: string, taskId: string) =>
+    request<{ mode: 'toolbox'; cards: import('../types/toolbox').ToolboxConsentCard[] }>(
+      `${toolboxTaskPath(projectId, taskId)}/consents`,
+    ),
+  getConsent: (projectId: string, taskId: string, cardId: string) =>
+    request<{ mode: 'toolbox'; card: import('../types/toolbox').ToolboxConsentCard }>(
+      `${toolboxTaskPath(projectId, taskId)}/consents/${encodeURIComponent(cardId)}`,
+    ),
+  resolveConsent: (projectId: string, taskId: string, cardId: string, approved: boolean, note?: string) =>
+    request<import('../types/toolbox').ToolboxConsentResult>(
+      `${toolboxTaskPath(projectId, taskId)}/consents/${encodeURIComponent(cardId)}`,
+      { method: 'POST', body: { approved, ...(note ? { note } : {}) } },
+    ),
+
+  browse: (kind: 'local' | 'hpc', path?: string) =>
+    request<import('../types/toolbox').ToolboxBrowseResponse>(`/toolbox/browse/${kind}`, {
+      ...(path !== undefined ? { params: { path } } : {}),
+    }),
+  pickLocal: (initialDir?: string) =>
+    request<{ mode: 'toolbox'; kind: 'local'; ok: boolean; path?: string; notice?: string }>('/toolbox/browse/local/pick', {
+      method: 'POST', body: initialDir?.trim() ? { initial_dir: initialDir.trim() } : {},
+    }),
+  makeDirectory: (kind: 'local' | 'hpc', path: string, name: string) =>
+    request<{ mode: 'toolbox'; kind: 'local' | 'hpc'; ok: true; path: string }>(`/toolbox/browse/${kind}/mkdir`, {
+      method: 'POST', body: { path, name },
+    }),
+
+  getSettings: () => request<import('../types/toolbox').ToolboxSettingsResponse>('/toolbox/settings'),
+  saveSettings: (patch: Record<string, unknown>) =>
+    request<import('../types/toolbox').ToolboxSettingsResponse>('/toolbox/settings', { method: 'PUT', body: patch }),
+  setSecret: (kind: 'ssh' | 'mp', value: string) =>
+    request<{ mode: 'toolbox'; configured: boolean }>(`/toolbox/settings/secrets/${kind}`, { method: 'POST', body: { value } }),
+  testSsh: () => request<{ mode: 'toolbox'; ok: boolean; message: string }>('/toolbox/settings/test/ssh', { method: 'POST' }),
+};
+
 
 // ---- AI 对话 ----
 export interface ChatMessageItem {

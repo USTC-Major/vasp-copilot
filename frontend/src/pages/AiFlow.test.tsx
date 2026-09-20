@@ -171,15 +171,13 @@ describe('AI 前端整合（M12）', () => {
     expect(screen.getByRole('button', { name: /停止/ })).toBeInTheDocument();
   });
 
-  it('进度监控已从智能模式移除：不再注册进度页，旧地址不渲染作业链', async () => {
+  it('旧进度地址迁移到精确 Toolbox 任务页', async () => {
     const childPaths = routes.flatMap((r) => (r.children ?? []).map((c) => c.path ?? ''));
-    expect(childPaths.some((p) => p.includes('/progress/'))).toBe(false);
+    expect(childPaths.some((p) => p.includes('/progress/'))).toBe(true);
 
     renderPath('/ai/projects/prj_001/progress/tsk_001');
-    await waitFor(() => {
-      expect(screen.queryByText('作业链与进度')).not.toBeInTheDocument();
-    });
-    expect(screen.queryByText('计算目标')).not.toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '结构优化 + 静态 + DOS' })).toBeInTheDocument();
+    expect(await screen.findByText('Toolbox 执行状态')).toBeInTheDocument();
   });
 
   it('结构化 INCAR 草稿在写入前生成单次授权卡片，可拒绝', async () => {

@@ -21,7 +21,6 @@ from ..llm.errors import LLMError, LLMUnavailableError
 from ..llm.factory import build_client
 from ..projects import ProjectStore
 from ..settings import ProjectSettingsStore, render_accuracy_text
-from ..workspace import snapshot_workspace
 from ..consent import get_card as _get_consent_card
 from ..consent import spawn_submit_card as _spawn_submit_card
 from .protocol import INTENT_MARK, TOOL_MARK, has_unclosed_marker, parse_turn
@@ -156,10 +155,7 @@ def build_messages(store: ProjectStore, task: dict, history: list[dict],
     goal = task.get("goal") or "（未填写）"
     # Prompt snapshots are metadata-only. File contents may enter the model
     # only through the explicit, policy-checked ws_read/hpc_read tools.
-    _found, snapshot = snapshot_workspace(
-        task.get("local_workspace") or "",
-        max_preview_bytes=0, preview_total_cap=0,
-    )
+    snapshot = store.client.tool(task["project_id"], task["id"], "ws_list", {}).get("result", "")
     system = (
         "你是 VASP-Doctor 智能模式的中枢 AI。用户正在一个计算任务里与你对话，"
         "你负责端到端主导科学计算：从看懂需求到规划、准备输入、提交前检查、"
@@ -364,14 +360,12 @@ def _wait_card_decision(store, project_id: str, task_id: str, card_id: str,
         if action is None:
             return ("failed", "确认操作不存在，未执行")
         state = action.get("state")
-        if state == "approved":
-            return ("executed", executor.execute_action(card_id))
         if state == "executed":
             return ("executed", str(action.get("result") or "操作已执行"))
         if state == "rejected":
             return ("denied", "已拒绝该操作授权")
         if state in {"expired", "failed", "unknown"}:
-            return (state, str(action.get("result") or "操作未执行"))
+            return (state, str(action.get("result") or {"expired": "授权已过期，未执行", "failed": "操作失败，请查看执行记录", "unknown": "执行结果未知，请核对远端任务；不得自动重试"}[state]))
         time.sleep(_CONSENT_POLL_INTERVAL)
     return ("timeout", "等待授权超时，已停止该操作")
 
@@ -492,6 +486,8 @@ def _decision_loop(executor: ToolExecutor, llm, messages: list[Message], *,
                     parts.append("（该操作被用户拒绝，已停止）")
                 elif state == "timeout":
                     parts.append("（等待授权超时，已停止操作）")
+                else:
+                    parts.append(note2)
                 break
             messages.append(_receipt_message(req.name, note))
         if abort_loop:
@@ -718,7 +714,7 @@ def run_agent_stream(store, project_id, task_id, content, *,
                     yield {"type": "stopped", "answer": _join_answer(parts)}
                     return
                 tail = ("该操作被用户拒绝，已停止" if state == "denied"
-                        else "等待授权超时，已停止操作")
+                        else note2 or "等待授权超时，已停止操作")
                 parts.append(tail)
                 yield {"type": "status", "text": tail}
                 yield {"type": "done", "answer": _join_answer(parts)}
@@ -811,7 +807,7 @@ def run_agent_stream(store, project_id, task_id, content, *,
                         yield {"type": "stopped", "answer": _join_answer(parts)}
                         return
                     tail = ("该操作被用户拒绝，已停止" if state == "denied"
-                            else "等待授权超时，已停止操作")
+                            else note2 or "等待授权超时，已停止操作")
                     parts.append(tail)
                     yield {"type": "status", "text": tail}
                     yield {"type": "done", "answer": _join_answer(parts)}

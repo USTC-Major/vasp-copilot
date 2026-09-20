@@ -1,0 +1,973 @@
+# -*- coding: utf-8 -*-
+"""AI mode orchestration with explicit, single-use mutation approvals.
+
+Preparation and precheck are inventory-only.  Submission is possible only
+after a current script attestation, a hard precheck, and a fresh confirmation;
+capacity or dependency changes never trigger automatic submission.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import copy
+import json
+import logging
+import re
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Callable, Optional
+
+from .commands import _label_slug
+from .config import AiModeConfig, execution_mode
+from .consent import task_lock as _task_lock
+from .scheduler_profile import (target_binding, queue_command, parse_queue,
+                                occupied, parse_receipt, accounting_command,
+                                parse_accounting, PENDING, RUNNING, TERMINAL, profile)
+from .projects import ProjectStore
+from .report.extract import summarize_run, verify_run
+from .report.render import render_report
+from .schemas import JobEntry, JobStatus as SessionJobStatus, \
+    PlanSnapshot, PlanStep, RequirementSnapshot, Session
+from .tools.draft import (find_remote_submit_script,
+                          fingerprint_local_submit_script,
+                          fingerprint_remote_submit_script,
+                          input_fingerprint_local,
+                          input_fingerprint_remote, precheck_snapshot,
+                          resolve_user_submit_script, submit_command)
+from .workflow.plan import gate_jobs
+
+logger = logging.getLogger("ai_mode.orchestrator")
+__test__ = False
+
+_PHASE_STATUS = {
+    "running": "planned",
+    "await_submit": "generated",
+    "monitoring": "submitted",
+    "done": "done",
+    "blocked": "planned",
+}
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def _norm(text: str) -> str:
+    return (text or "").strip().lower()
+
+
+def _is_true_answer(content: str) -> bool:
+    text = _norm(content)
+    if text in ("确认", "提交", "确认提交", "同意"):
+        return True
+    return any(p in text for p in ("确认提交", "同意提交", "开始提交",
+                                   "提交作业", "确认了"))
+
+
+def _is_cancel(content: str) -> bool:
+    return any(p in _norm(content) for p in ("取消", "不提交", "放弃"))
+
+
+def _detect_job_label(goal: str) -> str:
+    g = _norm(goal)
+    if any(w in g for w in ("能带", "band", "bandstructure")):
+        return "能带计算"
+    if any(w in g for w in ("态密度", "dos", "states")):
+        return "态密度计算"
+    if any(w in g for w in ("声子", "phonon")):
+        return "声子计算"
+    if any(w in g for w in ("静态", "自洽", "scf")):
+        return "静态自洽"
+    if any(w in g for w in ("分子动力学", "aimd")):
+        return "分子动力学"
+    return "结构优化"
+
+
+def _remote_state_map(stdout: str) -> dict[str, str]:
+    """把 squeue 输出解析为 slurm_id -> 状态列（默认列序 JOBID..ST..）。"""
+    out: dict[str, str] = {}
+    for raw in (stdout or "").splitlines():
+        tokens = (raw or "").strip().split()
+        if not tokens or tokens[0].upper() in ("JOBID", "JOB ID"):
+            continue
+        if len(tokens) >= 5:
+            out[tokens[0]] = tokens[4].upper()
+    return out
+
+
+def _status_to_session(job_status: str):
+    mapping = {
+        "submitted": SessionJobStatus.RUNNING,
+        "queued": SessionJobStatus.QUEUED,
+        "running": SessionJobStatus.RUNNING,
+        "waiting": SessionJobStatus.QUEUED,
+        "completed": SessionJobStatus.COMPLETED,
+        "failed": SessionJobStatus.FAILED,
+        "not_converged": SessionJobStatus.NOT_CONVERGED,
+        "canceled": SessionJobStatus.CANCELLED,
+        "skipped": SessionJobStatus.CANCELLED,
+    }
+    return mapping.get(job_status, SessionJobStatus.PLANNED)
+
+
+
+
+class Orchestrator:
+    """一个计算任务的中枢：推动真实工序并把流动进程持久化到 task['flow']。
+
+    :param hpc: SSHManager（真实超算）或 None。测试可注入具备 run/stat/
+        read_file/write_file/mkdir 同签名方法的假对象来离线验证真实链路。
+    :param llm_factory: ``(cfg) -> LLMClient 或 None``；缺省走 M3 工厂。
+    :param data_dir: 本地数据根（工作区/技能），缺省用 cfg.data_dir。
+    """
+
+    def __init__(self, cfg: AiModeConfig, *, hpc=None, llm_factory=None,
+                 data_dir: Optional[Path] = None,
+                 hpc_execution_mode: str | None = None):
+        self.cfg = cfg
+        self.hpc = hpc
+        self.execution_mode = execution_mode(hpc, explicit=hpc_execution_mode)
+        self.llm_factory = None  # Legacy argument ignored; core never invokes models.
+        self.data_dir = Path(data_dir or cfg.data_dir)
+
+    @classmethod
+    def from_settings(cls, cfg: AiModeConfig, *, hpc=None,
+                      llm_factory=None,
+                      hpc_execution_mode: str | None = None) -> "Orchestrator":
+        if hpc is not None:
+            return cls(cfg=cfg, hpc=hpc, llm_factory=llm_factory,
+                       hpc_execution_mode=hpc_execution_mode)
+        manager = None
+        if cfg.ssh_host and cfg.ssh_username:
+            from .ssh.connection import SSHManager
+            from .ssh.credentials import KeyringCredentialStore
+            manager = SSHManager(credentials=KeyringCredentialStore(),
+                                 connect_timeout=15,
+                                 known_hosts_path=cfg.ssh_known_hosts_path or None,
+                                 identity_file=cfg.ssh_identity_file or None)
+            manager.switch(host=cfg.ssh_host, username=cfg.ssh_username,
+                           port=cfg.ssh_port or 22)
+        return cls(cfg=cfg, hpc=manager, llm_factory=llm_factory)
+
+    # ---------------- 基础 ----------------
+    def _local_dir(self, project_id: str, task_id: str,
+                   local_workspace: str = "") -> Path:
+        ws = (local_workspace or "").strip()
+        if ws:
+            return Path(ws).expanduser().resolve()
+        return self.data_dir / "workspace" / f"{project_id}__{task_id}"
+
+    def _save(self, store: ProjectStore, project_id: str, task_id: str,
+              flow: dict) -> None:
+        flow["updated_at"] = _now_iso()
+        store.update_task(project_id, task_id, flow=dict(flow),
+                          status=_PHASE_STATUS.get(flow.get("phase"),
+                                                   "planned"))
+
+    def _default_goal(self, task: dict) -> str:
+        return str(task.get("goal") or "").strip()
+
+
+    def sync_execution_mode(self, store: ProjectStore, project_id: str,
+                            task_id: str) -> str:
+        """Migrate any stale persisted LLM-derived label to the HPC truth."""
+        with _task_lock(project_id, task_id):
+            task = store.get_task(project_id, task_id) or {}
+            flow = dict(task.get("flow") or {})
+            if flow and flow.get("execution_mode") != self.execution_mode:
+                flow["execution_mode"] = self.execution_mode
+                self._save(store, project_id, task_id, flow)
+            return self.execution_mode
+
+    # ---------------- 对话入口 ----------------
+
+
+
+
+    # ---------------- 推进器（规划→准备→搭建→预检→草稿） ----------------
+
+
+    def _prepare(self, store, project_id, task_id, flow, logs: list[str]) -> None:
+        """Inventory only. File copies and uploads require separate actions."""
+        local_dir = Path(flow["local_dir"])
+        task = store.get_task(project_id, task_id) or {}
+        source = (task.get("local_workspace") or "").strip()
+        if source and Path(source).is_dir():
+            names = [name for name in ("INCAR", "POSCAR", "KPOINTS", "POTCAR")
+                     if (Path(source) / name).is_file()]
+            logs.append("已盘点用户工作区输入：" + ("、".join(names) or "（无）"))
+        else:
+            logs.append("本地工作区无效或未设置；未执行任何文件创建/复制。")
+        logs.append("文件复制与 SFTP 上传均需逐次确认；本阶段未写入或上传。")
+
+    def _upload_dir(self, local_dir: Path, remote: str,
+                    job_keys: list[str] | None = None) -> tuple[bool, str]:
+        del local_dir, remote, job_keys
+        return False, "P0 禁止编排器隐式上传；请逐个确认绑定的 artifact 上传动作。"
+
+    def _upload_subdir(self, local: Path, remote: str) -> None:
+        del local, remote
+        raise RuntimeError("P0 禁止编排器隐式递归上传")
+
+    def _setup(self, flow: dict, logs: list[str]) -> None:
+        del flow
+        logs.append("P0 不执行远端探测命令，也不自动生成 KPOINTS/POTCAR。")
+
+    def _precheck(self, flow: dict, local_dir: Path, remote_ok: bool,
+                  remote: str, logs: list[str]) -> None:
+        issues: list[dict] = []
+        input_records: list[dict] = []
+        script_records: list[dict] = []
+        remote = (remote or "").rstrip("/")
+        flow["execution_mode"] = self.execution_mode
+        for job in flow["plan"]["jobs"]:
+            if job.get("status") in ("completed", "failed", "not_converged",
+                                      "canceled", "skipped", "blocked",
+                                      "unknown"):
+                continue
+            for name in ("INCAR", "POSCAR", "KPOINTS", "POTCAR"):
+                try:
+                    if remote_ok and self.hpc is not None:
+                        calc = self._job_calc_dir(remote, local_dir, job["key"])
+                        path = f"{calc.rstrip('/')}/{name}"
+                        fingerprint = input_fingerprint_remote(self.hpc, path)
+                        source = "remote"
+                    else:
+                        root = local_dir.resolve()
+                        base = self._contained_job_dir(root, job["key"]) or root
+                        target = (base / name).resolve()
+                        target.relative_to(root)
+                        fingerprint = input_fingerprint_local(target)
+                        source = "local"
+                    input_records.append({"job_key": job["key"], "name": name,
+                                          "source": source, **fingerprint})
+                    level = "ok"
+                    msg = f"{name} 非空且 SHA-256 已绑定"
+                except Exception:  # noqa: BLE001
+                    level = "error"
+                    msg = f"{name} 缺失、为空或无法哈希，无法提交"
+                issues.append({"job": job["key"], "file": name, "level": level,
+                               "message": msg})
+            calc = self._job_calc_dir(remote, local_dir, job["key"])
+            has_script = False
+            actual: dict | None = None
+            if remote_ok and calc:
+                try:
+                    script_name = find_remote_submit_script(self.hpc, calc)
+                    has_script = bool(script_name)
+                    if script_name:
+                        actual = {"source": "remote", "directory": calc, "script_name": script_name,
+                                  **fingerprint_remote_submit_script(
+                                      self.hpc, calc, script_name)}
+                except RuntimeError:
+                    has_script = False
+            else:
+                has_script = self._user_script_exists(local_dir, job["key"])
+                if has_script:
+                    job_local = self._contained_job_dir(local_dir, job["key"]) or local_dir.resolve()
+                    script = resolve_user_submit_script(job_local)
+                    actual = {"source": "local", "directory": str(job_local), "script_name": script.name,
+                              **fingerprint_local_submit_script(script)}
+            level = "ok" if has_script else "error"
+            msg = "提交脚本(*.sh) 存在" if has_script else (
+                "提交脚本(*.sh) 缺失，无法提交（提交脚本必须由用户提供，"
+                "系统不代写生成脚本）")
+            issues.append({"job": job["key"], "file": "提交脚本(*.sh)",
+                           "level": level, "message": msg})
+            attestation = (flow.get("script_attestations") or {}).get(job["key"])
+            attested = (isinstance(attestation, dict) and isinstance(actual, dict)
+                        and all(attestation.get(key) == actual.get(key)
+                                for key in ("source", "directory", "script_name",
+                                            "normalized_path", "sha256", "size")))
+            issues.append({"job": job["key"], "file": "提交脚本认领",
+                           "level": "ok" if attested else "error",
+                           "message": ("脚本已由用户认领" if attested else
+                                       "提交脚本尚未显式认领并绑定 SHA-256")})
+            if attested:
+                script_records.append({"job_key": job["key"], **actual})
+        snapshot, digest = precheck_snapshot(
+            execution_mode=self.execution_mode, inputs=input_records,
+            scripts=script_records, scheduler_target=target_binding(self.cfg))
+        flow["precheck"] = {
+            "ok": all(i["level"] == "ok" for i in issues),
+            "hard": True,
+            "issues": issues,
+            "execution_mode": self.execution_mode,
+            "snapshot": snapshot,
+            "digest": digest,
+        }
+
+    def _file_exists(self, local_dir: Path, remote_ok: bool, remote: str,
+                     name: str, *, job_key: str = "") -> bool:
+        remote = (remote or "").rstrip("/")
+        if remote_ok and self.hpc is not None:
+            calc = self._job_calc_dir(remote, local_dir, job_key)
+            try:
+                info = self.hpc.stat(f"{calc.rstrip('/')}/{name}")
+                return info is not None and info.get("is_dir") is not True
+            except Exception:  # noqa: BLE001
+                return False
+        root = local_dir.resolve()
+        base = self._contained_job_dir(root, job_key) or root
+        target = (base / name).resolve()
+        try:
+            target.relative_to(root)
+        except ValueError:
+            return False
+        return target.is_file()
+
+    @staticmethod
+    def _contained_job_dir(local_dir: Path, job_key: str) -> Path | None:
+        root = local_dir.resolve()
+        candidate = (root / str(job_key or "")).resolve()
+        try:
+            candidate.relative_to(root)
+        except ValueError:
+            return None
+        return candidate if job_key and candidate.is_dir() else None
+
+    def _user_script_exists(self, local_dir: Path, job_key: str) -> bool:
+        """作业目录是否存在用户提供的唯一提交脚本（*.sh）。"""
+        job_local = self._contained_job_dir(local_dir, job_key) or local_dir.resolve()
+        try:
+            resolve_user_submit_script(job_local)
+            return True
+        except RuntimeError:
+            return False
+
+    def _draft(self, flow: dict) -> str:
+        remote = (flow.get("hpc_dir") or "").rstrip("/")
+        base = remote or flow.get("local_dir") or ""
+        local_dir = Path(flow["local_dir"])
+        drafts: list[dict] = []
+        lines: list[str] = []
+        for job in flow["plan"]["jobs"]:
+            if job.get("status") in ("completed", "failed", "not_converged",
+                                      "canceled", "skipped", "blocked",
+                                      "unknown"):
+                continue
+            calc_dir = self._job_calc_dir(base, local_dir, job["key"])
+            job_local = self._contained_job_dir(local_dir, job["key"]) or local_dir.resolve()
+            source = "local"
+            script_name = ""
+            if remote and self.hpc is not None:
+                script_name = find_remote_submit_script(self.hpc, calc_dir) or ""
+                source = "remote"
+            if source == "remote":
+                if not script_name:
+                    raise RuntimeError(f"{job['key']} 远端提交脚本缺失")
+                fingerprint = fingerprint_remote_submit_script(
+                    self.hpc, calc_dir, script_name)
+            else:
+                script = resolve_user_submit_script(job_local)
+                script_name = script.name
+                fingerprint = fingerprint_local_submit_script(script)
+            attestation = (flow.get("script_attestations") or {}).get(job["key"])
+            if not isinstance(attestation, dict) or any(
+                    attestation.get(key) != value for key, value in {
+                        "source": source, "script_name": script_name,
+                        "normalized_path": fingerprint["normalized_path"],
+                        "sha256": fingerprint["sha256"], "size": fingerprint["size"],
+                    }.items()):
+                raise RuntimeError(f"{job['key']} 提交脚本未认领或认领已失效")
+            drafts.append({
+                "job_key": job["key"],
+                "dir": calc_dir,
+                "script_name": script_name,
+                "script_source": source,
+                "script_path": fingerprint["normalized_path"],
+                "script_sha256": fingerprint["sha256"],
+                "script_size": fingerprint["size"],
+                "attestation_action_id": attestation.get("action_id"),
+                "attestation_binding_hash": attestation.get("binding_hash"),
+                "submit_cmd": " ".join(submit_command(script_name, self.cfg.scheduler_backend)),
+            })
+            lines.append(
+                f"- {job['key']}（{job['label']}）→ 目录 `{calc_dir}`，"
+                f"使用用户认领脚本 {script_name}（SHA-256 {fingerprint['sha256']}）")
+        flow["draft"] = drafts
+        return ("已生成提交草稿（使用用户提供的提交脚本，只校验、未提交）：\n"
+                + "\n".join(lines))
+
+    # ---------------- 用户决策 ----------------
+    def _on_await_submit(self, store, project_id, task_id, flow,
+                         content: str) -> str:
+        if _is_cancel(content):
+            flow["phase"] = "blocked"
+            self._save(store, project_id, task_id, flow)
+            return ("已取消本次提交。草稿保留在任务中。"
+                    "可直接回复新的计算需求重新规划。")
+        if _is_true_answer(content):
+            return self._submit(store, project_id, task_id, flow)
+        return ("当前处于「提交前检查通过，待你确认提交」环节。\n"
+                "请在绑定当前草稿的一次性确认卡中确认；「取消」→ 放弃本次；"
+                "也可以补充输入文件后再回来确认。")
+
+    def _cascade_blocks(self, flow: dict) -> list[str]:
+        """M52：前置终态失败/已阻断的等待作业级联置 blocked（移出等待队列）。"""
+        jobs = ((flow.get("plan") or {}).get("jobs")) or []
+        statuses = {j["key"]: (j.get("status") or "draft") for j in jobs}
+        notes: list[str] = []
+        changed = True
+        while changed:
+            changed = False
+            for j in jobs:
+                if j.get("status") not in {"draft", "waiting"}:
+                    continue
+                bad = [r for r in (j.get("requires") or [])
+                       if statuses.get(r) in ("failed", "not_converged",
+                                              "canceled", "blocked")]
+                if not bad:
+                    continue
+                j["status"] = "blocked"
+                j["blocked_by_dependency"] = True
+                j["wait_reason"] = (f"前置 {'、'.join(bad)} 失败或已阻断，"
+                                    "禁止提交")
+                if j["key"] in (flow.get("waiting") or []):
+                    flow["waiting"].remove(j["key"])
+                statuses[j["key"]] = "blocked"
+                notes.append(f"{j['key']}（前置 {'、'.join(bad)} 失败）")
+                changed = True
+        return notes
+
+    def _plan_snapshot(self, flow: dict) -> PlanSnapshot:
+        """把 flow.plan.jobs 转成依赖闸门可评估的 PlanSnapshot（M52）。"""
+        jobs = ((flow.get("plan") or {}).get("jobs")) or []
+        return PlanSnapshot(steps=[
+            PlanStep(job_key=j["key"], label=j.get("label") or j["key"],
+                     requires=[str(r) for r in (j.get("requires") or [])])
+            for j in jobs])
+
+    def _gate(self, flow: dict):
+        """依赖闸门：waiting 作业按待提交（draft）评估，返回 GateResult。"""
+        statuses = {}
+        for j in ((flow.get("plan") or {}).get("jobs")) or []:
+            st = j.get("status") or "draft"
+            statuses[j["key"]] = "draft" if st == "waiting" else st
+        return gate_jobs(self._plan_snapshot(flow), statuses)
+
+    def _submit(self, store, project_id, task_id, flow) -> str:
+        """M55：与 _pump 同一把 per-task 锁，提交与监控不并发。"""
+        del flow
+        with _task_lock(project_id, task_id):
+            current = (store.get_task(project_id, task_id) or {}).get("flow") or {}
+            return self._submit_locked(store, project_id, task_id,
+                                       dict(current))
+
+    def _submit_locked(self, store, project_id, task_id, flow) -> str:
+        if (flow.get("execution_mode") != self.execution_mode
+                or self.execution_mode == "None" or self.hpc is None):
+            return ("[AI_HPC_BACKEND_UNAVAILABLE] 当前流程没有与确认绑定的可用 "
+                    "HPC 执行后端；sbatch 次数为 0。")
+        remote = str(flow.get("hpc_dir") or flow.get("local_dir") or "").strip()
+        drafts = flow.get("draft") or []
+        precheck_digest = str((flow.get("precheck") or {}).get("digest") or "")
+        executing_action = next((
+            action for action in ((flow.get("consent") or {}).get("actions") or {}).values()
+            if action.get("kind") == "submit"
+            and action.get("state") == "executing"
+            and isinstance(action.get("binding"), dict)
+            and action["binding"].get("operation") == "submit"
+            and action["binding"].get("project_id") == project_id
+            and action["binding"].get("task_id") == task_id
+            and action["binding"].get("execution_mode") == self.execution_mode
+            and action["binding"].get("precheck_digest") == precheck_digest
+            and action["binding"].get("remote_root") == remote
+            and action["binding"].get("drafts") == drafts
+            and action.get("binding_hash") == hashlib.sha256(json.dumps(
+                action["binding"], ensure_ascii=False, sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")).hexdigest()
+        ), None)
+        if executing_action is None:
+            return ("[AI_SUBMIT_CONFIRMATION_REQUIRED] 缺少与当前草稿和目标绑定的"
+                    "单次提交确认；sbatch 次数为 0。")
+        bound_target = ((flow.get("precheck") or {}).get("snapshot") or {}).get("scheduler_target")
+        if bound_target != target_binding(self.cfg):
+            return "[AI_SCHEDULER_CHANGED] SSH或调度配置已变化；需重新预检和确认，提交次数为0。"
+        if self.hpc is None:
+            return ("未配置/未连接 SSH，无法真实提交到超算（我不会伪造作业号）。"
+                    "草稿已保留。请在「设置 → SSH」填写主机/用户名/密码后，"
+                    "重新生成并批准提交确认卡；或回复「取消」。\n"
+                    "本次没有真正执行任何 sbatch。")
+        if not remote:
+            flow["phase"] = "blocked"
+            self._save(store, project_id, task_id, flow)
+            return "任务未填写超算工作区（会话目录），无法定位提交目录。" \
+                   "请补充后重新发起。"
+        local_dir = Path(flow["local_dir"])
+        self._precheck(flow, local_dir, True, remote, [])
+        if not flow.get("precheck", {}).get("ok"):
+            flow["phase"] = "blocked"
+            self._save(store, project_id, task_id, flow)
+            return ("[AI_PRECHECK_BLOCKED] 提交前硬检查未通过；缺少任一 "
+                    "INCAR/POSCAR/KPOINTS/POTCAR/认领脚本时 sbatch 次数为 0。")
+        if str(flow["precheck"].get("digest") or "") != precheck_digest:
+            flow["phase"] = "blocked"
+            self._save(store, project_id, task_id, flow)
+            return ("[AI_PRECHECK_STALE] VASP 输入或脚本在确认后发生变化；"
+                    "必须重新预检并确认，sbatch 次数为 0。")
+        if not flow.get("draft"):
+            return "[AI_PRECHECK_BLOCKED] 缺少绑定脚本哈希的提交草稿；sbatch 次数为 0。"
+        logs_note = "已通过远端硬预检；不会在提交阶段隐式上传或改写文件。"
+        account = self.cfg.ssh_username
+        free = self._free_slots(account)
+        if free is None:
+            return logs_note + "\n无法查询超算配额（squeue 失败），" \
+                "为避免超限未提交。请检查 SSH 后重试。"
+        if free <= 0:
+            return logs_note + f"\n超算账号「排队+运行中」已达上限（空位 {free}），" \
+                "本次未提交。空位恢复后必须重新预检并由用户再次确认。"
+        submitted = []
+        gate = self._gate(flow)
+        flow["waiting"] = []
+        for job in flow["plan"]["jobs"]:
+            key = job["key"]
+            st = job.get("status")
+            if st in ("completed", "failed", "not_converged", "canceled",
+                      "skipped", "unknown"):
+                continue
+            if job.get("submission_state") == "executing":
+                job["submission_state"] = "unknown"
+                job["status"] = "unknown"
+                job["submission_error"] = "检测到中断的提交尝试；结果未知"
+                submitted.append(f"- {key} 上次提交尝试中断，已标记 unknown；不会重试")
+                continue
+            if job.get("submission_state") in {"submitted", "unknown"}:
+                submitted.append(f"- {key} 已有提交尝试状态 {job['submission_state']}，不会重试")
+                continue
+            if key not in gate.eligible:
+                if st in ("submitted", "queued", "running"):
+                    continue
+                reason = gate.blocked.get(key) or "等待空位"
+                job["wait_reason"] = reason
+                submitted.append(f"- {key} 未提交：{reason}；依赖满足后需重新确认")
+                continue
+            if free <= 0:
+                submitted.append(f"- {key} 本次可用空位已用完；需稍后重新确认")
+                continue
+            try:
+                calc, script_name = self._verify_submit_target(
+                    flow, remote, local_dir, job)
+                # Bind existing outputs to this attempt so an old successful
+                # OUTCAR cannot complete a newly submitted job.
+                baseline = {}
+                for name in ("OUTCAR", "OSZICAR"):
+                    info = self.hpc.stat(f"{calc}/{name}")
+                    if info and info.get("size", 0) > 0:
+                        data = self.hpc.read_file(f"{calc}/{name}")
+                        raw = data if isinstance(data, str) else bytes(data).decode("utf-8", "replace")
+                        baseline[name] = hashlib.sha256(raw.encode()).hexdigest()
+                job["output_baseline"] = baseline
+            except Exception as exc:  # noqa: BLE001
+                submitted.append(f"- {job['key']} 预提交校验失败：{exc}（sbatch=0）")
+                continue
+            job["submission_state"] = "executing"
+            job["scheduler_target"] = target_binding(self.cfg)
+            job["submission_action_id"] = executing_action["action_id"]
+            self._save(store, project_id, task_id, flow)
+            try:
+                free -= 1  # Unknown receipts also consume this batch's budget.
+                slurm_id = self._submit_one(calc, script_name)
+            except Exception as exc:  # noqa: BLE001
+                job["submission_state"] = "unknown"
+                job["status"] = "unknown"
+                job["submission_error"] = str(exc)[:500]
+                self._save(store, project_id, task_id, flow)
+                submitted.append(f"- {job['key']} 提交结果不确定：{exc}；不会自动重试")
+                continue
+            job["slurm_id"] = slurm_id
+            job["status"] = "submitted"
+            job["submission_state"] = "submitted"
+            self._save(store, project_id, task_id, flow)
+            submitted.append(f"- {job['key']} 已提交：slurm id {slurm_id} "
+                             f"（目录 `{calc}`）")
+        if any(j.get("submission_state") == "unknown"
+               for j in flow["plan"]["jobs"]):
+            flow["phase"] = "blocked"
+        elif any(j.get("status") in ("draft", "waiting")
+                 for j in flow["plan"]["jobs"]):
+            # A dependency or capacity transition never inherits an earlier
+            # approval.  Keep an explicit confirmation boundary available.
+            flow["phase"] = "await_submit"
+        else:
+            flow["phase"] = "monitoring"
+        self._save(store, project_id, task_id, flow)
+        out = logs_note + "\n" + "\n".join(submitted)
+        return out + "\n在途作业会随后续消息刷新（squeue 实况）。"
+
+    def _free_slots(self, account: str) -> Optional[int]:
+        try:
+            code, out, err = self.hpc.run(self._squeue_command(account))
+            if code != 0 or (self.cfg.scheduler_backend == "paracloud" and (err or "").strip()):
+                return None
+            states = parse_queue(self.cfg.scheduler_backend, out or "")
+            return max(0, self.cfg.max_jobs - occupied(states))
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _squeue_command(self, account: str) -> str:
+        return queue_command(self.cfg.scheduler_backend, account)
+
+    def _job_calc_dir(self, base: str, local_dir: Path, key: str) -> str:
+        """作业计算目录：本地/远端已存在 <base>/<key> 子目录时用该子目录，
+        否则退回 base（保持旧版「扁平工作区」行为）。"""
+        per_job = self._contained_job_dir(Path(local_dir), key) is not None
+        if not per_job and self.hpc is not None and base:
+            try:
+                info = self.hpc.stat(f"{base.rstrip('/')}/{key}")
+                per_job = (info is not None and info.get("is_file") is not True)
+            except Exception:  # noqa: BLE001
+                per_job = False
+        return f"{base.rstrip('/')}/{key}" if per_job else (base or "")
+
+    def _verify_submit_target(self, flow: dict, remote: str, local_dir: Path,
+                              job: dict) -> tuple[str, str]:
+        calc = self._job_calc_dir(remote, local_dir, job["key"])
+        script_name = find_remote_submit_script(self.hpc, calc)
+        if not script_name:
+            raise RuntimeError("远端作业目录缺少唯一用户脚本")
+        fingerprint = fingerprint_remote_submit_script(self.hpc, calc, script_name)
+        attestation = (flow.get("script_attestations") or {}).get(job["key"])
+        draft = next((d for d in flow.get("draft") or []
+                      if d.get("job_key") == job["key"]), None)
+        if not isinstance(attestation, dict) or not isinstance(draft, dict):
+            raise RuntimeError("脚本认领或提交草稿缺失")
+        expected = {
+            "script_name": script_name,
+            "normalized_path": fingerprint["normalized_path"],
+            "sha256": fingerprint["sha256"], "size": fingerprint["size"],
+        }
+        if any(attestation.get(key) != value for key, value in expected.items()):
+            raise RuntimeError("远端脚本与认领哈希不一致")
+        if (draft.get("script_sha256") != fingerprint["sha256"]
+                or draft.get("script_size") != fingerprint["size"]
+                or draft.get("script_path") != fingerprint["normalized_path"]):
+            raise RuntimeError("远端脚本与草稿绑定不一致")
+        if draft.get("submit_cmd") != " ".join(submit_command(script_name, self.cfg.scheduler_backend)):
+            raise RuntimeError("草稿提交命令与当前调度平台不一致")
+        return calc, script_name
+
+    def _submit_one(self, calc: str, script_name: str) -> int | str:
+        if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}\.sh", script_name):
+            raise RuntimeError("非法提交脚本名")
+        command = " ".join(submit_command(script_name, self.cfg.scheduler_backend))
+        code, out, _ = self.hpc.run(command, cwd=calc)
+        return parse_receipt(self.cfg.scheduler_backend, code, out)
+
+    # ---------------- 监控 + 收尾 ----------------
+    # ---------------- 公共封装（供 agent 的 monitor/report 工具调用真实原语） ----------------
+    def monitor(self, store: ProjectStore, project_id: str, task_id: str,
+                flow: dict) -> str:
+        """查询作业进度并按真实 squeue 状态推进（agent monitor 工具用）。"""
+        if not flow:
+            flow = (store.get_task(project_id, task_id) or {}).get("flow") or {}
+        return self._pump(store, project_id, task_id, flow)
+
+    def stop_monitor(self, store: ProjectStore, project_id: str,
+                     task_id: str, flow: dict) -> str:
+        """M56：用户终止当前计算流程（agent stop_monitor 工具用）。
+
+        全部未终态作业置 canceled、等待队列清空、phase=done——后台监控
+        下轮扫不到本任务。已在超算上运行的作业无法
+        从本地真正取消，回执中给出 scancel 建议由用户决定。"""
+        del flow
+        with _task_lock(project_id, task_id):
+            current = (store.get_task(project_id, task_id) or {}).get("flow") or {}
+            return self._stop_monitor_locked(store, project_id, task_id,
+                                             dict(current))
+
+    def _stop_monitor_locked(self, store, project_id, task_id, flow) -> str:
+        if not flow:
+            flow = dict((store.get_task(project_id, task_id) or {})
+                        .get("flow") or {})
+        if not flow:
+            return "当前任务没有进行中的计算流程，无需终止。"
+        jobs = ((flow.get("plan") or {}).get("jobs")) or []
+        live = {"draft", "waiting", "submitted", "queued", "running",
+                "not_converged"}
+        stopped: list[str] = []
+        on_hpc: list[str] = []
+        for j in jobs:
+            if not isinstance(j, dict) or j.get("status") not in live:
+                continue
+            key = str(j.get("key") or "")
+            stopped.append(f"{key}（原状态 {j.get('status')}）")
+            sid = j.get("slurm_id")
+            if sid:
+                on_hpc.append(f"{sid}（{key}）")
+            j["status"] = "canceled"
+            j["stop_note"] = "用户终止"
+        flow["waiting"] = []
+        flow["phase"] = "done"
+        flow.setdefault("monitor", {}).update(state="stopped", remote_cancelled=False)
+        flow["report"] = self._render_report(store, project_id, task_id, flow)
+        self._save(store, project_id, task_id, flow)
+        out = "已终止本次计算流程："
+        out += ("、".join(stopped) if stopped else "没有未完成的作业") \
+            + "。\n后台监控已停止；系统不会自动提交任何作业。"
+        if on_hpc:
+            out += ("\n注意：以下作业已提交到超算，本地仅标记取消，超算上可能"
+                    "仍在运行（会继续占额度）。如需停止请在超算执行：\n"
+                    + "\n".join(f"{profile(self.cfg.scheduler_backend)[2]} {s.split('（')[0]}" for s in on_hpc)
+                    + "\n（scancel 属高风险命令，AI 模式不会代执行。）")
+        return out
+
+    def finalize_report(self, store: ProjectStore, project_id: str,
+                        task_id: str, flow: dict) -> str:
+        """作业全部终态后渲染真实结果报告（agent report 工具用）。"""
+        if not flow:
+            flow = (store.get_task(project_id, task_id) or {}).get("flow") or {}
+        return self._render_report(store, project_id, task_id, flow)
+
+    def _pump(self, store, project_id, task_id, flow) -> str:
+        """M55：per-task 互斥——用户消息触发与后台监控线程不并发推进，
+        防止同一作业被双补提/状态互相覆盖。"""
+        del flow
+        with _task_lock(project_id, task_id):
+            current = (store.get_task(project_id, task_id) or {}).get("flow") or {}
+            return self._pump_locked(store, project_id, task_id,
+                                     dict(current))
+
+    def _pump_locked(self, store, project_id, task_id, flow) -> str:
+        if self.hpc is None:
+            return ("未连接超算，无法查询作业进度。作业在超算上照常运行；"
+                    "配置 SSH 后回到本会话即可看到实况与报告。")
+        account = self.cfg.ssh_username
+        try:
+            current_target = target_binding(self.cfg)
+            for job in flow["plan"]["jobs"]:
+                if job.get("slurm_id") and job.get("scheduler_target", current_target) != current_target:
+                    raise ValueError("SSH/scheduler target changed; restore original configuration")
+            code, out, err = self.hpc.run(self._squeue_command(account))
+            if code != 0 or (self.cfg.scheduler_backend == "paracloud" and (err or "").strip()):
+                raise RuntimeError(f"squeue exit={code}: {(err or '')[:200]}")
+            states = parse_queue(self.cfg.scheduler_backend, out or "")
+        except Exception as exc:  # noqa: BLE001
+            flow["monitor_error"] = {"at": _now_iso(), "message": str(exc)[:500]}
+            self._save(store, project_id, task_id, flow)
+            return f"查询 squeue 失败（{type(exc).__name__}），进度未知；保留作业状态，稍后重查，禁止重提。"
+        flow.pop("monitor_error", None)
+        free = max(0, self.cfg.max_jobs - occupied(states))
+        progress: list[str] = []
+        for job in flow["plan"]["jobs"]:
+            status = job.get("status")
+            if status == "waiting":
+                progress.append(
+                    f"{job['key']}：{job.get('wait_reason') or '等待空位'}")
+                continue
+            if status not in ("submitted", "queued", "running", "unknown"):
+                progress.append(f"{job['key']}：{status}")
+                continue
+            sid = str(job.get("slurm_id") or "")
+            if not sid or job.get("submission_state") == "unknown":
+                progress.append(f"{job['key']}：提交结果未知，需人工核对作业号，禁止重提")
+                continue
+            token = states.get(sid)
+            if self.cfg.scheduler_backend == "paracloud" and (token is None or token in TERMINAL):
+                try:
+                    command = accounting_command(sid)
+                    acct_code, acct_out, acct_err = self.hpc.run(command)
+                    if acct_code != 0 or (acct_err or "").strip():
+                        raise ValueError("accounting unavailable")
+                    token, exit_code = parse_accounting(sid, acct_out)
+                    job["accounting_evidence"] = {"command": command, "state": token,
+                                                  "exit_code": exit_code, "at": _now_iso()}
+                except Exception:
+                    progress.append(f"{job['key']}：云作业离队但历史状态尚不可核实；继续等待，不重提")
+                    continue
+            if token in PENDING:
+                job["status"] = "queued"
+                progress.append(f"{job['key']}：排队中（{sid}）")
+            elif token in RUNNING:
+                job["status"] = "running"
+                label = "运行中" if token in {"R", "RUN", "RUNNING"} else f"运行或传输中 {token}"
+                progress.append(f"{job['key']}：{label}（{sid}）")
+            elif token is None or token in {"CD", "COMPLETED", "F", "FAILED", "CA", "CANCELLED", "TO", "TIMEOUT", "OOM", "OUT_OF_MEMORY", "NF", "NODE_FAIL"}:
+                result = self._finalize_job(flow, job)
+                if token in {"F", "FAILED", "CA", "CANCELLED", "TO", "TIMEOUT", "OOM", "OUT_OF_MEMORY", "NF", "NODE_FAIL"}:
+                    job["status"] = "failed"
+                    diagnosis = job.setdefault("diagnosis", {})
+                    diagnosis.update(status="failed", reason=f"Slurm 明确终态 {token}")
+                    diagnosis.setdefault("evidence", []).append({"file": "squeue", "text": f"{sid} {token}"})
+                    (flow.get("extractions", {}).get(job["key"], {}).get("outcar", {}))["converged"] = False
+                    diagnosis.setdefault("recommendations", []).append("核对 Slurm 失败日志；保留输出，用户要求重试时使用 retry_job。")
+                    result = diagnosis["reason"]
+                progress.append(f"{job['key']}：{result}")
+            else:
+                job["queue_state"] = token
+                progress.append(f"{job['key']}：调度状态 {token}，继续等待核验（{sid}）")
+
+        # P0: monitoring is read-only with respect to submission. Dependency
+        # completion never authorizes a later sbatch.
+        stalled = self._cascade_blocks(flow)
+        gate = self._gate(flow)
+        for job in flow["plan"]["jobs"]:
+            if job.get("status") in {"waiting", "draft"}:
+                job["wait_reason"] = ("依赖已满足；需重新预检并确认提交"
+                                      if job["key"] in gate.eligible else gate.blocked.get(job["key"], "等待确认"))
+        flow["waiting"] = [j["key"] for j in flow["plan"]["jobs"] if j.get("status") == "waiting"]
+        if flow.get("waiting"):
+            progress.insert(0, "等待作业不会自动补提；条件满足后需重新预检并逐次确认")
+        for note in stalled:
+            progress.append("已停止等待：" + note)
+        self._save(store, project_id, task_id, flow)
+
+        all_done = all(
+            j.get("status") in ("completed", "failed", "not_converged",
+                                "canceled", "not_found", "skipped", "blocked")
+            for j in flow["plan"]["jobs"])
+        if all_done:
+            flow["phase"] = ("blocked" if any(j.get("status") in {"failed", "not_converged", "blocked"}
+                                             for j in flow["plan"]["jobs"]) else "done")
+            self._cleanup_temp_logs(flow)
+            report = self._render_report(store, project_id, task_id, flow)
+            flow["report"] = report
+            self._save(store, project_id, task_id, flow)
+            return "\n".join(progress) + "\n\n" + report
+        suffix = ""
+        if flow.get("waiting"):
+            suffix = f"\n（超算空位 {free}；等待队列 {len(flow['waiting'])}）"
+        return "\n".join(progress) + suffix
+
+    def _cleanup_temp_logs(self, flow: dict) -> None:
+        """Automatic cleanup is disabled because remote deletes require consent."""
+        del flow
+
+    def _finalize_job(self, flow: dict, job: dict) -> str:
+        remote = flow.get("hpc_dir") or ""
+        # M52：按作业定位计算目录（嵌套 key 如 relax/static 也能读到自己的 OUTCAR）
+        local_dir = Path(flow.get("local_dir") or ".")
+        base = (self._job_calc_dir(remote, local_dir, job["key"]).rstrip("/")
+                if remote else "")
+        texts, sources, errors = {}, [], []
+        # Result evidence must not inherit SSH's 64 KiB preview limit: the
+        # normal-termination marker is at the end of OUTCAR. Read a bounded
+        # whole file; never diagnose a silently truncated prefix as complete.
+        result_read_limit = 16 * 1024 * 1024
+        for name in ("OUTCAR", "OSZICAR", "INCAR", "KPOINTS"):
+            try:
+                data = self.hpc.read_file(f"{base}/{name}", max_bytes=result_read_limit + 1)
+                if len(data) > result_read_limit:
+                    texts[name] = ""
+                    errors.append({"file": name, "text": "超过结果证据读取上限（16 MiB）；不使用截断内容判定成功"})
+                    continue
+                texts[name] = data if isinstance(data, str) else bytes(data).decode("utf-8", "replace")
+                sources.append(name)
+            except Exception as exc:  # noqa: BLE001
+                texts[name] = ""
+                errors.append({"file": name, "text": f"读取不可用：{type(exc).__name__}"})
+        try:
+            info = self.hpc.stat(f"{base}/CHGCAR")
+            if info and info.get("size", 0) > 0:
+                sources.append("CHGCAR")
+        except Exception as exc:  # noqa: BLE001
+            errors.append({"file": "CHGCAR", "text": f"状态未知：{type(exc).__name__}"})
+        text_out, text_os = texts["OUTCAR"], texts["OSZICAR"]
+        extraction = summarize_run(text_out, text_os)
+        diagnosis = verify_run(text_out, text_os, incar_text=texts["INCAR"],
+                               kpoints_text=texts["KPOINTS"], source_files=sources,
+                               job_kind=" ".join((str(job.get("kind") or ""),
+                                                  str(job.get("label") or job["key"].rsplit("/", 1)[-1]))))
+        diagnosis["evidence"].extend(errors)
+        diagnosis["checked_at"] = _now_iso()
+        extraction["verification"] = diagnosis
+        extraction["output_sha256"] = {name: hashlib.sha256(texts[name].encode()).hexdigest()
+                                        for name in ("OUTCAR", "OSZICAR") if name in sources}
+        baseline = job.get("output_baseline") or {}
+        if not baseline and job.get("attempt_history"):
+            baseline = (job["attempt_history"][-1].get("extraction") or {}).get("output_sha256") or {}
+        if baseline.get("OUTCAR") and baseline["OUTCAR"] == extraction["output_sha256"].get("OUTCAR"):
+            diagnosis.update(status="unknown", reason="OUTCAR 与提交前/上一尝试相同，尚无本次作业的新结果证据")
+            diagnosis["recommendations"] = ["保留旧输出，继续查询当前作业及调度日志；禁止自动重提。"]
+            diagnosis["evidence"].append({"file": "OUTCAR", "text": "SHA-256 与先前输出一致"})
+        # Reports must not turn an ionic stop marker into an overall success.
+        extraction["outcar"]["converged"] = diagnosis["status"] == "completed"
+        flow.setdefault("extractions", {})[job["key"]] = extraction
+        job["diagnosis"] = diagnosis
+        job["status"] = diagnosis["status"]
+        prefix = "已完成（已收敛）；" if diagnosis["status"] == "completed" else ""
+        return prefix + diagnosis["reason"] + "；" + "；".join(diagnosis["recommendations"])
+
+    def retry_job(self, store, project_id: str, task_id: str, action: dict) -> str:
+        """Reset only a confirmed terminal failure; never submit or touch outputs."""
+        from .consent import get_card
+        with _task_lock(project_id, task_id):
+            saved = get_card(store, project_id, task_id, action.get("action_id", ""))
+            if saved != action or action.get("state") != "executing":
+                raise ValueError("retry_job requires a claimed one-use action")
+            binding = action.get("binding") or {}
+            if (binding.get("operation") != "retry_job" or binding.get("project_id") != project_id
+                    or binding.get("task_id") != task_id or binding.get("execution_mode") != self.execution_mode):
+                raise ValueError("retry binding mismatch")
+            flow = copy.deepcopy((store.get_task(project_id, task_id) or {}).get("flow") or {})
+            jobs = flow.get("plan", {}).get("jobs", [])
+            job = next((j for j in jobs if j["key"] == binding.get("job_key")), None)
+            if (not job or job.get("status") not in {"failed", "not_converged"}
+                    or job.get("submission_state") == "unknown" or job != binding.get("job_snapshot")):
+                raise ValueError("only the unchanged, diagnosed terminal failure can be retried")
+            if not job.get("diagnosis"):
+                raise ValueError("diagnose the failure before retrying")
+            history = job.setdefault("attempt_history", [])
+            history.append({"at": _now_iso(), "job": {k: copy.deepcopy(v) for k, v in job.items() if k != "attempt_history"},
+                            "extraction": copy.deepcopy(flow.get("extractions", {}).get(job["key"])),
+                            "recovery_action_id": action["action_id"]})
+            for key in ("slurm_id", "submission_state", "submission_action_id", "submission_error", "wait_reason", "queue_state", "diagnosis"):
+                job.pop(key, None)
+            job["status"] = "draft"
+            for child in jobs:
+                if child.get("status") == "blocked" and child.get("blocked_by_dependency"):
+                    child["status"] = "waiting"
+                    child.pop("blocked_by_dependency", None)
+            self._cascade_blocks(flow)
+            flow["waiting"] = [j["key"] for j in jobs if j.get("status") == "waiting"]
+            flow.update(phase="await_submit", draft=[], precheck={"ok": False, "issues": []}, script_attestations={}, report="")
+            # Keep audit records, but no old preview or grant can authorize a retry.
+            cons = flow.get("consent") or {}
+            for previous in (cons.get("actions") or {}).values():
+                if previous.get("state") in {"pending", "approved"}:
+                    previous.update(state="expired", result="恢复作业后需重新确认", resolved_at=_now_iso())
+            cons["cards"] = {}
+            flow["consent"] = cons
+            self._save(store, project_id, task_id, flow)
+            return (f"{job['key']} 已恢复为待准备；历史作业号、诊断和输出摘要已保留，原输出文件未改动。"
+                    "请先保全旧输出并核对修复方案；所有写入/上传仍需逐次授权，然后重新认领脚本、硬预检、生成草稿及确认提交。此次 sbatch=0。")
+
+    def _render_report(self, store: ProjectStore, project_id: str,
+                       task_id: str, flow: dict) -> str:
+        task_d = store.get_task(project_id, task_id) or {}
+        session = Session(
+            session_id=task_id,
+            project_id=project_id,
+            title=str(task_d.get("title") or task_id),
+            calc_dir=flow.get("hpc_dir") or flow.get("local_dir") or "",
+            local_workspace=str(task_d.get("local_workspace") or ""),
+            start_step="understand",
+            end_step="report",
+            current_step="report",
+            duration="full",
+            requirement=RequirementSnapshot(raw_goal=flow.get("goal") or ""),
+        )
+        for job in flow.get("plan", {}).get("jobs", []):
+            entry = JobEntry(
+                job_key=job["key"],
+                description=job.get("description") or "",
+                status=_status_to_session(job.get("status") or ""),
+                slurm_job_id=(str(job.get("slurm_id"))
+                              if job.get("slurm_id") else None),
+                step="submit_monitor",
+            )
+            session.jobs.append(entry)
+        report = render_report(session,
+                               extractions=flow.get("extractions") or {},
+                               refine=None)
+        diagnostics = []
+        for job in flow.get("plan", {}).get("jobs", []):
+            diagnosis = job.get("diagnosis") or {}
+            if not diagnosis:
+                continue
+            diagnostics.append(f"### {job['key']}：{diagnosis.get('reason', '')}")
+            diagnostics.extend(f"- 证据 {e.get('file', '')}:{e.get('line', '')} {e.get('text', e.get('message', ''))}"
+                               for e in diagnosis.get("evidence", []))
+            diagnostics.extend(f"- 建议：{r}" for r in diagnosis.get("recommendations", []))
+        return report.markdown + ("\n\n## 结果核验与恢复\n\n" + "\n".join(diagnostics) if diagnostics else "")

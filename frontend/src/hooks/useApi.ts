@@ -5,7 +5,7 @@
 import { useQuery, useMutation } from '@tanstack/react-query';
 import {
   filesApi, structureApi, workflowsApi,
-  diagnosisApi, recipesApi, hpcApi, llmApi, chatApi, materialsApi, aiApi,
+  diagnosisApi, recipesApi, hpcApi, llmApi, chatApi, materialsApi, aiApi, toolboxApi,
 } from '../api/client';
 import type { LlmConfigUpdate, ChatMessageItem } from '../api/client';
 import { getFeatureFlags } from '../config/featureFlags';
@@ -440,5 +440,64 @@ export function useAiWaitQueue() {
     queryKey: ['aiWaitQueue'],
     queryFn: () => aiApi.getWaitQueue(),
     staleTime: 15 * 1000,
+  });
+}
+
+// ---- Toolbox execution owner ----
+export function useToolboxProjects() {
+  return useQuery({
+    queryKey: ['toolboxProjects'],
+    queryFn: () => toolboxApi.listProjects(),
+    staleTime: 10_000,
+  });
+}
+
+export function useToolboxTasks(projectId: string | null) {
+  return useQuery({
+    queryKey: ['toolboxTasks', projectId],
+    queryFn: () => toolboxApi.listTasks(projectId!),
+    enabled: !!projectId,
+  });
+}
+
+export function useToolboxTaskDetail(projectId: string | null, taskId: string | null) {
+  return useQuery({
+    queryKey: ['toolboxTaskDetail', projectId, taskId],
+    queryFn: ({ signal }) => toolboxApi.getTaskDetail(projectId!, taskId!, signal),
+    enabled: !!projectId && !!taskId,
+    refetchInterval: 5_000,
+    staleTime: 0,
+    retry: false,
+  });
+}
+
+export function useToolboxProjectCreate() {
+  return useMutation({
+    mutationFn: (body: { name: string; description?: string }) => toolboxApi.createProject(body),
+  });
+}
+
+export function useToolboxTaskCreate() {
+  return useMutation({
+    mutationFn: ({ projectId, body }: {
+      projectId: string;
+      body: { title?: string; goal?: string; local_workspace?: string; hpc_workspace?: string };
+    }) => toolboxApi.createTask(projectId, body),
+  });
+}
+
+export function useToolboxRunTool() {
+  return useMutation({
+    mutationFn: ({ projectId, taskId, name, args }: {
+      projectId: string; taskId: string; name: string; args?: Record<string, unknown>;
+    }) => toolboxApi.runTool(projectId, taskId, name, args),
+  });
+}
+
+export function useToolboxResolveConsent() {
+  return useMutation({
+    mutationFn: ({ projectId, taskId, cardId, approved, note }: {
+      projectId: string; taskId: string; cardId: string; approved: boolean; note?: string;
+    }) => toolboxApi.resolveConsent(projectId, taskId, cardId, approved, note),
   });
 }

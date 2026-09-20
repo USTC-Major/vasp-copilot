@@ -9,13 +9,13 @@ import pytest
 from pathlib import Path
 
 from ai_mode.config import AiModeConfig
-from ai_mode.consent import (claim_action, finish_action, resolve_card,
+from backend.toolbox.consent import (claim_action, finish_action, resolve_card,
                              spawn_submit_card)
 from ai_mode.orchestrator import Orchestrator
-from ai_mode.projects import ProjectStore
+from backend.toolbox.projects import ProjectStore
 from ai_mode.tools.draft import fingerprint_remote_submit_script
-from ai_mode.agent.tools import ToolExecutor, _CONSENT_PENDING
-from ai_mode.consent import get_card
+from backend.toolbox.commands import ToolExecutor, _CONSENT_PENDING
+from backend.toolbox.consent import get_card
 
 
 class FakeHPC:
@@ -260,7 +260,7 @@ def test_plan_and_selection_cannot_bypass_explicit_recovery(env, status):
     assert "AI_RECOVERY_REQUIRED" in ex.handle("plan", {"jobs": [{"key": "band", "kind": "band"}]})
     ex.handle("select_jobs", {"skip_all": True})
     ex.handle("select_jobs", {"submit_all": True})
-    orch.begin(store, pid, tid, "重新计算能带")
+    assert "AI_RECOVERY_REQUIRED" in ex.handle("plan", {"jobs": [{"key": "band", "kind": "band"}]})
     job = store.get_task(pid, tid)["flow"]["plan"]["jobs"][0]
     assert job["status"] == status and job["slurm_id"] == 42
     assert not hpc.calls and not hpc.write_calls
@@ -434,18 +434,16 @@ def test_remote_script_fingerprint_rejects_empty_file():
 
 def test_offline_no_fake_submission(env):
     store, pid, tid, cfg = env
-    orch = Orchestrator(cfg, hpc=None)               # 未配置 SSH
-    answer = orch.begin(store, pid, tid, "结构优化")
+    orch = Orchestrator(cfg, hpc=None)
+    ex = ToolExecutor(store=store, project_id=pid, task_id=tid, cfg=cfg, orch=orch)
+    ex.handle("plan", {"jobs": [{"key": "relax", "kind": "relax"}]})
+    ex.handle("precheck", {})
+    ex.handle("submit", {})
     flow = store.get_task(pid, tid)["flow"]
-    assert flow["phase"] == "blocked"
-    assert "提交前检查未通过" in answer
+    assert flow["execution_mode"] == "None"
+    assert not flow["precheck"]["ok"]
     assert not flow.get("draft")
-    assert "演示" not in answer and "演示调度" not in answer
-
-    again = orch.handle(store, pid, tid, "确认提交")
-    assert "Submitted batch job" not in again
-    assert "Submitted batch job" not in again
-    assert store.get_task(pid, tid)["flow"]["phase"] == "blocked"
+    assert not any(job.get("slurm_id") for job in flow["plan"]["jobs"])
 
 
 def test_stale_execution_mode_migrates_to_actual_hpc_backend(env):
@@ -454,12 +452,12 @@ def test_stale_execution_mode_migrates_to_actual_hpc_backend(env):
         "phase": "blocked", "execution_mode": "Real", "plan": {"jobs": []},
     })
     orch = Orchestrator(cfg, hpc=None)
-    orch.handle(store, pid, tid, "查看状态")
+    orch.sync_execution_mode(store, pid, tid)
     assert store.get_task(pid, tid)["flow"]["execution_mode"] == "None"
 
     hpc = FakeHPC()
     fake_orch = Orchestrator(cfg, hpc=hpc)
-    fake_orch.handle(store, pid, tid, "查看状态")
+    fake_orch.sync_execution_mode(store, pid, tid)
     assert store.get_task(pid, tid)["flow"]["execution_mode"] == "Fake"
 
 
@@ -485,12 +483,12 @@ def test_full_chain_offline_with_fake_hpc(env):
     # 在途作业：squeue 给 R -> 运行中
     hpc.squeue_rows.append(
         "4201  vaspuser  r1  vasp_std  R  node01  6 2")
-    running = orch.handle(store, pid, tid, "状态")
+    running = orch.monitor(store, pid, tid, None)
     assert "运行中（4201）" in running
 
     # 作业终态：squeue 空 -> 提取 OUTCAR/OSZICAR -> 报告
     hpc.squeue_rows.clear()
-    final = orch.handle(store, pid, tid, "再看一下")
+    final = orch.monitor(store, pid, tid, None)
     flow = store.get_task(pid, tid)["flow"]
     assert flow["phase"] == "done"
     assert "已完成（已收敛）" in final
@@ -506,10 +504,9 @@ def test_orchestrator_submit_requires_an_executing_bound_action(env):
              "requires": [], "status": "draft", "slurm_id": None}]
     flow = _ready_flow(store, pid, tid, hpc, jobs)
 
-    by_text = orch.handle(store, pid, tid, "确认提交")
+    assert not hasattr(orch, "handle")  # Natural-language execution entry retired.
     direct = orch._submit(store, pid, tid, flow)
 
-    assert "AI_SUBMIT_CONFIRMATION_REQUIRED" in by_text
     assert "AI_SUBMIT_CONFIRMATION_REQUIRED" in direct
     assert not [call for call in hpc.calls if call.startswith("sbatch")]
 
@@ -535,8 +532,7 @@ def test_wait_queue_until_slot_then_backfill(env):
 
     # Capacity recovery alone cannot inherit the prior confirmation.
     hpc.squeue_rows.clear()
-    back = orch.handle(store, pid, tid, "查看空位")
-    assert "待你确认提交" in back
+    assert store.get_task(pid, tid)["flow"]["phase"] == "await_submit"
     assert not [call for call in hpc.calls if call.startswith("sbatch")]
     submitted = _confirmed_submit(orch, store, pid, tid)
     assert "slurm id 4201" in submitted
@@ -549,7 +545,8 @@ def test_begin_uses_user_workspace_as_compute_dir(env):
     store, pid, tid, cfg = env
     ws = Path(store.get_task(pid, tid)["local_workspace"]).expanduser().resolve()
     orch = Orchestrator(cfg, hpc=None)
-    orch.begin(store, pid, tid, "structure relax")
+    ex = ToolExecutor(store=store, project_id=pid, task_id=tid, cfg=cfg, orch=orch)
+    ex.handle("plan", {"jobs": [{"key": "relax", "kind": "relax"}]})
     flow = store.get_task(pid, tid)["flow"]
     assert Path(flow["local_dir"]).expanduser().resolve() == ws
     assert not (cfg.data_dir / "workspace").exists()
@@ -568,7 +565,8 @@ def test_handle_heals_stale_local_dir_to_workspace(env):
         "precheck": {"ok": True, "issues": []}, "draft": [],
     })
     orch = Orchestrator(cfg, hpc=None)
-    orch.handle(store, pid, tid, "取消")   # 触发 handle() 顶部自愈
+    ex = ToolExecutor(store=store, project_id=pid, task_id=tid, cfg=cfg, orch=orch)
+    ex.handle("plan", {"jobs": [{"key": "relax", "kind": "relax"}]})  # Explicit planning binds selected workspace.
     flow = store.get_task(pid, tid)["flow"]
     assert Path(flow["local_dir"]).expanduser().resolve() == ws
     assert not (cfg.data_dir / "workspace").exists()   # 私有目录从未被创建/使用

@@ -163,6 +163,7 @@ def test_store_persists_across_instances(tmp_path):
     pid = s1.create_project("第二个项目", "")["id"]
     assert s1.delete_project(pid) is True            # 删除生效
     assert s1.delete_project(pid) is False           # 不存在返回 False
+    s1.close()  # A replacement process must first release chat ownership.
     s2 = ProjectStore(tmp_path)                      # 新实例读到落盘结果
     names = {p["name"] for p in s2.list_projects()}
     assert "持久化项目" in names and "第二个项目" not in names

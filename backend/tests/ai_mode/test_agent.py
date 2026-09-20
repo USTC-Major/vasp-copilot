@@ -10,11 +10,12 @@ import pytest
 from ai_mode.agent import parse_turn, run_agent, run_agent_stream
 from ai_mode.agent.runner import _strip_receipt_wait
 from ai_mode.agent.protocol import INTENT_MARK, TOOL_MARK
-from ai_mode.agent.tools import _CONSENT_PENDING, ToolExecutor
+from ai_mode.agent.tools import _CONSENT_PENDING
+from backend.tests.toolbox.legacy_bridge import ToolExecutor
 from ai_mode.config import AiModeConfig
-from ai_mode.consent import claim_action, get_card, resolve_card
+from backend.toolbox.consent import claim_action, get_card, resolve_card
 from ai_mode.llm.fake import FakeLLM
-from ai_mode.projects import ProjectStore
+from backend.tests.toolbox.legacy_bridge import ProjectStore
 
 
 def _intent(kind: str = "compute") -> str:

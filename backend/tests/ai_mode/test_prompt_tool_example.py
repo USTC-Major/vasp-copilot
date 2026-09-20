@@ -3,7 +3,7 @@ import json
 
 from ai_mode.agent.protocol import TOOL_MARK, parse_turn
 from ai_mode.agent.runner import build_messages
-from ai_mode.projects import ProjectStore
+from backend.tests.toolbox.legacy_bridge import ProjectStore
 
 
 def test_system_tool_example_is_valid_json_and_round_trips(tmp_path, monkeypatch):

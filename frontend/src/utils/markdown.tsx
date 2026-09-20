@@ -42,6 +42,24 @@ const LIST_STYLE: React.CSSProperties = {
   paddingLeft: 20,
 };
 
+const TABLE_WRAP_STYLE: React.CSSProperties = {
+  overflowX: 'auto',
+  margin: '4px 0 10px',
+};
+
+const TABLE_STYLE: React.CSSProperties = {
+  width: '100%',
+  borderCollapse: 'collapse',
+  fontSize: 13,
+};
+
+const TABLE_CELL_STYLE: React.CSSProperties = {
+  border: '1px solid #d9d9d9',
+  padding: '6px 8px',
+  verticalAlign: 'top',
+  overflowWrap: 'anywhere',
+};
+
 // ---- 行内解析：`code`、**粗体**、*斜体*、[文字](链接) ----
 function renderInline(text: string, keyPrefix: string): React.ReactNode[] {
   const tokenRe =
@@ -106,7 +124,52 @@ function isListLine(line: string): boolean {
   return /^[-*]\s+/.test(line) || /^\d+\.\s+/.test(line);
 }
 
-// ---- 主入口：块级解析（代码块/标题/列表/段落） ----
+function splitTableRow(line: string): string[] {
+  const source = line.trim().replace(/^\|/, '').replace(/\|$/, '');
+  const cells: string[] = [];
+  let cell = '';
+  let escaped = false;
+  let inCode = false;
+  for (const char of source) {
+    if (escaped) {
+      cell += char;
+      escaped = false;
+    } else if (char === '\\') {
+      escaped = true;
+    } else if (char === '`') {
+      inCode = !inCode;
+      cell += char;
+    } else if (char === '|' && !inCode) {
+      cells.push(cell.trim());
+      cell = '';
+    } else {
+      cell += char;
+    }
+  }
+  if (escaped) cell += '\\';
+  cells.push(cell.trim());
+  return cells;
+}
+
+function tableAlignments(line: string): Array<React.CSSProperties['textAlign']> | null {
+  const cells = splitTableRow(line);
+  if (!cells.length || cells.some((cell) => !/^:?-{3,}:?$/.test(cell.replace(/\s/g, '')))) return null;
+  return cells.map((cell) => {
+    const compact = cell.replace(/\s/g, '');
+    if (compact.startsWith(':') && compact.endsWith(':')) return 'center';
+    if (compact.endsWith(':')) return 'right';
+    return 'left';
+  });
+}
+
+function isTableStart(lines: string[], index: number): boolean {
+  if (index + 1 >= lines.length || !lines[index].includes('|')) return false;
+  const headers = splitTableRow(lines[index]);
+  const alignments = tableAlignments(lines[index + 1]);
+  return headers.length > 0 && alignments !== null && headers.length === alignments.length;
+}
+
+// ---- 主入口：块级解析（代码块/标题/表格/列表/段落） ----
 export function renderMarkdown(text: string): React.ReactNode {
   const blocks: React.ReactNode[] = [];
   const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
@@ -157,6 +220,48 @@ export function renderMarkdown(text: string): React.ReactNode {
       continue;
     }
 
+    // GFM 表格：标题行后必须紧跟 --- 分隔行，避免把普通管道文本误判为表格。
+    if (isTableStart(lines, i)) {
+      const headers = splitTableRow(lines[i]);
+      const alignments = tableAlignments(lines[i + 1]) ?? headers.map(() => 'left' as const);
+      const rows: string[][] = [];
+      i += 2;
+      while (i < lines.length && lines[i].trim() && lines[i].includes('|')) {
+        const row = splitTableRow(lines[i]);
+        if (row.length !== headers.length) break;
+        rows.push(row);
+        i += 1;
+      }
+      const key = `b${blockKey++}`;
+      blocks.push(
+        <div key={key} style={TABLE_WRAP_STYLE}>
+          <table style={TABLE_STYLE}>
+            <thead>
+              <tr>
+                {headers.map((header, index) => (
+                  <th key={`${key}-h${index}`} scope="col" style={{ ...TABLE_CELL_STYLE, textAlign: alignments[index], background: '#fafafa' }}>
+                    {renderInline(header, `${key}-h${index}`)}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row, rowIndex) => (
+                <tr key={`${key}-r${rowIndex}`}>
+                  {row.map((cell, cellIndex) => (
+                    <td key={`${key}-r${rowIndex}c${cellIndex}`} style={{ ...TABLE_CELL_STYLE, textAlign: alignments[cellIndex] }}>
+                      {renderInline(cell, `${key}-r${rowIndex}c${cellIndex}`)}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
+      continue;
+    }
+
     // 列表（- / * / 1. ）
     if (isListLine(line)) {
       const ordered = /^\d+\.\s+/.test(line);
@@ -188,7 +293,8 @@ export function renderMarkdown(text: string): React.ReactNode {
       lines[i].trim() &&
       !/^```/.test(lines[i]) &&
       !/^(#{1,4})\s+/.test(lines[i]) &&
-      !isListLine(lines[i])
+      !isListLine(lines[i]) &&
+      !isTableStart(lines, i)
     ) {
       paraLines.push(lines[i]);
       i += 1;

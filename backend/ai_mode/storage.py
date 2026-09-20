@@ -29,7 +29,7 @@ def ensure_layout(data_dir: Path | None = None) -> dict[str, Path]:
     dirs = {name: (data_dir / name).resolve() for name in _LAYOUT_DIRS}
     for sub in dirs.values():
         sub.mkdir(parents=True, exist_ok=True)
-    cfg = data_dir / "config.json"
+    cfg = data_dir / "ai_config.json"
     if not cfg.is_file():
         config = load_settings()
         save_settings(config, config_path=cfg)

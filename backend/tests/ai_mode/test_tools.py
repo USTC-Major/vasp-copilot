@@ -195,20 +195,6 @@ def test_make_submitter_writes_preview_only(tmp_path):
     assert job.extra["draft"]["job_id"] == "j1"
 
 
-def test_scheduler_arrange_with_draft_submitter():
-    from ai_mode.jobs import Scheduler
-    from ai_mode.tools.draft import make_draft_only_submitter
-    runner = FakeToolRunner([])  # squeue 无占用
-    sub = make_draft_only_submitter()
-    s = Scheduler(max_jobs=2, account="u", run=runner, submitter=sub)
-    submitted, _ = s.arrange([_job("a"), _job("b")])
-    assert [j.job_id for j in submitted] == ["a", "b"]
-    for j in submitted:
-        assert j.status == JobStatus.SUBMITTED
-        assert j.slurm_id is None                       # 只生成不执行
-        assert "draft" in j.extra                        # 取出可复核后再真提交
-
-
 def test_build_without_job_id_raises():
     b = SubmissionDraftBuilder()
     with pytest.raises(ValueError):

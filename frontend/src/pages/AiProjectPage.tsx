@@ -14,7 +14,8 @@ import AiTaskSidebar from '../components/ai/AiTaskSidebar';
 import AiProjectExtraSettings from '../components/ai/AiProjectExtraSettings';
 import AiContextBar from '../components/ai/AiContextBar';
 import AiDirectoryPicker from '../components/ai/AiDirectoryPicker';
-import { aiApi } from '../api/client';
+import ToolboxTaskStatus from '../components/toolbox/ToolboxTaskStatus';
+import { aiApi, toolboxApi } from '../api/client';
 import { AI_JOB_STATUS_MAP } from '../types/ai';
 import { useAiTasks, useAiTaskCreate, useAiMessages, useAiTaskContext, useAiTaskUpdate, useAiTaskDelete } from '../hooks/useApi';
 import type { AiMessage as AiMsg, AiTask, AiConsentCard } from '../types/ai';
@@ -53,7 +54,7 @@ const AiProjectPage: React.FC = () => {
   const handlePickLocalWorkspace = async () => {
     setPickingLocal(true);
     try {
-      const r = await aiApi.pickLocal(newLocalWorkspace);
+      const r = await toolboxApi.pickLocal(newLocalWorkspace);
       if (r.ok && r.path) {
         setNewLocalWorkspace(r.path);
       } else if (r.notice) {
@@ -375,6 +376,14 @@ const AiProjectPage: React.FC = () => {
             </div>
 
             <div ref={threadRef} style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', padding: '4px 4px 16px', marginBottom: 10 }}>
+              <div style={{ marginBottom: 16 }}>
+                <ToolboxTaskStatus
+                  projectId={projectId}
+                  taskId={selectedTask.id}
+                  title="共享执行状态（每 5 秒更新）"
+                  showTaskLink
+                />
+              </div>
               {allMsgs.length === 0 && <div style={{ color: '#999', textAlign: 'center', marginTop: 40 }}>还没有消息，说点什么吧。</div>}
               {messages.map((m, i) => (
                 <AiChatBubble key={i} role={m.role} name={m.role === 'assistant' ? 'VASP 计算助手' : undefined}>

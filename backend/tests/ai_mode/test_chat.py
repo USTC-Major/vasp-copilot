@@ -10,10 +10,11 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 
 from ai_mode.agent.protocol import INTENT_MARK, TOOL_MARK
-from ai_mode.chat import classify, perform_submit, reply, reply_stream
-from ai_mode.consent import get_card, list_cards, spawn_submit_card
+from ai_mode.chat import classify, reply, reply_stream
+from backend.toolbox.submission import perform_submit
+from backend.toolbox.consent import get_card, list_cards, spawn_submit_card
 from ai_mode.llm.fake import FakeLLM
-from ai_mode.projects import ProjectStore
+from backend.tests.toolbox.legacy_bridge import ProjectStore
 
 
 def _intent(kind: str = "compute") -> str:
@@ -386,8 +387,7 @@ def test_await_submit_free_text_goes_to_agent(task, monkeypatch):
         "precheck": {"ok": True, "hard": True, "digest": "a" * 64},
     })
     seen = []
-    monkeypatch.setattr(chat_module, "_make_orchestrator",
-                        lambda _f: _no_orch_cls(seen))
+    assert not hasattr(chat_module, "_make_orchestrator")
     llm = FakeLLM().on("把 INCAR 的 ENCUT 改成 600",
                        "已在 INCAR 中把 ENCUT 调整为 600，提交草稿已重新生成。"
                        "确认无误后回复「确认提交」即可。")
@@ -399,34 +399,9 @@ def test_await_submit_free_text_goes_to_agent(task, monkeypatch):
     assert store.get_task(pid, tid)["flow"]["phase"] == "await_submit"
 
 
-def test_await_submit_confirm_cancel_still_route_to_orchestrator(task, monkeypatch):
+def test_await_submit_text_never_builds_local_orchestrator(task):
     import ai_mode.chat as chat_module
-    store, pid, tid = task
-    store.update_task(pid, tid, flow={
-        "phase": "await_submit", "execution_mode": "None", "plan": {},
-        "precheck": {"ok": True, "hard": True, "digest": "a" * 64},
-    })
-    seen = []
-
-    class FakeOrch:
-        execution_mode = "None"
-
-        def sync_execution_mode(self, store_, p, t):
-            del store_, p, t
-            return self.execution_mode
-
-        def handle(self, store_, p, t, content):
-            seen.append(content)
-            return "推进:" + content
-
-    monkeypatch.setattr(chat_module, "_make_orchestrator", lambda _f: FakeOrch())
-    answer = reply(store, pid, tid, "确认提交",
-                   llm_factory=lambda _c: FakeLLM())
-    assert "AI_HPC_BACKEND_UNAVAILABLE" in answer
-    assert list_cards(store, pid, tid) == []
-    assert reply(store, pid, tid, "取消",
-                 llm_factory=lambda _c: FakeLLM()) == "推进:取消"
-    assert seen == ["取消"]
+    assert not hasattr(chat_module, '_make_orchestrator')
 
 
 def test_reply_stream_await_submit_free_text_goes_to_agent(task, monkeypatch):
@@ -434,8 +409,7 @@ def test_reply_stream_await_submit_free_text_goes_to_agent(task, monkeypatch):
     store, pid, tid = task
     store.update_task(pid, tid, flow={"phase": "await_submit", "plan": {}})
     seen = []
-    monkeypatch.setattr(chat_module, "_make_orchestrator",
-                        lambda _f: _no_orch_cls(seen))
+    assert not hasattr(chat_module, "_make_orchestrator")
     llm = FakeLLM().on("工作区里还没有 POTCAR",
                        "工作区当前没有 POTCAR 文件；提交前需补上。"
                        "你可以用工具生成或自行上传后，再回复「确认提交」。")

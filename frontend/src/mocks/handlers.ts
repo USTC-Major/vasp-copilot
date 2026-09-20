@@ -668,13 +668,106 @@ export const aiHandlers = [
 
 ];
 
+// Toolbox mock is only used by Vitest and the explicit ?mock=1 demo mode.
+// Production always talks to the 8000 execution owner.
+const TOOLBOX_BASE = '/api/v1/toolbox';
+const toolboxDetail = (projectId: string, taskId: string) => {
+  const task = aiDemo.getTask(projectId, taskId);
+  const legacy = aiDemo.flowDetail(projectId, taskId);
+  if (!task || !legacy) return null;
+  return {
+    mode: 'toolbox',
+    task_id: taskId,
+    task: {
+      id: task.id, project_id: task.project_id, title: task.title, goal: task.goal,
+      local_workspace: task.local_workspace ?? null, hpc_workspace: task.hpc_workspace ?? null,
+      status: task.status, updated_at: task.updated_at, execution_mode: task.execution_mode ?? 'None',
+    },
+    flow: {
+      execution_mode: task.execution_mode ?? 'None',
+      ...legacy.flow,
+      draft: [], artifacts: {},
+      jobs: legacy.flow.jobs.map((job) => ({
+        ...job,
+        submission_state: job.slurm_id ? 'confirmed' : 'not_submitted',
+        attempts: [],
+      })),
+    },
+    consents: [],
+    events: [{ id: 1, project_id: projectId, task_id: taskId, kind: 'mock', at: task.updated_at, message: '显式演示模式：已载入任务状态' }],
+    monitor: { state: 'monitoring', interval_seconds: 60, last_success_at: task.updated_at, remote_cancelled: false },
+    backend_mode: task.execution_mode ?? 'None',
+  };
+};
+
+export const toolboxHandlers = [
+  http.get(`${TOOLBOX_BASE}/projects`, () => HttpResponse.json({ mode: 'toolbox', projects: aiDemo.listProjects() })),
+  http.post(`${TOOLBOX_BASE}/projects`, async ({ request }) => {
+    const body = await request.json() as { name?: string; description?: string };
+    return HttpResponse.json({ mode: 'toolbox', project: aiDemo.createProject(body.name ?? '', body.description ?? '') });
+  }),
+  http.delete(`${TOOLBOX_BASE}/projects/:projectId`, ({ params }) => HttpResponse.json({ mode: 'toolbox', deleted: aiDemo.deleteProject(String(params.projectId)) })),
+  http.get(`${TOOLBOX_BASE}/projects/:projectId/tasks`, ({ params }) => HttpResponse.json({ mode: 'toolbox', tasks: aiDemo.listTasks(String(params.projectId)) })),
+  http.post(`${TOOLBOX_BASE}/projects/:projectId/tasks`, async ({ params, request }) => {
+    const body = await request.json() as { title?: string; goal?: string; local_workspace?: string; hpc_workspace?: string };
+    const task = aiDemo.createTask(String(params.projectId), body.title ?? '', body.goal ?? '', { local_workspace: body.local_workspace, hpc_workspace: body.hpc_workspace });
+    return HttpResponse.json({ mode: 'toolbox', task });
+  }),
+  http.patch(`${TOOLBOX_BASE}/projects/:projectId/tasks/:taskId`, async ({ params, request }) => {
+    const body = await request.json() as { title?: string; goal?: string; local_workspace?: string; hpc_workspace?: string };
+    const task = aiDemo.updateTask(String(params.projectId), String(params.taskId), body);
+    if (!task) return HttpResponse.json({ mode: 'toolbox', error: { code: 'TASK_NOT_FOUND', message: '计算任务不存在或被删除', retryable: false } }, { status: 404 });
+    return HttpResponse.json({ mode: 'toolbox', task });
+  }),
+  http.delete(`${TOOLBOX_BASE}/projects/:projectId/tasks/:taskId`, ({ params }) => {
+    const deleted = aiDemo.deleteTask(String(params.projectId), String(params.taskId));
+    return deleted
+      ? HttpResponse.json({ mode: 'toolbox', deleted: true, task_id: String(params.taskId) })
+      : HttpResponse.json({ mode: 'toolbox', error: { code: 'TASK_NOT_FOUND', message: '计算任务不存在或被删除', retryable: false } }, { status: 404 });
+  }),
+  http.get(`${TOOLBOX_BASE}/projects/:projectId/tasks/:taskId/detail`, ({ params }) => {
+    const detail = toolboxDetail(String(params.projectId), String(params.taskId));
+    if (!detail) return HttpResponse.json({ mode: 'toolbox', error: { code: 'TASK_NOT_FOUND', message: '计算任务不存在或被删除', retryable: false } }, { status: 404 });
+    return HttpResponse.json(detail);
+  }),
+  http.post(`${TOOLBOX_BASE}/projects/:projectId/tasks/:taskId/tools`, async ({ params, request }) => {
+    const detail = toolboxDetail(String(params.projectId), String(params.taskId));
+    if (!detail) return HttpResponse.json({ mode: 'toolbox', error: { code: 'TASK_NOT_FOUND', message: '计算任务不存在或被删除', retryable: false } }, { status: 404 });
+    const body = await request.json() as { name?: string };
+    return HttpResponse.json({ mode: 'toolbox', task_id: String(params.taskId), ok: true, error: null, result: `演示模式已处理 ${body.name ?? 'tool'}`, pending: null, flow: detail.flow });
+  }),
+  http.post(`${TOOLBOX_BASE}/projects/:projectId/tasks/:taskId/consents/:cardId`, ({ params }) => {
+    const detail = toolboxDetail(String(params.projectId), String(params.taskId));
+    if (!detail) return HttpResponse.json({ mode: 'toolbox', error: { code: 'TASK_NOT_FOUND', message: '计算任务不存在或被删除', retryable: false } }, { status: 404 });
+    return HttpResponse.json({ mode: 'toolbox', task_id: String(params.taskId), ok: true, error: null, card: { card_id: String(params.cardId), action_id: 'mock', kind: 'workspace', summary: '演示确认', state: 'executed' }, result: '演示确认已处理', flow: detail.flow });
+  }),
+  http.get(`${TOOLBOX_BASE}/recent-history`, () => HttpResponse.json({
+    mode: 'toolbox', items: aiDemo.tasks.map((task) => ({ id: `${task.project_id}:${task.id}`, title: task.title, status: task.status, updated_at: task.updated_at, project_id: task.project_id, task_id: task.id, project_name: aiDemo.getProject(task.project_id)?.name, execution_mode: task.execution_mode ?? 'None' })),
+  })),
+  http.get(`${TOOLBOX_BASE}/browse/:kind`, ({ params, request }) => {
+    const kind = String(params.kind) === 'hpc' ? 'hpc' : 'local';
+    const path = new URL(request.url).searchParams.get('path') ?? '';
+    return HttpResponse.json({ mode: 'toolbox', kind, path, parent: path ? (kind === 'hpc' ? path.split('/').slice(0, -1).join('/') : path.split(/[\\/]/).slice(0, -1).join('\\')) : null, exists: true, is_dir: true, roots: path ? undefined : kind === 'hpc' ? [{ name: '/', is_dir: true }] : [{ name: 'C:\\', is_dir: true }, { name: 'D:\\', is_dir: true }], entries: path ? [{ name: 'calc', is_dir: true }, { name: 'POSCAR', is_dir: false }] : [] });
+  }),
+  http.post(`${TOOLBOX_BASE}/browse/local/pick`, () => HttpResponse.json({ mode: 'toolbox', kind: 'local', ok: true, path: 'D:\\mock\\workspace\\picked' })),
+  http.post(`${TOOLBOX_BASE}/browse/:kind/mkdir`, async ({ params, request }) => {
+    const body = await request.json() as { path?: string; name?: string };
+    const sep = String(params.kind) === 'hpc' ? '/' : '\\';
+    return HttpResponse.json({ mode: 'toolbox', kind: params.kind, ok: true, path: `${body.path ?? ''}${sep}${body.name ?? ''}` });
+  }),
+  http.get(`${TOOLBOX_BASE}/settings`, () => HttpResponse.json({ mode: 'toolbox', backend_mode: 'Fake', settings: { max_jobs: 2, poll_interval_seconds: 60, ssh: { name: '演示集群', host: '', port: 22, username: '', known_hosts_path: '', identity_file: '', scheduler_backend: 'slurm' }, materials_project: { configured: false } } })),
+  http.put(`${TOOLBOX_BASE}/settings`, () => HttpResponse.json({ mode: 'toolbox', backend_mode: 'Fake', settings: { max_jobs: 2, poll_interval_seconds: 60, ssh: { name: '演示集群', host: '', port: 22, username: '', known_hosts_path: '', identity_file: '', scheduler_backend: 'slurm' }, materials_project: { configured: false } } })),
+  http.post(`${TOOLBOX_BASE}/settings/test/ssh`, () => HttpResponse.json({ mode: 'toolbox', ok: false, message: '显式演示模式未连接真实 SSH' })),
+  http.post(`${TOOLBOX_BASE}/settings/secrets/:kind`, () => HttpResponse.json({ mode: 'toolbox', configured: true })),
+];
+
 // 并入主 handlers：MSW server（测试）与 browser（?mock=1 演示）均依赖它。
 aiDemo.enqueue('本机等待队列演示；条件满足后重新预检并确认提交。', 'Fe2O3 能带计算');
 if (aiDemo.waiting.length === 1) {
   aiDemo.enqueue('超算作业数已达上限，排队等待空位。', 'Fe2O3 DOS 计算');
   aiDemo.enqueue('排队顺序按确认先后回填。', 'Fe2O3 band 结构精修');
 }
-handlers.push(...aiHandlers);
+handlers.push(...aiHandlers, ...toolboxHandlers);
 
 
 // ---- AI 设置类（MSW 离线演示/测试用；正常开发直连真实后端）----

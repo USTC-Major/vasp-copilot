@@ -8,7 +8,7 @@ import pytest
 
 from ai_mode.monitor import MonitorLoop, clamp_interval
 from ai_mode.orchestrator import _task_lock
-from ai_mode.projects import ProjectStore
+from backend.toolbox.projects import ProjectStore
 
 
 def _mk_monitoring_task(store: ProjectStore) -> tuple[str, str]:
@@ -31,6 +31,7 @@ def _mk_monitoring_task(store: ProjectStore) -> tuple[str, str]:
 
 
 class FakeOrch:
+    hpc = object()
     """monitor 一次：前序完成 → 补提 static 并把状态推进一格。"""
 
     def __init__(self):
@@ -55,6 +56,7 @@ class FakeOrch:
 
 
 class BoomOrch:
+    hpc = object()
     def monitor(self, store, project_id, task_id, flow):
         raise ConnectionError("ssh down")
 
@@ -75,22 +77,22 @@ def test_tick_appends_message_only_on_change(tmp_path):
     loop = MonitorLoop(orch_factory=lambda p, t, cfg: fake)
 
     assert loop.tick(store) == 1
-    msgs = store.list_messages(pid, tid)
+    msgs = store.list_events(pid, tid)
     assert len(msgs) == 1
-    assert msgs[0]["role"] == "assistant"
-    assert msgs[0]["content"].startswith("[自动监控]")
+    assert msgs[0]["kind"] == "monitor"
+    assert "relax" in msgs[0]["message"]
     task = store.get_task(pid, tid)
     assert task["flow"]["plan"]["jobs"][0]["status"] == "completed"
 
     # 第二轮：static completed → phase done，又一条消息
     assert loop.tick(store) == 1
-    msgs = store.list_messages(pid, tid)
+    msgs = store.list_events(pid, tid)
     assert len(msgs) == 2
     assert store.get_task(pid, tid)["flow"]["phase"] == "done"
 
     # 第三轮：已终态，monitoring_tasks 扫不到（phase=done），无新增
     assert loop.tick(store) == 0
-    assert len(store.list_messages(pid, tid)) == 2
+    assert len(store.list_events(pid, tid)) == 2
 
 
 def test_tick_skips_non_monitoring_tasks(tmp_path):

@@ -202,7 +202,7 @@ def test_task_detail_returns_flow_summary(monkeypatch, tmp_path):
             "local_dir": str(tmp_path / "ws"),
             "hpc_dir": "/home/u/vasp",
         }
-        server_module._get_project_store().update_task(
+        server_module._get_project_store().client.client.app.state.toolbox.store.update_task(
             pid, tid, flow=flow)
         r = client.get(f"/ai/v1/projects/{pid}/tasks/{tid}/detail")
         assert r.status_code == 200

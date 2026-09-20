@@ -3,13 +3,16 @@
 // ============================================================
 
 import React, { lazy, Suspense } from 'react';
-import { createBrowserRouter } from 'react-router-dom';
+import { createBrowserRouter, Navigate, useParams } from 'react-router-dom';
 import type { RouteObject } from 'react-router-dom';
 import App from './App';
 import HomePage from './pages/HomePage';
 import AiProjectsPage from './pages/AiProjectsPage';
 import AiProjectPage from './pages/AiProjectPage';
 import AiSettingsPage from './pages/AiSettingsPage';
+import ToolboxProjectsPage from './pages/ToolboxProjectsPage';
+import ToolboxTaskPage from './pages/ToolboxTaskPage';
+import ToolboxSettingsPage from './pages/ToolboxSettingsPage';
 import PageLoading from './components/common/PageLoading';
 
 const WorkflowBuilderPage = lazy(() => import('./pages/WorkflowBuilderPage'));
@@ -23,6 +26,11 @@ const withSuspense = (element: React.ReactNode) => (
   <Suspense fallback={<PageLoading />}>{element}</Suspense>
 );
 
+const LegacyAiProgressRedirect: React.FC = () => {
+  const { projectId = '', taskId = '' } = useParams();
+  return <Navigate replace to={`/toolbox/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(taskId)}`} />;
+};
+
 /** 导出路由表供测试以 createMemoryRouter 复用。 */
 export const routes: RouteObject[] = [
   {
@@ -31,7 +39,12 @@ export const routes: RouteObject[] = [
     children: [
       { path: 'ai', element: <AiProjectsPage /> },
       { path: 'ai/projects/:projectId', element: <AiProjectPage /> },
+      { path: 'ai/projects/:projectId/progress/:taskId', element: <LegacyAiProgressRedirect /> },
       { path: 'ai/settings', element: <AiSettingsPage /> },
+      { path: 'toolbox', element: <Navigate replace to="/toolbox/projects" /> },
+      { path: 'toolbox/projects', element: <ToolboxProjectsPage /> },
+      { path: 'toolbox/projects/:projectId/tasks/:taskId', element: <ToolboxTaskPage /> },
+      { path: 'toolbox/settings', element: <ToolboxSettingsPage /> },
       { index: true, element: <HomePage /> },
       { path: 'workflow', element: withSuspense(<WorkflowBuilderPage />) },
       { path: 'workflow/history/:id', element: withSuspense(<WorkflowHistoryPage />) },

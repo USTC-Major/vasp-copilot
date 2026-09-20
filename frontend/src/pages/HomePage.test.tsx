@@ -29,6 +29,10 @@ const empty = (source: 'ai' | 'workflows' | 'diagnoses', retention: 'persistent'
   HttpResponse.json({ source, retention, records: [] });
 
 describe('HomePage recent history', () => {
+  beforeEach(() => {
+    server.use(http.get('/api/v1/toolbox/recent-history', () => HttpResponse.json({ mode: 'toolbox', items: [] })));
+  });
+
   it('sorts, deduplicates, limits, and builds truthful routes', () => {
     const records: HistoryRecord[] = [
       { id: 'same', kind: 'workflow', title: 'old', status: 'planned', updated_at: '2026-01-01T00:00:00Z' },
@@ -41,7 +45,7 @@ describe('HomePage recent history', () => {
     expect(historyRecordPath({
       id: 'p:t', kind: 'ai_task', project_id: 'p', task_id: 't', title: 'task',
       status: 'idle', execution_mode: 'Real', updated_at: '2026-01-01T00:00:00Z',
-    })).toBe('/ai/projects/p');
+    })).toBe('/toolbox/projects/p/tasks/t');
   });
 
   it('does not present the toolbox Fake switch as a global environment', async () => {
@@ -94,6 +98,7 @@ describe('HomePage recent history', () => {
     const fail = () => HttpResponse.json({ error: { code: 'DOWN', message: 'down' } }, { status: 503 });
     server.use(
       http.get('/ai/v1/history/recent', fail),
+      http.get('/api/v1/toolbox/recent-history', fail),
       http.get('/api/v1/workflows/recent', fail),
       http.get('/api/v1/diagnosis/recent', fail),
     );
@@ -119,7 +124,7 @@ describe('HomePage recent history', () => {
   });
 
   it('refetches all sources whenever the home page remounts despite a fresh 30s cache', async () => {
-    const calls = { ai: 0, workflows: 0, diagnoses: 0 };
+    const calls = { ai: 0, toolbox: 0, workflows: 0, diagnoses: 0 };
     server.use(
       http.get('/ai/v1/history/recent', () => {
         calls.ai += 1;
@@ -128,6 +133,10 @@ describe('HomePage recent history', () => {
       http.get('/api/v1/workflows/recent', () => {
         calls.workflows += 1;
         return empty('workflows', 'ttl');
+      }),
+      http.get('/api/v1/toolbox/recent-history', () => {
+        calls.toolbox += 1;
+        return HttpResponse.json({ mode: 'toolbox', items: [] });
       }),
       http.get('/api/v1/diagnosis/recent', () => {
         calls.diagnoses += 1;
@@ -139,11 +148,11 @@ describe('HomePage recent history', () => {
     });
     const first = renderHome(client);
     await screen.findByText('暂无可显示的真实记录');
-    expect(calls).toEqual({ ai: 1, workflows: 1, diagnoses: 1 });
+    expect(calls).toEqual({ ai: 1, toolbox: 1, workflows: 1, diagnoses: 1 });
     first.unmount();
 
     renderHome(client);
-    await waitFor(() => expect(calls).toEqual({ ai: 2, workflows: 2, diagnoses: 2 }));
+    await waitFor(() => expect(calls).toEqual({ ai: 2, toolbox: 2, workflows: 2, diagnoses: 2 }));
   });
 });
 

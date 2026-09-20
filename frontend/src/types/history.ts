@@ -1,4 +1,4 @@
-export type HistoryKind = 'ai_project' | 'ai_task' | 'workflow' | 'diagnosis';
+export type HistoryKind = 'ai_project' | 'ai_task' | 'toolbox_task' | 'workflow' | 'diagnosis';
 
 export interface HistoryRecord {
   id: string;

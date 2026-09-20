@@ -85,7 +85,7 @@ def test_identity_setting_roundtrip_and_orchestrator(tmp_path):
 
 
 def test_settings_test_passes_identity_and_trust_paths(monkeypatch, tmp_path):
-    from ai_mode.settings.global_api import _ssh_test
+    from backend.toolbox.settings import probe_ssh as _ssh_test
     factory = Mock()
     factory.return_value.test_connection.return_value = (True, "connected")
     monkeypatch.setattr("ai_mode.ssh.connection.SSHManager", factory)
