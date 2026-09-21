@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import shlex
 import stat as stat_mode
@@ -164,6 +165,7 @@ class SSHManager:
         if self._client is not None:
             if self._check_alive(self._client):
                 return self._client
+            self._close_sftp()
             self._cleanup_client(self._client)
             self._client = None
         key_options = {}
@@ -278,15 +280,25 @@ class SSHManager:
     # ---------------- SFTP 原语 ----------------
 
     def _get_sftp(self):
+        # A cached channel belongs to its transport, not to this manager.
+        client = self.connect()
         if self._sftp is None:
-            client = self.connect()
             self._sftp = client.open_sftp()
         return self._sftp
+
+    def _failed_sftp_read(self, exc: Exception) -> None:
+        # Missing paths are normal SFTP replies. Other failures may indicate a
+        # dead channel even while the transport is active. Do not replay the
+        # operation: discard the channel so a later read can reopen it.
+        if not (isinstance(exc, FileNotFoundError)
+                or isinstance(exc, OSError) and exc.errno == errno.ENOENT):
+            self._close_sftp()
 
     def list_dir(self, remote: str) -> list[str]:
         try:
             return self._get_sftp().listdir(remote)
         except Exception as exc:
+            self._failed_sftp_read(exc)
             raise SSHSFTPError(f"列目录失败: {remote!r}") from exc
 
     def list_dir_info(self, remote: str) -> list[dict]:
@@ -294,6 +306,7 @@ class SSHManager:
         try:
             attrs = self._get_sftp().listdir_attr(remote)
         except Exception as exc:
+            self._failed_sftp_read(exc)
             raise SSHSFTPError(f"列目录失败: {remote!r}") from exc
         entries = []
         for a in attrs:
@@ -320,6 +333,7 @@ class SSHManager:
         except FileNotFoundError:
             return None
         except Exception as exc:
+            self._failed_sftp_read(exc)
             raise SSHSFTPError(f"stat 失败: {remote!r}") from exc
 
     def read_file(self, remote: str, *, max_bytes: int | None = None) -> bytes:
@@ -329,6 +343,7 @@ class SSHManager:
             with f:
                 return f.read(limit)
         except Exception as exc:
+            self._failed_sftp_read(exc)
             raise SSHSFTPError(f"读取失败: {remote!r}") from exc
 
     def sha256_file(self, remote: str) -> str:
@@ -344,6 +359,7 @@ class SSHManager:
                     digest.update(chunk)
             return digest.hexdigest()
         except Exception as exc:
+            self._failed_sftp_read(exc)
             raise SSHSFTPError(f"哈希读取失败: {remote!r}") from exc
 
     def write_file(self, remote: str, data: bytes) -> int:

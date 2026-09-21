@@ -152,7 +152,10 @@ class MonitorLoop:
                     state.update(last_attempt_at=now, interval_seconds=clamp_interval(cfg.poll_interval_seconds), remote_cancelled=False)
                     if flow.get('monitor_error') or getattr(orch, 'hpc', None) is None:
                         previous_error = state.get('last_error')
-                        state.update(state='error', last_error=str(flow.get('monitor_error') or 'HPC backend unavailable'))
+                        error = flow.get('monitor_error') or 'HPC backend unavailable'
+                        if isinstance(error, dict):
+                            error = error.get('message') or str(error)
+                        state.update(state='error', last_error=str(error))
                         if state['last_error'] != previous_error:
                             store.append_event(project_id, task_id, 'monitor.error', state['last_error'])
                     else:

@@ -8,6 +8,7 @@ capacity or dependency changes never trigger automatic submission.
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import copy
 import json
@@ -50,6 +51,18 @@ _PHASE_STATUS = {
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def _missing_remote_file(exc: Exception) -> bool:
+    """Preserve SSHSFTPError's public wrapper while recognizing ENOENT."""
+    seen = set()
+    while exc is not None and id(exc) not in seen:
+        seen.add(id(exc))
+        if (isinstance(exc, FileNotFoundError)
+                or isinstance(exc, OSError) and exc.errno == errno.ENOENT):
+            return True
+        exc = exc.__cause__
+    return False
 
 
 def _norm(text: str) -> str:
@@ -609,7 +622,8 @@ class Orchestrator:
     def _squeue_command(self, account: str) -> str:
         return queue_command(self.cfg.scheduler_backend, account)
 
-    def _job_calc_dir(self, base: str, local_dir: Path, key: str) -> str:
+    def _job_calc_dir(self, base: str, local_dir: Path, key: str, *,
+                      require_readable: bool = False) -> str:
         """作业计算目录：本地/远端已存在 <base>/<key> 子目录时用该子目录，
         否则退回 base（保持旧版「扁平工作区」行为）。"""
         per_job = self._contained_job_dir(Path(local_dir), key) is not None
@@ -617,7 +631,9 @@ class Orchestrator:
             try:
                 info = self.hpc.stat(f"{base.rstrip('/')}/{key}")
                 per_job = (info is not None and info.get("is_file") is not True)
-            except Exception:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
+                if require_readable and not _missing_remote_file(exc):
+                    raise
                 per_job = False
         return f"{base.rstrip('/')}/{key}" if per_job else (base or "")
 
@@ -798,6 +814,13 @@ class Orchestrator:
                 job["queue_state"] = token
                 progress.append(f"{job['key']}：调度状态 {token}，继续等待核验（{sid}）")
 
+        # A healthy queue query alone cannot clear a previous result-read
+        # failure. Only successful recollection of that job clears its marker.
+        read_errors = [j["result_read_error"] for j in flow["plan"]["jobs"]
+                       if j.get("result_read_error")]
+        if read_errors:
+            flow["monitor_error"] = {"at": _now_iso(), "message": "；".join(read_errors)}
+
         # P0: monitoring is read-only with respect to submission. Dependency
         # completion never authorizes a later sbatch.
         stalled = self._cascade_blocks(flow)
@@ -838,31 +861,49 @@ class Orchestrator:
         remote = flow.get("hpc_dir") or ""
         # M52：按作业定位计算目录（嵌套 key 如 relax/static 也能读到自己的 OUTCAR）
         local_dir = Path(flow.get("local_dir") or ".")
-        base = (self._job_calc_dir(remote, local_dir, job["key"]).rstrip("/")
-                if remote else "")
         texts, sources, errors = {}, [], []
+        collection_errors = []
+        try:
+            base = (self._job_calc_dir(remote, local_dir, job["key"],
+                                      require_readable=True).rstrip("/")
+                    if remote else "")
+        except Exception as exc:
+            # An unreadable directory must not fall back to another job's
+            # outputs. Retry discovery on the next read-only monitoring pass.
+            base = None
+            item = {"file": job["key"], "text": f"计算目录读取不可用：{type(exc).__name__}"}
+            errors.append(item)
+            collection_errors.append(item)
         # Result evidence must not inherit SSH's 64 KiB preview limit: the
         # normal-termination marker is at the end of OUTCAR. Read a bounded
         # whole file; never diagnose a silently truncated prefix as complete.
         result_read_limit = 16 * 1024 * 1024
         for name in ("OUTCAR", "OSZICAR", "INCAR", "KPOINTS"):
+            if base is None:
+                texts[name] = ""
+                continue
             try:
                 data = self.hpc.read_file(f"{base}/{name}", max_bytes=result_read_limit + 1)
                 if len(data) > result_read_limit:
                     texts[name] = ""
                     errors.append({"file": name, "text": "超过结果证据读取上限（16 MiB）；不使用截断内容判定成功"})
+                    collection_errors.append(errors[-1])
                     continue
                 texts[name] = data if isinstance(data, str) else bytes(data).decode("utf-8", "replace")
                 sources.append(name)
             except Exception as exc:  # noqa: BLE001
                 texts[name] = ""
                 errors.append({"file": name, "text": f"读取不可用：{type(exc).__name__}"})
+                if not _missing_remote_file(exc):
+                    collection_errors.append(errors[-1])
         try:
-            info = self.hpc.stat(f"{base}/CHGCAR")
+            info = self.hpc.stat(f"{base}/CHGCAR") if base is not None else None
             if info and info.get("size", 0) > 0:
                 sources.append("CHGCAR")
         except Exception as exc:  # noqa: BLE001
             errors.append({"file": "CHGCAR", "text": f"状态未知：{type(exc).__name__}"})
+            if not _missing_remote_file(exc):
+                collection_errors.append(errors[-1])
         text_out, text_os = texts["OUTCAR"], texts["OSZICAR"]
         extraction = summarize_run(text_out, text_os)
         diagnosis = verify_run(text_out, text_os, incar_text=texts["INCAR"],
@@ -881,6 +922,19 @@ class Orchestrator:
             diagnosis.update(status="unknown", reason="OUTCAR 与提交前/上一尝试相同，尚无本次作业的新结果证据")
             diagnosis["recommendations"] = ["保留旧输出，继续查询当前作业及调度日志；禁止自动重提。"]
             diagnosis["evidence"].append({"file": "OUTCAR", "text": "SHA-256 与先前输出一致"})
+        if collection_errors:
+            # Collection completeness is separate from scientific convergence.
+            # A partial successful read must not stop future collection attempts.
+            diagnosis.update(status="unknown", reason="结果证据采集失败，保留作业号并继续只读核对")
+            diagnosis["recommendations"] = ["等待下轮采集恢复或人工核对读取错误；禁止自动重提。"]
+            message = f"{job['key']}：" + "；".join(
+                f"{item['file']} {item['text']}" for item in collection_errors)
+            job["result_read_error"] = message
+            previous = flow.get("monitor_error") or {}
+            flow["monitor_error"] = {"at": _now_iso(), "message":
+                "；".join(filter(None, (previous.get("message"), message)))}
+        else:
+            job.pop("result_read_error", None)
         # Reports must not turn an ionic stop marker into an overall success.
         extraction["outcar"]["converged"] = diagnosis["status"] == "completed"
         flow.setdefault("extractions", {})[job["key"]] = extraction
@@ -912,7 +966,7 @@ class Orchestrator:
             history.append({"at": _now_iso(), "job": {k: copy.deepcopy(v) for k, v in job.items() if k != "attempt_history"},
                             "extraction": copy.deepcopy(flow.get("extractions", {}).get(job["key"])),
                             "recovery_action_id": action["action_id"]})
-            for key in ("slurm_id", "submission_state", "submission_action_id", "submission_error", "wait_reason", "queue_state", "diagnosis"):
+            for key in ("slurm_id", "submission_state", "submission_action_id", "submission_error", "wait_reason", "queue_state", "diagnosis", "result_read_error"):
                 job.pop(key, None)
             job["status"] = "draft"
             for child in jobs:
