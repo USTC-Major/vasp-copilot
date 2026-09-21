@@ -9,10 +9,12 @@ from fastapi.testclient import TestClient
 from pymatgen.io.vasp.inputs import Poscar
 
 from ai_mode import materials
-from ai_mode.agent.tools import ToolExecutor, _CONSENT_PENDING, tool_schema_text
+from backend.toolbox.commands import _CONSENT_PENDING
+from backend.tests.toolbox.legacy_bridge import ToolExecutor
+from ai_mode.agent.tool_schema import tool_schema_text
 from ai_mode.config import AiModeConfig
-from ai_mode.consent import get_card, resolve_card
-from ai_mode.projects import ProjectStore
+from backend.toolbox.consent import get_card, resolve_card
+from backend.tests.toolbox.legacy_bridge import ProjectStore
 
 
 @pytest.fixture

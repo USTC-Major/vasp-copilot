@@ -462,6 +462,59 @@ def _sftp_mgr():
     return mgr, factory
 
 
+@pytest.mark.parametrize("query_first", [True, False])
+def test_transport_replacement_discards_cached_sftp(query_first):
+    mgr, factory = _sftp_mgr()
+    old = mgr._get_sftp()
+    closed = []
+    old.close = lambda: closed.append(True)
+    factory.created[0]._alive = False
+    if query_first:
+        mgr.run("squeue -u alice")
+    current = mgr._get_sftp()
+    assert current is not old and closed == [True]
+    assert len(factory.created) == 2
+    mgr.close()
+
+
+@pytest.mark.parametrize("operation", ["read", "stat", "hash", "list", "list_info"])
+def test_sftp_channel_failure_is_not_replayed_and_next_read_recovers(operation):
+    mgr, factory = _sftp_mgr()
+    old = mgr._get_sftp()
+    calls = []
+    def fail(*args):
+        calls.append(args)
+        raise EOFError("channel closed")
+    old.open = old.stat = old.listdir = old.listdir_attr = fail
+    fresh = FakeSFTP()
+    fresh.files["/OUTCAR"] = bytearray(b"recovered")
+    opens = []
+    def reopen():
+        opens.append(True)
+        return fresh
+    factory.created[0].open_sftp = reopen
+    method = {"read": mgr.read_file, "stat": mgr.stat,
+              "hash": mgr.sha256_file, "list": mgr.list_dir,
+              "list_info": mgr.list_dir_info}[operation]
+    with pytest.raises(SSHSFTPError):
+        method("/OUTCAR")
+    assert len(calls) == 1 and not opens
+    assert mgr.read_file("/OUTCAR") == b"recovered"
+    assert opens == [True] and len(factory.created) == 1
+    mgr.close()
+
+
+def test_missing_file_keeps_healthy_sftp_and_original_exception_contract():
+    mgr, _ = _sftp_mgr()
+    sftp = mgr._get_sftp()
+    with pytest.raises(SSHSFTPError) as error:
+        mgr.read_file("/absent")
+    assert isinstance(error.value.__cause__, FileNotFoundError)
+    assert mgr._get_sftp() is sftp
+    assert mgr.stat("/absent") is None
+    mgr.close()
+
+
 def test_write_read_roundtrip():
     mgr, _ = _sftp_mgr()
     n = mgr.write_file("/calc/INCAR", b"ENCUT=520\n")

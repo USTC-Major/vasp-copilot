@@ -1,13 +1,13 @@
 // ============================================================
 // AiDirectoryPicker — 工作区目录图形化浏览点选（M032 初版 / M33 增强）
 // 本地/超算通用：起点视图 -> 逐层进入文件夹 -> 「选择当前文件夹」回填。
-// 增强：隐藏/系统/无权目录已由后端过滤；支持「新建文件夹」后即时刷新；
+// 隐藏/系统/无权目录由 Toolbox 过滤；只允许在当前父目录创建一个直接子目录。
 // 交互与视觉对齐工具箱「上传结构文件」弹窗（大图标 + 说明 + 干净列表）。
 // ============================================================
 
 import React, { useCallback, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
-import { Modal, List, Button, Spin, Alert, Typography, Empty, Input, Tag } from 'antd';
+import { Modal, List, Button, Spin, Alert, Typography, Empty, Tag, Input, message } from 'antd';
 import {
   FolderFilled,
   FolderOpenFilled,
@@ -18,8 +18,8 @@ import {
   HddOutlined,
   PlusOutlined,
 } from '@ant-design/icons';
-import { aiApi } from '../../api/client';
-import type { AiBrowseEntry } from '../../types/ai';
+import { toolboxApi } from '../../api/client';
+import type { ToolboxBrowseEntry } from '../../types/toolbox';
 
 const { Text } = Typography;
 
@@ -49,18 +49,17 @@ const joinPath = (kind: 'local' | 'hpc', base: string, name: string) => {
 const AiDirectoryPicker: React.FC<Props> = ({ open, kind, initialPath, onSelect, onCancel }) => {
   const [path, setPath] = useState<string | null>(null); // null = 起点视图
   const [parent, setParent] = useState<string | null>(null);
-  const [entries, setEntries] = useState<AiBrowseEntry[]>([]);
-  const [roots, setRoots] = useState<AiBrowseEntry[]>([]);
+  const [entries, setEntries] = useState<ToolboxBrowseEntry[]>([]);
+  const [roots, setRoots] = useState<ToolboxBrowseEntry[]>([]);
   const [notice, setNotice] = useState('');
   const [loading, setLoading] = useState(false);
-  const [creating, setCreating] = useState(false);
-  const [newName, setNewName] = useState('');
   const [selectedName, setSelectedName] = useState<string | null>(null);
+  const [newFolderName, setNewFolderName] = useState('');
+  const [creating, setCreating] = useState(false);
 
   const browse = useCallback(
     async (p: string | undefined) => {
-      if (kind === 'local') return p ? aiApi.browseLocal(p) : aiApi.browseLocal('');
-      return p ? aiApi.browseHpc(p) : aiApi.browseHpc('');
+      return toolboxApi.browse(kind, p ?? '');
     },
     [kind],
   );
@@ -101,37 +100,32 @@ const AiDirectoryPicker: React.FC<Props> = ({ open, kind, initialPath, onSelect,
   useEffect(() => {
     if (open) {
       const start = initialPath && initialPath.trim() ? initialPath.trim() : undefined;
-      setCreating(false);
-      setNewName('');
       void loadPath(start);
     }
   }, [open, initialPath, loadPath]);
 
-  const createFolder = useCallback(async () => {
-    const name = newName.trim();
-    if (!name || path === null) return;
-    setCreating(true);
-    setNotice('');
-    try {
-      const r = kind === 'local'
-        ? await aiApi.mkdirLocal(path, name)
-        : await aiApi.mkdirHpc(path, name);
-      if (r.ok) {
-        setNewName('');
-        setCreating(false);
-        await loadPath(path);
-      } else {
-        setCreating(false);
-        setNotice(r.notice || '新建文件夹失败');
-      }
-    } catch (err) {
-      setCreating(false);
-      setNotice(err instanceof Error ? err.message : '新建文件夹失败');
-    }
-  }, [newName, path, kind, loadPath]);
-
   const dirs = entries; // 后端已过滤隐藏/无权目录；此处仅展示目录
   const inFolder = path !== null;
+  const createFolder = async () => {
+    const name = newFolderName.trim();
+    if (!path || !name) return;
+    if (name.startsWith('.') || /[\\/]/.test(name) || name === '..') {
+      message.warning('目录名必须是非隐藏的单段名称，不能包含路径分隔符。');
+      return;
+    }
+    setCreating(true);
+    try {
+      await toolboxApi.makeDirectory(kind, path, name);
+      setNewFolderName('');
+      await loadPath(path);
+      setSelectedName(name);
+      message.success('已创建子目录');
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '创建目录失败');
+    } finally {
+      setCreating(false);
+    }
+  };
   const rootName = (name: string) => {
     if (kind === 'hpc' && name === '/') return '超算根目录 /';
     if (kind === 'local' && /^[A-Za-z]:\\?$/.test(name)) return `本机磁盘 ${name}`;
@@ -195,38 +189,10 @@ const AiDirectoryPicker: React.FC<Props> = ({ open, kind, initialPath, onSelect,
           {kind === 'hpc' ? '超算（SSH）' : '本机'}
         </Tag>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
-          <Button
-            size="small"
-            type="primary"
-            ghost
-            icon={<PlusOutlined />}
-            disabled={!inFolder || creating || loading}
-            onClick={() => { setNotice(''); setCreating(true); }}
-          >
-            新建文件夹
-          </Button>
           {actionBtn('上一级', <ArrowLeftOutlined />, () => void loadPath(parent ?? undefined), !parent || loading)}
           {actionBtn('刷新', <ReloadOutlined />, () => void loadPath(path ?? undefined), loading)}
         </div>
       </div>
-
-      {/* 新建文件夹输入行 */}
-      {creating && (
-        <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
-          <Input
-            placeholder="输入新文件夹名称"
-            value={newName}
-            onChange={(e) => setNewName(e.target.value)}
-            onPressEnter={() => void createFolder()}
-            allowClear
-            autoFocus
-            maxLength={120}
-            style={{ flex: 1 }}
-          />
-          <Button type="primary" onClick={() => void createFolder()}>确定</Button>
-          <Button onClick={() => { setCreating(false); setNewName(''); }}>取消</Button>
-        </div>
-      )}
 
       {notice && <Alert type="warning" showIcon closable message={notice} style={{ marginBottom: 10 }} />}
 
@@ -272,8 +238,23 @@ const AiDirectoryPicker: React.FC<Props> = ({ open, kind, initialPath, onSelect,
         )}
       </div>
 
+      {inFolder && (
+        <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+          <Input
+            aria-label="新建子目录名称"
+            placeholder="新建当前目录的直接子目录"
+            value={newFolderName}
+            onChange={(event) => setNewFolderName(event.target.value)}
+            onPressEnter={() => void createFolder()}
+          />
+          <Button icon={<PlusOutlined />} loading={creating} disabled={!newFolderName.trim()} onClick={() => void createFolder()}>
+            新建目录
+          </Button>
+        </div>
+      )}
+
       <Text type="secondary" style={{ display: 'block', marginTop: 8, fontSize: 12 }}>
-        单击文件夹选中（可在「选择此文件夹」直接确认路径），双击进入。可先「新建文件夹」再使用。
+        单击文件夹选中（可在「选择此文件夹」直接确认路径），双击进入。
       </Text>
     </Modal>
   );

@@ -30,12 +30,12 @@ def generation_status(store, pid: str, tid: str) -> dict:
         if run is not None:
             return {"running": True, "run_id": run.run_id,
                     "state": "stopping" if run.should_stop() else "running"}
-        previous = (store.get_task(pid, tid) or {}).get("generation") or {}
+        previous = store.generation_metadata(pid, tid)
         # A previous process may have died without its finally block. Do not
         # pretend it is still running, or silently restart an external action.
         if previous.get("state") in {"running", "stopping"}:
             previous = {**previous, "state": "interrupted", "message": _INTERRUPTED}
-            store.update_task(pid, tid, generation=previous)
+            store.update_generation(pid, tid, previous)
         return {**previous, "running": False}
 
 
@@ -64,7 +64,7 @@ class ChatRun:
             _RUNS[self.key] = self
             ACTIVE_STOPS[self.key] = False
             try:
-                store.update_task(pid, tid, generation={"run_id": self.run_id,
+                store.update_generation(pid, tid, {"run_id": self.run_id,
                                                       "state": "running"})
             except Exception:
                 _RUNS.pop(self.key, None)
@@ -100,12 +100,11 @@ class ChatRun:
     def finish(self, answer: str, thinking: str = "", *, state: str = "done") -> None:
         self.answer = answer
         try:
-            if self.store.get_task(self.pid, self.tid) is not None:
-                if answer.strip():
-                    self.store.append_message(self.pid, self.tid, "assistant",
-                                              answer.strip(), thinking=thinking.strip())
-                self.store.update_task(self.pid, self.tid,
-                                       generation={"run_id": self.run_id, "state": state})
+            if answer.strip():
+                self.store.append_message(self.pid, self.tid, "assistant",
+                                          answer.strip(), thinking=thinking.strip())
+            self.store.update_generation(self.pid, self.tid,
+                                         {"run_id": self.run_id, "state": state})
         finally:
             with _LOCK:
                 if _RUNS.get(self.key) is self:

@@ -7,6 +7,15 @@ from ...schemas.parsed import ParsedRunData
 from ...schemas.status import Severity
 
 
+# Shared verbatim match strings keep fallback coverage aligned with each
+# specific rule. Matching remains case-insensitive substring matching.
+_BRMIX_PATTERNS = ("BRMIX: very serious", "brmix")
+_ZHEGV_PATTERNS = ("ZHEGV", "ZHEGV_")
+_BANDS_PATTERNS = ("TOO FEW BANDS", "to few bands", "too few bands")
+_DAV_PATTERNS = ("EDDDAV", "DAV", "RMM-DIIS: failed")
+_CLASSIFIED_PATTERNS = _BRMIX_PATTERNS + _ZHEGV_PATTERNS + _BANDS_PATTERNS + _DAV_PATTERNS
+
+
 def _match_outcar(parsed: ParsedRunData, *patterns: str) -> list:
     hits = []
     for err in parsed.outcar.error_lines:
@@ -23,7 +32,7 @@ class BrmixSeriousProblemRule(Rule):
     category = "core_errors"
 
     def run(self, parsed: ParsedRunData) -> list[Issue]:
-        hits = _match_outcar(parsed, "BRMIX: very serious", "brmix")
+        hits = _match_outcar(parsed, *_BRMIX_PATTERNS)
         if not hits:
             return []
         err = hits[0]
@@ -45,7 +54,7 @@ class ZhegvLapackFailureRule(Rule):
     category = "core_errors"
 
     def run(self, parsed: ParsedRunData) -> list[Issue]:
-        hits = _match_outcar(parsed, "ZHEGV", "ZHEGV_")
+        hits = _match_outcar(parsed, *_ZHEGV_PATTERNS)
         if not hits:
             return []
         err = hits[0]
@@ -67,7 +76,7 @@ class TooFewBandsRule(Rule):
     category = "core_errors"
 
     def run(self, parsed: ParsedRunData) -> list[Issue]:
-        hits = _match_outcar(parsed, "TOO FEW BANDS", "to few bands", "too few bands")
+        hits = _match_outcar(parsed, *_BANDS_PATTERNS)
         if not hits:
             return []
         err = hits[0]
@@ -90,7 +99,7 @@ class DavOrEdddavErrorRule(Rule):
     category = "core_errors"
 
     def run(self, parsed: ParsedRunData) -> list[Issue]:
-        hits = _match_outcar(parsed, "EDDDAV", "DAV", "RMM-DIIS: failed")
+        hits = _match_outcar(parsed, *_DAV_PATTERNS)
         if not hits:
             return []
         err = hits[0]
@@ -104,4 +113,28 @@ class DavOrEdddavErrorRule(Rule):
                 {"action": "review", "target": "user", "rationale": "检查 mixing、ALGO、结构"}],
             confidence=0.8, blocking=True,
             possible_causes=["电荷密度不一致", "结构/混合问题"],
+        )]
+
+class OutcarUnclassifiedErrorRule(Rule):
+    """Retain detected error evidence that has no specific diagnostic rule."""
+
+    rule_id = "OUTCAR_UNCLASSIFIED_ERROR"
+    category = "core_errors"
+
+    def run(self, parsed: ParsedRunData) -> list[Issue]:
+        hits = [err for err in parsed.outcar.error_lines
+                if not any(pattern.lower() in err.get("text", "").lower()
+                           for pattern in _CLASSIFIED_PATTERNS)]
+        if not hits:
+            return []
+        return [build_issue(
+            rule_id=self.rule_id, severity=Severity.MEDIUM, category=self.category,
+            title="OUTCAR 含待核对的错误标记",
+            summary="OUTCAR 中存在尚无专用诊断规则覆盖的错误标记，请结合上下文人工核对。",
+            evidence=[{"file": "OUTCAR", "line": err.get("line"),
+                       "message": err.get("text", ""),
+                       "data_ref": "outcar.error_lines"} for err in hits],
+            recommendations=[{"action": "review", "target": "user",
+                              "rationale": "查看所列 OUTCAR 原文及前后文，核对作业日志与实际结果。"}],
+            auto_fixable=False, confidence=0.8, blocking=False,
         )]

@@ -1,0 +1,114 @@
+"""Atomic, non-destructive JSON persistence and read-only legacy migration."""
+import copy
+import hashlib
+import json
+import os
+import tempfile
+from pathlib import Path
+
+def atomic_json(path: Path, value):
+    fd, name = tempfile.mkstemp(dir=path.parent, prefix='.toolbox_', suffix='.tmp')
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as handle:
+            json.dump(value, handle, ensure_ascii=False, indent=2)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(name, path)
+    finally:
+        if os.path.exists(name):
+            os.unlink(name)
+
+def read_object(path: Path):
+    data = json.loads(path.read_text(encoding='utf-8'))
+    if not isinstance(data, dict):
+        raise ValueError(f'Invalid store structure: {path.name}; file preserved')
+    return data
+
+def _records(value, field):
+    if not isinstance(value, list) or any(not isinstance(row, dict) for row in value):
+        raise ValueError(f'Invalid store {field}: expected a list of objects; original preserved')
+
+
+def _mapping(value, field):
+    if not isinstance(value, dict):
+        raise ValueError(f'Invalid store {field}: expected an object; original preserved')
+
+
+def validate_chat(data):
+    """Check only the containers used by chat reads/writes; retain unknown fields."""
+    if data.get('schema_version') != 1:
+        raise ValueError('Invalid chat schema_version; original preserved')
+    _mapping(data.get('messages'), 'messages')
+    for key, rows in data['messages'].items():
+        _records(rows, 'messages.' + key)
+    _mapping(data.get('task_metadata'), 'task_metadata')
+    for metadata in data['task_metadata'].values():
+        _mapping(metadata, 'task_metadata entry')
+        if 'generation' in metadata:
+            _mapping(metadata['generation'], 'generation')
+
+
+def validate_execution(data):
+    """Validate runtime containers before recovery or any persisted migration."""
+    if data.get('schema_version') != 1:
+        raise ValueError('Invalid execution schema_version; original preserved')
+    for field in ('projects', 'tasks', 'waiting', 'events'):
+        _records(data.get(field), field)
+    for task in data['tasks']:
+        flow = task.get('flow')
+        if flow is None:
+            continue
+        _mapping(flow, 'flow')
+        for field in ('plan', 'consent', 'monitor'):
+            if field in flow:
+                _mapping(flow[field], 'flow.' + field)
+        plan = flow.get('plan', {})
+        if 'jobs' in plan:
+            _records(plan['jobs'], 'plan.jobs')
+        actions = flow.get('consent', {}).get('actions', {})
+        _mapping(actions, 'consent.actions')
+        for action in actions.values():
+            _mapping(action, 'consent action')
+
+
+def import_legacy(root: Path, kind: str):
+    source = root / 'ai_store.json'
+    legacy = read_object(source) if source.is_file() else {}
+    for key, expected in [('projects', list), ('tasks', list), ('messages', dict)]:
+        if key in legacy and not isinstance(legacy[key], expected):
+            raise ValueError(f'Invalid legacy {key}; original preserved')
+    # Validate legacy containers before either destination is created.
+    validate_execution({**legacy, 'schema_version': 1, 'projects': legacy.get('projects', []),
+                        'tasks': legacy.get('tasks', []), 'waiting': legacy.get('waiting', []),
+                        'events': legacy.get('events', [])})
+    validate_chat({'schema_version': 1, 'messages': legacy.get('messages', {}),
+                   'task_metadata': legacy.get('task_metadata', {})})
+    for task in legacy.get('tasks', []):
+        if 'generation' in task:
+            _mapping(task['generation'], 'legacy task generation')
+    metadata = {'source': 'ai_store.json', 'sha256': hashlib.sha256(source.read_bytes()).hexdigest()} if source.is_file() else None
+    if kind == 'chat':
+        result = {'schema_version': 1, 'messages': copy.deepcopy(legacy.get('messages', {})), 'context': copy.deepcopy(legacy.get('context', {})), 'task_metadata': {str(t.get('project_id')) + ':' + str(t.get('id')): {'generation': copy.deepcopy(t['generation'])} for t in legacy.get('tasks', []) if 'generation' in t}, 'migration': metadata}
+        validate_chat(result)
+        return result
+    data = {key: copy.deepcopy(value) for key, value in legacy.items() if key not in {'messages', 'context'}}
+    data.update(schema_version=1, events=[], migration=metadata)
+    data.setdefault('projects', [])
+    data.setdefault('tasks', [])
+    data.setdefault('waiting', [])
+    for task in data['tasks']:
+        task.pop('generation', None)
+    validate_execution(data)
+    recover_actions(data, importing=True)
+    return data
+
+def recover_actions(data, *, importing=False):
+    for task in data.get('tasks', []):
+        flow = task.get('flow') or {}
+        for action in (flow.get('consent') or {}).get('actions', {}).values():
+            if action.get('state') == 'executing':
+                action.update(state='unknown', result='服务中断：操作结果待核实，禁止自动重放')
+            elif importing and action.get('state') in {'pending', 'approved'}:
+                action.update(state='expired', result='旧版授权已迁移为审计记录，请重新确认')
+        if flow.get('phase') == 'monitoring':
+            flow.setdefault('monitor', {}).update(state='recovering')

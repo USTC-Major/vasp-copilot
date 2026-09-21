@@ -6,7 +6,10 @@ export const mergeRecentRecords = (
 ): HistoryRecord[] => {
   const unique = new Map<string, HistoryRecord>();
   for (const item of groups.flat()) {
-    const key = `${item.kind}:${item.id}`;
+    const isExecutionTask = item.kind === 'ai_task' || item.kind === 'toolbox_task';
+    const key = isExecutionTask && item.project_id && item.task_id
+      ? `execution:${item.project_id}:${item.task_id}`
+      : `${item.kind}:${item.id}`;
     const existing = unique.get(key);
     const time = Date.parse(item.updated_at);
     const existingTime = existing ? Date.parse(existing.updated_at) : Number.NEGATIVE_INFINITY;
@@ -26,8 +29,8 @@ export const mergeRecentRecords = (
 export const historyRecordPath = (item: HistoryRecord): string => {
   if (item.kind === 'workflow') return `/workflow/history/${encodeURIComponent(item.id)}`;
   if (item.kind === 'diagnosis') return `/diagnosis/${encodeURIComponent(item.id)}`;
-  if (item.kind === 'ai_task' && item.project_id && item.task_id) {
-    return `/ai/projects/${encodeURIComponent(item.project_id)}/progress/${encodeURIComponent(item.task_id)}`;
+  if ((item.kind === 'ai_task' || item.kind === 'toolbox_task') && item.project_id && item.task_id) {
+    return `/toolbox/projects/${encodeURIComponent(item.project_id)}/tasks/${encodeURIComponent(item.task_id)}`;
   }
   if (item.project_id) return `/ai/projects/${encodeURIComponent(item.project_id)}`;
   return '/ai';

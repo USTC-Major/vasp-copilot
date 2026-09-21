@@ -1,20 +1,21 @@
 // ============================================================
-// AiProjectPage — 项目聊天主界面（任务栏 + 对话 + 查看进度 + 额外设置）
+// AiProjectPage — 项目聊天主界面（任务栏 + 对话 + 额外设置）
 // 布局：左侧任务栏贴左，单分隔线；右侧聊天栏占满其余全部，无空白。
 // 聊天：发送后立即显示用户消息，LLM 思考与正文流式实时展示。
 // M032：新建任务的工作区支持「浏览」按钮图形化点选目录。
 // ============================================================
 
 import React, { useEffect, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import { Alert, Layout, Button, Input, Space, Typography, Tag, Modal, message } from 'antd';
-import { PlusOutlined, SendOutlined, BarChartOutlined, SettingOutlined, RobotOutlined, FolderOutlined, FolderOpenOutlined, CloudServerOutlined, LoadingOutlined, StopOutlined, DeleteOutlined } from '@ant-design/icons';
+import { PlusOutlined, SendOutlined, SettingOutlined, RobotOutlined, FolderOutlined, FolderOpenOutlined, CloudServerOutlined, LoadingOutlined, StopOutlined, DeleteOutlined } from '@ant-design/icons';
 import AiChatBubble from '../components/ai/AiChatBubble';
 import AiTaskSidebar from '../components/ai/AiTaskSidebar';
 import AiProjectExtraSettings from '../components/ai/AiProjectExtraSettings';
 import AiContextBar from '../components/ai/AiContextBar';
 import AiDirectoryPicker from '../components/ai/AiDirectoryPicker';
-import { aiApi } from '../api/client';
+import ToolboxTaskStatus from '../components/toolbox/ToolboxTaskStatus';
+import { aiApi, toolboxApi } from '../api/client';
 import { AI_JOB_STATUS_MAP } from '../types/ai';
 import { useAiTasks, useAiTaskCreate, useAiMessages, useAiTaskContext, useAiTaskUpdate, useAiTaskDelete } from '../hooks/useApi';
 import type { AiMessage as AiMsg, AiTask, AiConsentCard } from '../types/ai';
@@ -36,7 +37,6 @@ interface StreamIssue {
 
 const AiProjectPage: React.FC = () => {
   const { projectId = '' } = useParams();
-  const navigate = useNavigate();
   const tasksQuery = useAiTasks(projectId);
   const createTaskMutation = useAiTaskCreate();
   const updateTaskMutation = useAiTaskUpdate();
@@ -54,7 +54,7 @@ const AiProjectPage: React.FC = () => {
   const handlePickLocalWorkspace = async () => {
     setPickingLocal(true);
     try {
-      const r = await aiApi.pickLocal(newLocalWorkspace);
+      const r = await toolboxApi.pickLocal(newLocalWorkspace);
       if (r.ok && r.path) {
         setNewLocalWorkspace(r.path);
       } else if (r.notice) {
@@ -364,9 +364,6 @@ const AiProjectPage: React.FC = () => {
                 {selectedTask.local_workspace && <Tag icon={<FolderOutlined />} color="geekblue" style={{ margin: 0 }}>{selectedTask.local_workspace}</Tag>}
                 {selectedTask.hpc_workspace && <Tag icon={<CloudServerOutlined />} color="purple" style={{ margin: 0 }}>{selectedTask.hpc_workspace}</Tag>}
                 <AiContextBar context={taskContextQuery.data} />
-                <Button size="small" icon={<BarChartOutlined />} onClick={() => navigate(`/ai/projects/${projectId}/progress/${selectedTask.id}`)}>
-                  查看当前进度
-                </Button>
                 <Button size="small" danger icon={<DeleteOutlined />} onClick={() => {
                   Modal.confirm({
                     title: "删除该计算任务？",
@@ -379,6 +376,14 @@ const AiProjectPage: React.FC = () => {
             </div>
 
             <div ref={threadRef} style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', padding: '4px 4px 16px', marginBottom: 10 }}>
+              <div style={{ marginBottom: 16 }}>
+                <ToolboxTaskStatus
+                  projectId={projectId}
+                  taskId={selectedTask.id}
+                  title="共享执行状态（每 5 秒更新）"
+                  showTaskLink
+                />
+              </div>
               {allMsgs.length === 0 && <div style={{ color: '#999', textAlign: 'center', marginTop: 40 }}>还没有消息，说点什么吧。</div>}
               {messages.map((m, i) => (
                 <AiChatBubble key={i} role={m.role} name={m.role === 'assistant' ? 'VASP 计算助手' : undefined}>

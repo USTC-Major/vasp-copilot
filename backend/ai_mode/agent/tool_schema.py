@@ -1,0 +1,23 @@
+def tool_schema_text() -> str:
+    """给 LLM 的工具说明（prompt 内使用的文本 schema）。"""
+    return (
+        "- get_state：查看当前计算流程状态（phase/规划/作业/precheck/草稿）。args: {}\n"
+        "- ws_list：列出任务本地工作区文件（只读快照，有界）。args: {}\n"
+        "- ws_read：读取本地工作区某个文件全文（只读、有界）。args: {\"path\":\"相对路径\"}\n"
+        "- mp_search：按化学式只读搜索 Materials Project，返回材料 ID、空间群号和能量信息。后端使用智能设置里的 MP key，不向你暴露密钥。args: {\"formula\":\"BaTiO3\",\"limit\":5}\n"
+        "- mp_import_poscar：按明确材料 ID 获取真实结构，由确定性代码生成 POSCAR 预览和一次性确认卡；确认前不写本地文件，绝不上传或提交。默认保存任务本地工作区根目录 POSCAR，可用已规划 job_key 指定子目录。多个候选须先让用户选 ID/晶相，不得擅自挑选。args: {\"material_id\":\"mp-149\",\"job_key\":\"\"}\n"
+        "- hpc_list：列出超算工作区（hpc_dir）远端目录内容（只读；计算发生地，超算上的文件一律用它看）。args: {\"path\":\"相对子目录，可空\"}\n"
+        "- hpc_read：读取超算工作区内某个文本文件（只读、有界）。args: {\"path\":\"相对路径\"}\n"
+        "- hpc_upload：请求把已登记的本地工作区文件上传到超算工作区；该操作只生成逐次确认卡，确认前绝不写远端。args: {\"artifact_id\":\"用户已登记文件 ID\",\"job_key\":\"作业 key\"}\n"
+        "- stop_monitor：终止当前计算流程（用户明确表示不做了/换思路/作业作废时调用）：全部未完成作业置 canceled、停止后台监控与后续提交流程；已在超算运行的作业会给出 scancel 建议。args: {}\n"
+        "- plan：自主制定计算计划并落库（作业数/类型/顺序由你决定）。作业 key 请用语义化英文名（如 relax/static/band/dos），label 用中文。有先后依赖的作业必须用 requires 声明依赖（如 {\"key\":\"relax/static\",\"requires\":[\"relax\"]}）；前序 completed 只会解锁后续，重新预检并由用户再次确认后才能提交。依赖链作业 key/目录用嵌套路径依次往下建（relax → relax/static → relax/static/dos），独立作业才并列。args: {\"strategy\":\"策略\",\"jobs\":[{\"key\":\"relax\",\"label\":\"结构优化\",\"kind\":\"relax\"}]}\n"
+        "- copy_inputs：请求把用户已登记输入复制到计算目录；只接受 artifact_id 与作业 key，确认前不写文件。args: {\"artifact_ids\":[\"用户已登记文件 ID\"],\"job_key\":\"relax\"}\n"
+        "- propose_incar：提交有序、强类型 INCAR 参数草稿；只生成确定性 diff 与一次性确认卡，确认后才原子写入。args: {\"job_key\":\"relax\",\"entries\":[{\"tag\":\"ENCUT\",\"value\":520}]}\n"
+        "- generate_kpoints：使用现有确定性生成器提出自动网格 KPOINTS；确认前不写文件。args: {\"job_key\":\"relax\",\"grid\":[6,6,6],\"centering\":\"Gamma\"}\n"
+        "- precheck：对每个作业硬检查 INCAR/POSCAR/KPOINTS/POTCAR 和已认领提交脚本；任一缺失均阻止提交。args: {}\n"
+        "- draft：为已规划作业生成只读提交预览；发现脚本候选后必须由用户显式认领，系统不会自动认领或生成脚本。args: {}\n"
+        "- submit：把流程停在「待你确认提交」边界（同样不会代替用户执行；真实提交由系统在用户确认后执行）。args: {}\n"
+        "- select_jobs：按用户要求选择本次提交哪些作业/跳过哪些（只调规划不提交；跳过作业不生成草稿也不提交）。args: {\"submit\":[\"relax\"],\"skip\":[\"static\"]}\n"
+        "- diagnose_job：查询作业并返回有文件证据的诊断及恢复建议。args: {\"job_key\":\"band\"}\n"
+        "- retry_job：仅在用户明确要求重试时调用；只为已有诊断的 failed/not_converged 作业生成恢复确认卡。批准后仅恢复待准备状态，保留历史与输出；unknown 禁止重试，后续写入、上传、硬预检和提交必须重新逐次授权。args: {\"job_key\":\"band\"}"
+    )

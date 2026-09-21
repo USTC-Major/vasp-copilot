@@ -234,12 +234,6 @@ export interface AiBrowseResponse {
   entries: AiBrowseEntry[];
   notice?: string;
 }
-export interface AiMkdirResponse {
-  ok: boolean;
-  path?: string;
-  notice?: string;
-}
-
 export interface AiPickResponse {
   ok: boolean;
   mode?: string;
@@ -303,27 +297,3 @@ export interface AiFlowDetail {
   jobs: AiFlowJob[];
 }
 
-// flow phase 展示映射
-export const AI_FLOW_PHASE_MAP: Record<string, { color: string; label: string }> = {
-  running: { color: 'processing', label: '准备输入 · 待提交' },
-  await_submit: { color: 'warning', label: '待你确认提交' },
-  monitoring: { color: 'processing', label: '监控计算中' },
-  blocked: { color: 'error', label: '已阻塞/取消' },
-  done: { color: 'success', label: '已完成' },
-};
-
-// flow 作业状态展示映射（对齐 backend/ai_mode/jobs/state.py）
-export const AI_FLOW_JOB_STATUS_MAP: Record<string, { color: string; label: string }> = {
-  draft: { color: 'default', label: '准备输入' },
-  waiting: { color: 'gold', label: '等待前置' },
-  submitted: { color: 'blue', label: '已提交' },
-  queued: { color: 'blue', label: '排队中' },
-  running: { color: 'processing', label: '运行中' },
-  completed: { color: 'success', label: '已完成' },
-  failed: { color: 'error', label: '失败' },
-  not_converged: { color: 'error', label: '未收敛' },
-  not_found: { color: 'error', label: '未找到' },
-  canceled: { color: 'default', label: '已取消' },
-  blocked: { color: 'red', label: '已阻断' },
-  skipped: { color: 'default', label: '已跳过' },
-};

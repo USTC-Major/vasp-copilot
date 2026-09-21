@@ -1,5 +1,8 @@
 # VASP-Copilot v0.2.5（VASP-Doctor × Workflow Builder）
 
+> 当前分支正在进行 D0 解耦重构，尚未发布。下列 v0.2.5 发布记录属于历史版本，不能作为本分支验收结果。
+> 本分支把任务执行、授权、SSH、监控与确定性报告迁至 8000 的 Toolbox；8500 为可选 AI 客户端。重构后的验证结果另见验收回执。
+
 VASP 计算**诊断**（vasp-doctor）与**工作流生成**（vasp-copilot / Workflow Builder）一体化后端 + 前端源码包。
 
 > v0.2.5 修复 v0.2.4 的源码归档校验清单换行问题，保留全部应用功能。
@@ -21,16 +24,8 @@ VASP 计算**诊断**（vasp-doctor）与**工作流生成**（vasp-copilot / Wo
 ./
 ├── backend/                     # 后端（Python/FastAPI，一体化：doctor + copilot）
 │   ├── app/                     #   工具箱主后端（诊断/工作流/结构/材料，端口 8000）
-│   ├── ai_mode/                 #   智能模式后端（自然语言驱动的 VASP 计算闭环，端口 8500）
-│   │   ├── api/v1/              #   接口路由（diagnosis/files/llm/chat/materials/structure/workflows/agent）
-│   │   ├── agent/  diagnostics/ #   诊断侧：Agent 编排、规则引擎与修复
-│   │   ├── parsers/ report/     #   解析器、Markdown 报告
-│   │   ├── workflow/ recipes/   #   copilot 侧：工作流规划、Recipe 组合
-│   │   ├── generators/          #   INCAR/KPOINTS/POSCAR/submit.sh 生成器
-│   │   ├── hpc/                 #   Fake HPC 桥接适配器（演示，默认开启）
-│   │   ├── llm/                 #   LLM 解释抽象（默认关闭）
-│   │   ├── schemas/ security/   #   契约、安全解压
-│   │   └── services/ core/      #   服务编排、配置与错误
+│   ├── toolbox/                 #   独立执行核心：任务/授权/SSH/调度/监控/报告，由 8000 托管
+│   ├── ai_mode/                 #   可选聊天与模型后端，HTTP 调用 Toolbox（端口 8500）
 │   ├── examples/sample_run/     #   可直接上传的演示 VASP 运行目录
 │   ├── scripts/                 #   smoke_test / export_openapi / collect_metrics / demo_fake_hpc / style_compare
 │   ├── tests/                   #   pytest 全量测试（含 be_a 生成链路 golden 产物）
@@ -47,7 +42,7 @@ VASP 计算**诊断**（vasp-doctor）与**工作流生成**（vasp-copilot / Wo
 │   ├── Dockerfile  nginx.conf   #   前端镜像：Node 构建 → nginx 托管 + API 反代
 │   ├── package.json  package-lock.json  vite.config.ts  tsconfig*.json
 │   └── README.md                #   Vite 模板默认说明（非本交付文档）
-├── docker-compose.yml           # 容器化一键部署（三服务：frontend + 8000 + 8500，含健康检查）
+├── docker-compose.yml           # 默认 frontend + 8000；ai profile 按需启用 8500
 ├── start_services.ps1           # Windows 一键启动/守护（三服务）
 ├── start_services.sh            # Linux/macOS 一键启动/守护（三服务）
 ├── .env.example                 # 根环境变量示例（Docker 用；无秘密）
@@ -59,13 +54,15 @@ VASP 计算**诊断**（vasp-doctor）与**工作流生成**（vasp-copilot / Wo
 
 ## 2. 快速开始
 
-### 2.0 一键启动（推荐：三服务全起，智能模式开箱即用）
+### 2.0 服务与启动方式
 
 | 服务 | 端口 | 说明 |
 |---|---|---|
 | 前端 | 5173 | 浏览器入口 http://127.0.0.1:5173 |
-| 工具箱主后端 | 8000 | 诊断 / 工作流 / 结构 / 材料 |
-| 智能模式后端 | 8500 | 自然语言驱动的 VASP 计算闭环（详见第 2.4 节） |
+| 工具箱主后端 | 8000 | 诊断 / 工作流 / 结构 / 材料，以及唯一任务执行与监控服务 |
+| 智能模式后端（可选） | 8500 | 聊天与模型，经 HTTP 调用 8000（详见第 2.4 节） |
+
+只使用 Toolbox 时，按 2.1、2.2 节启动 8000 与前端即可，不要求模型配置或 8500 服务。现有一键脚本仍启动三服务：
 
 ```powershell
 # Windows（PowerShell，在仓库根目录）
@@ -81,14 +78,17 @@ bash start_services.sh --status    # 查看状态
 bash start_services.sh --watch     # 守护：掉线自动拉起
 ```
 
-或用 Docker Compose 一条命令起完整三件套（前端为 nginx 托管的构建产物，已反代两个后端）：
+Docker Compose 默认启动 Toolbox 与前端，AI 按需启用：
 
 ```bash
-docker compose up --build -d       # 健康检查通过后 frontend 才启动
-docker compose ps                  # 三个服务均 healthy/running
+docker compose up --build -d                  # Toolbox + 前端
+docker compose --profile ai up --build -d     # 另外启用 AI 服务
+docker compose ps
 ```
 
-启动后浏览器打开 **http://127.0.0.1:5173** 即可使用全部功能（含智能模式）。
+启动后浏览器打开 **http://127.0.0.1:5173**。真实计算还需配置 SSH、调度系统、输入文件和用户提供的提交脚本；服务启动不代表计算环境已就绪。
+
+Toolbox 手动入口为 `/toolbox/projects`：创建项目和任务、选择工作区、填写计算步骤、登记已有输入，按预览逐次确认文件写入或上传。认领自己提供的脚本并通过预检后，批准具体提交；之后在同一任务页查看作业号、监控、诊断与报告。执行配置入口为 `/toolbox/settings`。此路径不调用 AI 模型。
 
 ### 2.1 后端（本机）
 
@@ -141,33 +141,39 @@ npm run dev                          # Vite dev server，默认 http://localhost
 - dev server 已配置代理：`/api/v1/*` → `http://127.0.0.1:8000`，后端启动后即可直连；
 - 无后端时可加 `?mock=1` 使用内置 MSW mock 演示。
 
-### 2.3 Docker Compose（容器化，三服务）
+### 2.3 Docker Compose（容器化，AI 可选）
 
 ```bash
 # 仓库根目录；.env 为可选（不存在也能启动，仅使用默认值）
 docker compose up --build -d
+docker compose --profile ai up --build -d  # 可选 AI 客户端
 docker compose ps                    # backend healthcheck 通过后为 healthy
 docker compose logs -f backend
 docker compose down                  # 停止（保留数据卷）
 docker compose down -v               # 彻底清理（连同全部数据）
 ```
 
-### 2.4 智能模式（AI Mode，本项目的核心亮点）
+执行服务必须单 worker 运行；同一数据根只能有一个 8000 执行进程，重复启动会被进程锁拒绝。AI 服务也使用单 worker。不要用多个 worker 绕过数据锁。
+
+8000 与 8500 使用相同 `VASP_AI_HOME` 根目录，但分别写 `execution_store.json` 和 `chat_store.json`。首次启动从旧 `ai_store.json` 只读导入对应数据，保留原文件；旧待批准动作需要重新申请，不自动重放未知提交。执行设置存入 `toolbox_config.json`，旧 `config.json` 作为兼容输入。迁移前应备份整个数据根；损坏数据应排查并恢复备份，不能删除原文件后当作空项目继续。
+
+### 2.4 智能模式（可选客户端）
 
 智能模式让用户用**自然语言**规划并在逐次确认下推进 VASP 计算流程：
 
-> 规划 → 建目录 → 生成/准备输入 → 预检 → 单次确认调度提交 → 后台监控 → 下游重新预检/确认 → 查错 → 结果报告
+> 选择工作区 → 规划 → 准备输入 → 预检 → 单次确认调度提交 → Toolbox 后台监控 → 下游重新预检/确认 → 查错 → 结果报告
 
-- 双工作区：本地工作区与超算工作区（SSH）同名对应，计算与提交都发生在超算侧；本地 Fake HPC 可离线演示全流程；
+- 双工作区：本地工作区与超算工作区（SSH）分别指定，真实计算与提交发生在超算侧；
 - 依赖链：多作业（如 relax → relax/static → relax/static/dos）自动排序；前序完成后下游作业重新预检并等待新的单次确认，失败则级联阻断；
 - 安全边界：LLM 不可自由执行本地/远端命令，也不能代写提交脚本；用户提供的 `*.sh` 必须按路径、大小和 SHA-256 认领；INCAR 仅接受结构化提案并经差异预览与精确确认；每次 `sbatch`/`cbatch` 都需要与当前预检快照绑定的一次性确认；
-- 后台监控：提交后无需人工盯梢，按可配置间隔（默认 60s，设置页可改）自动推进，全部完成后自动生成报告；作业失败时报告开头点名失败作业与原因；
-- 进度页：「查看当前进度」实时展示作业依赖链、等待队列、预检问题与计算报告。
+- 后台监控：由 8000 Toolbox 执行，按可配置间隔（默认 60s）采集状态；聊天结束或 8500 停止不应中断监控。停止跟踪不会取消远端作业。报告只能表达已取得的证据，不能将离队或流程结束等同于科学结果可靠；
 - 交互恢复：后台生成状态与消息持久化，页面重载/流式断连后可重新同步；项目额外设置提供可编辑的常用计算模板。
 - 调度适配：设置页显式选择 Slurm 或 ParaCloud，并可指定后端本机 SSH 私钥；连接身份变更须重新预检和确认，不自动猜测或切换平台。
 - 结果核验与恢复：结合调度退出码和实际输出判断结束；失败诊断提供受控恢复入口，重试仍需预检与授权，不保证任意计算自动修复。
 
-无超算环境时智能模式内置本地 Fake HPC 适配器（默认开启），可完整演示从规划到报告的全流程。
+8500 通过 `TOOLBOX_URL` 连接执行服务，本机默认 `http://127.0.0.1:8000`，Compose 中为 `http://backend:8000`。Toolbox 不可用时应明确报错，不回退为另一套本地执行。
+
+Fake/Mock 适配器用于隔离验证；未配置真实 SSH 时不能把模拟结果写成真实提交。原诊断侧 Fake HPC 演示与 Toolbox 的真实任务记录不是同一条执行链。
 
 #### 智能聊天导入 MP 结构
 
@@ -181,15 +187,14 @@ AI 使用专用 `mp_search` / `mp_import_poscar` 工具；结构由后端确定�
 覆盖已有文件会在卡片中明示。拒绝、过期或文件变化后旧确认不能写入。
 获取结构仅访问 MP 官方固定 HTTPS 端点，不接受任意 URL 或命令，
 不把密钥发送给 LLM。无序/部分占位、异常结构或超出大小限制时明确报错。
-上传超算仍需单独确认。智能设置的 MP key 与工具箱的 `MP_API_KEY` 配置相互独立。
+上传超算仍需单独确认。AI 任务与 Toolbox 任务共用执行服务的 MP 配置；原材料搜索页面的 `MP_API_KEY` 配置仍单独保留。
 
 ### 2.5 五分钟演示路径
 
 1. 启动三服务（2.0 节），打开 http://127.0.0.1:5173；
 2. **诊断链路**：进入诊断页，上传 `backend/examples/sample_run/` 打包的 zip（或用 `demo_cases/failed_runs/` 里的故障样例，如 `scf_reached_nelm`），查看规则诊断报告与修复建议；
 3. **智能模式**：进入智能模式 → 新建项目 → 新建任务 → 确认任务显示的实际运行环境为 Fake/Real → 输入目标（如「对 Si 做结构优化，然后算态密度」）→ 审核结构化输入提案、用户提交脚本及预检摘要 → 对每次写入/上传/调度提交分别作一次性确认；依赖作业完成后需重新预检并确认；
-4. **进度页**：点击聊天区上方「查看当前进度」，查看作业依赖链与报告；
-5. **全链路冒烟**：`cd backend && python scripts/smoke_test.py`（上传 → 诊断 → 报告 → 预览 → 下载修复）。
+4. **全链路冒烟**：`cd backend && python scripts/smoke_test.py`（上传 → 诊断 → 报告 → 预览 → 下载修复）。
 
 ## 3. 配置说明（.env.example）
 
@@ -215,6 +220,8 @@ copy .env.example .env        # Windows
 | `ENABLE_BAND_WORKFLOW` | false | band 工作流开关（关闭时请求 band 返回 409） |
 | `ENABLE_POTCAR_ASSEMBLY` | false | POTCAR 组装（安全红线，默认关闭） |
 | `MP_API_KEY` / `ENABLE_MATERIALS_PROJECT` | 空 / false | Materials Project 数据库搜索（可选） |
+| `VASP_AI_HOME` | `~/.vasp-ai` | 执行库与聊天库的兼容根目录；两服务各写自己的文件 |
+| `TOOLBOX_URL` | `http://127.0.0.1:8000` | 可选 8500 服务调用 Toolbox 的地址；Compose 覆盖为容器地址 |
 
 > 安全提示：真实 API key 只应填入本地 `.env`，**不要提交到仓库/交付包**。
 
@@ -226,7 +233,7 @@ python -B -m pytest tests -q              # 全量测试（doctor 诊断 + BE-A 
 python scripts/export_openapi.py          # 导出 backend/openapi.json（供前端 TS 类型）
 ```
 
-v0.2.5 发布验证：
+v0.2.5 历史发布验证（不是当前 D0 分支验收结果）：
 
 - 后端测试：`1175 passed, 0 failed`（含工具箱主后端、ai_mode 与 9 项发布完整性回归，46 warnings）；
 - 前端测试：`61 passed, 0 failed`；

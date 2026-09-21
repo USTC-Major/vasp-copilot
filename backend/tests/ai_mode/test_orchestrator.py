@@ -9,13 +9,13 @@ import pytest
 from pathlib import Path
 
 from ai_mode.config import AiModeConfig
-from ai_mode.consent import (claim_action, finish_action, resolve_card,
+from backend.toolbox.consent import (claim_action, finish_action, resolve_card,
                              spawn_submit_card)
 from ai_mode.orchestrator import Orchestrator
-from ai_mode.projects import ProjectStore
+from backend.toolbox.projects import ProjectStore
 from ai_mode.tools.draft import fingerprint_remote_submit_script
-from ai_mode.agent.tools import ToolExecutor, _CONSENT_PENDING
-from ai_mode.consent import get_card
+from backend.toolbox.commands import ToolExecutor, _CONSENT_PENDING
+from backend.toolbox.consent import get_card
 
 
 class FakeHPC:
@@ -185,6 +185,57 @@ def test_unreadable_outputs_remain_unknown_and_can_be_refreshed(env):
     assert not any(c.startswith("sbatch") for c in hpc.calls)
 
 
+@pytest.mark.parametrize("failed_index", [0, 1])
+def test_result_read_error_aggregates_across_jobs_and_health_recovers(env, failed_index):
+    from backend.toolbox.monitor import MonitorLoop
+    store, pid, tid, cfg = env
+    hpc = FakeHPC(outcar=OUTCAR_OK.encode(), osziacar=OSZICAR_OK.encode())
+    jobs = [{"key": key, "status": "running", "slurm_id": str(42 + i),
+             "submission_state": "submitted"} for i, key in enumerate(("one", "two"))]
+    _ready_flow(store, pid, tid, hpc, jobs)
+    flow = store.get_task(pid, tid)["flow"]
+    flow["phase"] = "monitoring"
+    flow["monitor"] = {"last_success_at": "previous-success"}
+    store.update_task(pid, tid, flow=flow)
+    # Remote directories select distinct job outputs.
+    for job in jobs:
+        hpc.files[f"{flow['hpc_dir']}/{job['key']}/INCAR"] = b"EDIFF=1e-4"
+    orch = Orchestrator(cfg, hpc=hpc)
+    loop = MonitorLoop(settings_loader=lambda: cfg, orch_factory=lambda *_args: orch)
+    reader = hpc.read_file
+    def fail_optional(remote, **kwargs):
+        if remote.endswith(f"/{jobs[failed_index]['key']}/KPOINTS"):
+            raise TimeoutError("synthetic read outage")
+        return reader(remote, **kwargs)
+    hpc.read_file = fail_optional
+    loop.tick(store)
+    failed = store.get_task(pid, tid)["flow"]
+    assert failed["monitor"]["state"] == "error"
+    assert failed["monitor"]["last_success_at"] == "previous-success"
+    assert "KPOINTS" in failed["monitor"]["last_error"]
+    assert failed["plan"]["jobs"][failed_index]["status"] == "unknown"
+    assert failed["plan"]["jobs"][1 - failed_index]["status"] == "completed"
+    assert failed["phase"] == "monitoring"
+    first_error = failed["monitor"]["last_error"]
+    loop.tick(store)
+    assert store.get_task(pid, tid)["flow"]["monitor"]["last_error"] == first_error
+    hpc.squeue_rows = [f"{42 + failed_index} partition job user R 0:00 1 node"]
+    loop.tick(store)
+    queued = store.get_task(pid, tid)["flow"]
+    assert queued["monitor"]["last_error"] == first_error
+    assert queued["monitor"]["last_success_at"] == "previous-success"
+    hpc.squeue_rows = []
+    hpc.read_file = reader
+    loop.tick(store)
+    recovered = store.get_task(pid, tid)["flow"]
+    assert recovered["monitor"]["last_error"] == ""
+    assert recovered["monitor"]["last_success_at"] != "previous-success"
+    assert recovered["phase"] == "done"
+    assert all(j["status"] == "completed" for j in recovered["plan"]["jobs"])
+    assert all(c.startswith("squeue") for c in hpc.calls)
+    assert not hpc.write_calls
+
+
 def test_failure_diagnose_recovery_requires_fresh_precheck_and_approval(env):
     store, pid, tid, cfg = env
     hpc = FakeHPC(outcar=b"charge density could not be read from CHGCAR\n")
@@ -199,6 +250,8 @@ def test_failure_diagnose_recovery_requires_fresh_precheck_and_approval(env):
     assert "failed" in diagnostic and "CHGCAR" in diagnostic
     failed = store.get_task(pid, tid)["flow"]
     assert failed["plan"]["jobs"][1]["status"] == "blocked"
+    failed["plan"]["jobs"][0]["result_read_error"] = "previous attempt read error"
+    store.update_task(pid, tid, flow=failed)
     old_card = spawn_submit_card(store, pid, tid)
     pending = ex.handle("retry_job", {"job_key": "band"})
     assert pending.startswith(_CONSENT_PENDING)
@@ -212,6 +265,8 @@ def test_failure_diagnose_recovery_requires_fresh_precheck_and_approval(env):
     assert job["status"] == "draft" and not job.get("slurm_id")
     assert job["attempt_history"][0]["job"]["slurm_id"] == 4201
     assert job["attempt_history"][0]["job"]["diagnosis"]["status"] == "failed"
+    assert job["attempt_history"][0]["job"]["result_read_error"] == "previous attempt read error"
+    assert "result_read_error" not in job
     assert job["attempt_history"][0]["extraction"]["output_sha256"]["OUTCAR"]
     assert flow["plan"]["jobs"][1]["status"] == "waiting"
     assert not flow["draft"] and not flow["precheck"]["ok"] and not flow["script_attestations"]
@@ -260,7 +315,7 @@ def test_plan_and_selection_cannot_bypass_explicit_recovery(env, status):
     assert "AI_RECOVERY_REQUIRED" in ex.handle("plan", {"jobs": [{"key": "band", "kind": "band"}]})
     ex.handle("select_jobs", {"skip_all": True})
     ex.handle("select_jobs", {"submit_all": True})
-    orch.begin(store, pid, tid, "重新计算能带")
+    assert "AI_RECOVERY_REQUIRED" in ex.handle("plan", {"jobs": [{"key": "band", "kind": "band"}]})
     job = store.get_task(pid, tid)["flow"]["plan"]["jobs"][0]
     assert job["status"] == status and job["slurm_id"] == 42
     assert not hpc.calls and not hpc.write_calls
@@ -434,18 +489,16 @@ def test_remote_script_fingerprint_rejects_empty_file():
 
 def test_offline_no_fake_submission(env):
     store, pid, tid, cfg = env
-    orch = Orchestrator(cfg, hpc=None)               # 未配置 SSH
-    answer = orch.begin(store, pid, tid, "结构优化")
+    orch = Orchestrator(cfg, hpc=None)
+    ex = ToolExecutor(store=store, project_id=pid, task_id=tid, cfg=cfg, orch=orch)
+    ex.handle("plan", {"jobs": [{"key": "relax", "kind": "relax"}]})
+    ex.handle("precheck", {})
+    ex.handle("submit", {})
     flow = store.get_task(pid, tid)["flow"]
-    assert flow["phase"] == "blocked"
-    assert "提交前检查未通过" in answer
+    assert flow["execution_mode"] == "None"
+    assert not flow["precheck"]["ok"]
     assert not flow.get("draft")
-    assert "演示" not in answer and "演示调度" not in answer
-
-    again = orch.handle(store, pid, tid, "确认提交")
-    assert "Submitted batch job" not in again
-    assert "Submitted batch job" not in again
-    assert store.get_task(pid, tid)["flow"]["phase"] == "blocked"
+    assert not any(job.get("slurm_id") for job in flow["plan"]["jobs"])
 
 
 def test_stale_execution_mode_migrates_to_actual_hpc_backend(env):
@@ -454,12 +507,12 @@ def test_stale_execution_mode_migrates_to_actual_hpc_backend(env):
         "phase": "blocked", "execution_mode": "Real", "plan": {"jobs": []},
     })
     orch = Orchestrator(cfg, hpc=None)
-    orch.handle(store, pid, tid, "查看状态")
+    orch.sync_execution_mode(store, pid, tid)
     assert store.get_task(pid, tid)["flow"]["execution_mode"] == "None"
 
     hpc = FakeHPC()
     fake_orch = Orchestrator(cfg, hpc=hpc)
-    fake_orch.handle(store, pid, tid, "查看状态")
+    fake_orch.sync_execution_mode(store, pid, tid)
     assert store.get_task(pid, tid)["flow"]["execution_mode"] == "Fake"
 
 
@@ -485,12 +538,12 @@ def test_full_chain_offline_with_fake_hpc(env):
     # 在途作业：squeue 给 R -> 运行中
     hpc.squeue_rows.append(
         "4201  vaspuser  r1  vasp_std  R  node01  6 2")
-    running = orch.handle(store, pid, tid, "状态")
+    running = orch.monitor(store, pid, tid, None)
     assert "运行中（4201）" in running
 
     # 作业终态：squeue 空 -> 提取 OUTCAR/OSZICAR -> 报告
     hpc.squeue_rows.clear()
-    final = orch.handle(store, pid, tid, "再看一下")
+    final = orch.monitor(store, pid, tid, None)
     flow = store.get_task(pid, tid)["flow"]
     assert flow["phase"] == "done"
     assert "已完成（已收敛）" in final
@@ -506,10 +559,9 @@ def test_orchestrator_submit_requires_an_executing_bound_action(env):
              "requires": [], "status": "draft", "slurm_id": None}]
     flow = _ready_flow(store, pid, tid, hpc, jobs)
 
-    by_text = orch.handle(store, pid, tid, "确认提交")
+    assert not hasattr(orch, "handle")  # Natural-language execution entry retired.
     direct = orch._submit(store, pid, tid, flow)
 
-    assert "AI_SUBMIT_CONFIRMATION_REQUIRED" in by_text
     assert "AI_SUBMIT_CONFIRMATION_REQUIRED" in direct
     assert not [call for call in hpc.calls if call.startswith("sbatch")]
 
@@ -535,8 +587,7 @@ def test_wait_queue_until_slot_then_backfill(env):
 
     # Capacity recovery alone cannot inherit the prior confirmation.
     hpc.squeue_rows.clear()
-    back = orch.handle(store, pid, tid, "查看空位")
-    assert "待你确认提交" in back
+    assert store.get_task(pid, tid)["flow"]["phase"] == "await_submit"
     assert not [call for call in hpc.calls if call.startswith("sbatch")]
     submitted = _confirmed_submit(orch, store, pid, tid)
     assert "slurm id 4201" in submitted
@@ -549,7 +600,8 @@ def test_begin_uses_user_workspace_as_compute_dir(env):
     store, pid, tid, cfg = env
     ws = Path(store.get_task(pid, tid)["local_workspace"]).expanduser().resolve()
     orch = Orchestrator(cfg, hpc=None)
-    orch.begin(store, pid, tid, "structure relax")
+    ex = ToolExecutor(store=store, project_id=pid, task_id=tid, cfg=cfg, orch=orch)
+    ex.handle("plan", {"jobs": [{"key": "relax", "kind": "relax"}]})
     flow = store.get_task(pid, tid)["flow"]
     assert Path(flow["local_dir"]).expanduser().resolve() == ws
     assert not (cfg.data_dir / "workspace").exists()
@@ -568,7 +620,8 @@ def test_handle_heals_stale_local_dir_to_workspace(env):
         "precheck": {"ok": True, "issues": []}, "draft": [],
     })
     orch = Orchestrator(cfg, hpc=None)
-    orch.handle(store, pid, tid, "取消")   # 触发 handle() 顶部自愈
+    ex = ToolExecutor(store=store, project_id=pid, task_id=tid, cfg=cfg, orch=orch)
+    ex.handle("plan", {"jobs": [{"key": "relax", "kind": "relax"}]})  # Explicit planning binds selected workspace.
     flow = store.get_task(pid, tid)["flow"]
     assert Path(flow["local_dir"]).expanduser().resolve() == ws
     assert not (cfg.data_dir / "workspace").exists()   # 私有目录从未被创建/使用

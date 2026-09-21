@@ -190,7 +190,7 @@ const IssueCard: React.FC<IssueCardProps> = ({ issue, selected, onSelect }) => {
 
           {/* Tags */}
           <div style={{ marginTop: 8 }}>
-            {issue.tags.map((tag) => (
+            {(issue.tags ?? []).map((tag) => (
               <Tag key={tag} color="default">{tag}</Tag>
             ))}
             <Text type="secondary" style={{ fontSize: 12, marginLeft: 8 }}>

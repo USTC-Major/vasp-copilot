@@ -47,3 +47,41 @@ def test_over_limit_output_never_uses_complete_looking_prefix():
     orch._finalize_job({"hpc_dir": "/demo", "local_dir": "/local"}, job)
     assert job["status"] == "unknown"
     assert any("读取上限" in item["text"] for item in job["diagnosis"]["evidence"])
+
+
+@pytest.mark.parametrize("name", ["OSZICAR", "INCAR", "KPOINTS", "CHGCAR"])
+def test_missing_optional_file_is_not_a_collection_outage(name):
+    from backend.toolbox.ssh.errors import SSHSFTPError
+    hpc = LimitedHPC(HEADER + FOOTER)
+    reader, stat = hpc.read_file, hpc.stat
+    def read(remote, **kwargs):
+        if remote.endswith("/" + name):
+            try:
+                raise FileNotFoundError(2, "missing optional file")
+            except FileNotFoundError as exc:
+                raise SSHSFTPError("read failed") from exc
+        return reader(remote, **kwargs)
+    def stat_file(remote):
+        if name == "CHGCAR" and remote.endswith("/CHGCAR"):
+            raise FileNotFoundError(remote)
+        return stat(remote)
+    hpc.read_file, hpc.stat = read, stat_file
+    flow = {"hpc_dir": "/demo", "local_dir": "/local"}
+    job = {"key": "si_scf", "kind": "static"}
+    Orchestrator(AiModeConfig(), hpc=hpc)._finalize_job(flow, job)
+    assert "monitor_error" not in flow
+    # This OUTCAR has no SCF delta; losing OSZICAR still leaves scientific
+    # evidence insufficient, without mislabeling normal absence as an outage.
+    assert job["status"] == ("unknown" if name == "OSZICAR" else "completed")
+
+
+def test_failed_remote_directory_lookup_does_not_read_flat_outputs():
+    hpc = LimitedHPC(HEADER + FOOTER)
+    def failed_stat(_remote):
+        raise TimeoutError("directory lookup unavailable")
+    hpc.stat = failed_stat
+    flow = {"hpc_dir": "/demo", "local_dir": "/local"}
+    job = {"key": "si_scf", "kind": "static"}
+    Orchestrator(AiModeConfig(), hpc=hpc)._finalize_job(flow, job)
+    assert job["status"] == "unknown" and flow["monitor_error"]
+    assert not hpc.limits

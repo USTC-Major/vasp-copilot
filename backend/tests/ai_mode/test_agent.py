@@ -10,11 +10,12 @@ import pytest
 from ai_mode.agent import parse_turn, run_agent, run_agent_stream
 from ai_mode.agent.runner import _strip_receipt_wait
 from ai_mode.agent.protocol import INTENT_MARK, TOOL_MARK
-from ai_mode.agent.tools import _CONSENT_PENDING, ToolExecutor
+from ai_mode.agent.tools import _CONSENT_PENDING
+from backend.tests.toolbox.legacy_bridge import ToolExecutor
 from ai_mode.config import AiModeConfig
-from ai_mode.consent import claim_action, get_card, resolve_card
+from backend.toolbox.consent import claim_action, get_card, resolve_card
 from ai_mode.llm.fake import FakeLLM
-from ai_mode.projects import ProjectStore
+from backend.tests.toolbox.legacy_bridge import ProjectStore
 
 
 def _intent(kind: str = "compute") -> str:
@@ -477,11 +478,14 @@ def test_executor_unknown_tool_returns_help(ctx):
     assert "AI_TOOL_NOT_ALLOWED" in out
 
 
-def test_executor_monitor_without_ssh_degrades(ctx):
+def test_executor_monitor_tool_removed_from_llm(ctx):
+    """进度监控工具已从智能模式移除：LLM 不能再调用 monitor，
+    但内部原语 tool_monitor 仍可离线降级（后台监控/诊断沿用）。"""
     ex = ToolExecutor(store=ctx.store, project_id=ctx.pid, task_id=ctx.tid,
                       cfg=ctx.cfg)
-    out = ex.handle("monitor", {})
-    assert "未连接超算" in out
+    denied = ex.handle("monitor", {})
+    assert "AI_TOOL_NOT_ALLOWED" in denied
+    assert "未连接超算" in ex.tool_monitor({})
 
 
 def test_executor_run_exec_safe_command_allowed(ctx):
@@ -617,7 +621,7 @@ def test_agent_receipt_stall_keeps_stream_going(ctx):
     # 不能把「等回执」当成最终答案直接 done。
     llm = FakeLLM()
     llm.enqueue("我先确认两个作业是否已跑完，然后从 OUTCAR 提取最终能量结果。\n收到回执后继续。")
-    llm.enqueue(_tool("monitor", jobs=["static"]) + "\n我现在检查作业状态。")
+    llm.enqueue(_tool("get_state") + "\n我现在检查作业状态。")
     llm.enqueue("作业已完成，最终能量为 -6.7564 eV。")
     events = list(run_agent_stream(ctx.store, ctx.pid, ctx.tid, "提取结果",
                                    cfg=ctx.cfg, llm_factory=lambda c: llm))

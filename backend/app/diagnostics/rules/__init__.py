@@ -3,6 +3,7 @@ from __future__ import annotations
 from .core_errors import (
     BrmixSeriousProblemRule,
     DavOrEdddavErrorRule,
+    OutcarUnclassifiedErrorRule,
     TooFewBandsRule,
     ZhegvLapackFailureRule,
 )
@@ -56,6 +57,7 @@ def all_rules() -> list[Rule]:
         ZhegvLapackFailureRule(),
         TooFewBandsRule(),
         DavOrEdddavErrorRule(),
+        OutcarUnclassifiedErrorRule(),
         Icharg11ChgcarMissingRule(),
         LmaxmixTooLowForDftuRule(),
         IsmearTetraForMetalRiskRule(),

@@ -31,8 +31,10 @@ const App: React.FC = () => {
       icon: <ToolOutlined />,
       label: '工具箱',
       children: [
+        { key: '/toolbox/projects', icon: <ToolOutlined />, label: '计算任务' },
         { key: '/workflow', icon: <BuildOutlined />, label: '生成工作流' },
         { key: '/diagnosis/upload', icon: <BugOutlined />, label: '诊断计算' },
+        { key: '/toolbox/settings', icon: <SettingOutlined />, label: '执行设置' },
         ...(fakeHpcEnabled ? [{ key: '/hpc/deploy', icon: <CloudUploadOutlined />, label: '远程部署' }] : []),
       ],
     },

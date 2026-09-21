@@ -11,7 +11,7 @@ import {
   ArrowRightOutlined, ExperimentOutlined, SettingOutlined,
 } from '@ant-design/icons';
 import { isFeatureEnabled } from '../config/featureFlags';
-import { aiApi, diagnosisApi, workflowsApi } from '../api/client';
+import { aiApi, diagnosisApi, toolboxApi, workflowsApi } from '../api/client';
 import type { HistoryKind } from '../types/history';
 import { historyRecordPath, mergeRecentRecords } from '../utils/history';
 
@@ -25,6 +25,7 @@ const HISTORY_LIMIT = 10;
 const HISTORY_LABELS: Record<HistoryKind, { label: string; color: string }> = {
   ai_project: { label: '智能项目', color: 'purple' },
   ai_task: { label: '智能任务', color: 'geekblue' },
+  toolbox_task: { label: 'Toolbox 任务', color: 'cyan' },
   workflow: { label: '工作流', color: 'blue' },
   diagnosis: { label: '诊断', color: 'green' },
 };
@@ -50,6 +51,12 @@ const HomePage: React.FC = () => {
     retry: false,
     refetchOnMount: 'always',
   });
+  const toolboxHistory = useQuery({
+    queryKey: ['recent-history', 'toolbox'],
+    queryFn: () => toolboxApi.recentHistory(HISTORY_LIMIT),
+    retry: false,
+    refetchOnMount: 'always',
+  });
   const diagnosisHistory = useQuery({
     queryKey: ['recent-history', 'diagnoses'],
     queryFn: () => diagnosisApi.recent(HISTORY_LIMIT),
@@ -57,21 +64,25 @@ const HomePage: React.FC = () => {
     refetchOnMount: 'always',
   });
   const recentSessions = useMemo(() => mergeRecentRecords([
+    (toolboxHistory.data?.items ?? []).map((item) => ({ ...item, kind: 'toolbox_task' as const })),
     aiHistory.data?.records ?? [],
     workflowHistory.data?.records ?? [],
     diagnosisHistory.data?.records ?? [],
-  ]), [aiHistory.data, workflowHistory.data, diagnosisHistory.data]);
+  ]), [toolboxHistory.data, aiHistory.data, workflowHistory.data, diagnosisHistory.data]);
   const historySources = [
+    { name: 'Toolbox', query: toolboxHistory },
     { name: '智能模式', query: aiHistory },
     { name: '工作流', query: workflowHistory },
     { name: '诊断', query: diagnosisHistory },
   ];
   const failedSources = historySources.filter(({ query }) => query.isError);
   const historyLoading = historySources.some(({ query }) => query.isLoading);
-  const mockHistory = historySources.some(({ query }) =>
-    query.data?.demo === true || query.data?.records.some((record) => record.demo === true));
+  const mockHistory = aiHistory.data?.demo === true || aiHistory.data?.records.some((record) => record.demo === true)
+    || workflowHistory.data?.demo === true || workflowHistory.data?.records.some((record) => record.demo === true)
+    || diagnosisHistory.data?.demo === true || diagnosisHistory.data?.records.some((record) => record.demo === true);
 
   const toolboxEntries = [
+    { key: '/toolbox/projects', icon: <ToolOutlined />, title: '计算任务', desc: '无需模型，直接准备输入、人工确认、提交、监控并查看报告' },
     { key: '/workflow', icon: <BuildOutlined />, title: '生成工作流', desc: '上传结构文件，通过 Recipe 生成 relax → static → DOS 完整工作流' },
     { key: '/diagnosis/upload', icon: <BugOutlined />, title: '诊断计算', desc: '上传计算目录 zip，自动检测并诊断 SCF 收敛、参数一致性与作业问题' },
     ...(fakeHpcEnabled

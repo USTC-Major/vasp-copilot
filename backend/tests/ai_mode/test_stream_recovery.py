@@ -11,8 +11,9 @@ import pytest
 import uvicorn
 from fastapi.testclient import TestClient
 
-from ai_mode import consent, server
-from ai_mode.projects import ProjectStore
+from ai_mode import server
+from backend.toolbox import consent
+from backend.tests.toolbox.legacy_bridge import ProjectStore
 from ai_mode.streaming import ChatRun, GenerationBusy, generation_status, request_stop
 
 
@@ -115,13 +116,13 @@ def test_terminal_event_is_visible_only_after_persistence(task):
 
 def test_restart_state_is_interrupted_without_replaying_tools(task):
     store, pid, tid = task
-    store.update_task(pid, tid, generation={"run_id": "old", "state": "running"})
+    store.update_generation(pid, tid, {"run_id": "old", "state": "running"})
     restarted = ProjectStore(store.root)
     status = generation_status(restarted, pid, tid)
     assert status["running"] is False
     assert status["state"] == "interrupted"
     assert restarted.list_messages(pid, tid) == []
-    assert restarted.get_task(pid, tid)["generation"]["state"] == "interrupted"
+    assert restarted.generation_metadata(pid, tid)["state"] == "interrupted"
 
 
 def test_messages_restore_pending_card_and_duplicate_http_is_rejected(task, monkeypatch):

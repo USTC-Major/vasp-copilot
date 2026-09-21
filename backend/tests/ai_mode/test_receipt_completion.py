@@ -5,7 +5,7 @@ from ai_mode.agent import run_agent, run_agent_stream
 from ai_mode.agent.runner import _receipt_stall, _strip_receipt_wait
 from ai_mode.config import AiModeConfig
 from ai_mode.llm.fake import FakeLLM
-from ai_mode.projects import ProjectStore
+from backend.tests.toolbox.legacy_bridge import ProjectStore
 
 
 @pytest.mark.parametrize("text", [

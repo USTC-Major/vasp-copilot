@@ -5,7 +5,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from ai_mode.projects import ProjectStore
+from backend.tests.toolbox.legacy_bridge import ProjectStore
 from ai_mode.server import create_ai_mode_app
 from app.api.v1 import diagnosis as diagnosis_api
 from app.api.v1 import workflows as workflows_api

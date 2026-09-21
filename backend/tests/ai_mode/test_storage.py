@@ -11,7 +11,7 @@ def test_ensure_layout_creates_dirs_and_config(monkeypatch, tmp_path):
     assert (tmp_path / "sessions").is_dir()
     assert (tmp_path / "skills").is_dir()
     assert (tmp_path / "logs").is_dir()
-    assert (tmp_path / "config.json").is_file()
+    assert (tmp_path / "ai_config.json").is_file()
     # data_dir == home
     cfg = load_settings()
     assert cfg.data_dir == tmp_path.resolve()
@@ -23,6 +23,6 @@ def test_ensure_layout_idempotent(monkeypatch, tmp_path):
     second = ensure_layout()
     assert first == second
     # 不重复改写已存在的配置文件
-    mtime = (tmp_path / "config.json").stat().st_mtime
+    mtime = (tmp_path / "ai_config.json").stat().st_mtime
     ensure_layout()
-    assert (tmp_path / "config.json").stat().st_mtime == mtime
+    assert (tmp_path / "ai_config.json").stat().st_mtime == mtime

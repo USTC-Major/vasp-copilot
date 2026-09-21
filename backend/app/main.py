@@ -64,20 +64,23 @@ async def _ttl_cleanup_loop(runs_root: Path) -> None:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    runs_root = Path(settings.data_dir) / "runs"
-    # 启动时恢复前端「模型设置」保存的运行期 LLM 配置（前端可切换/测试模型）
-    llm_runtime.load(Path(settings.data_dir) / "llm_config.json")
-    # 默认不清扫孤儿 run 目录，保留既有历史 diag_* 数据；仅当
-    # ORPHAN_RUN_CLEANUP=true 时，后台任务才删除未被内存追踪且超 TTL 的目录。
-    task = asyncio.create_task(_ttl_cleanup_loop(runs_root))
+    from backend.toolbox.service import ExecutionService
+    from backend.toolbox.paths import home_dir
+    _app.state.toolbox = ExecutionService(home_dir()).start()
+    task = None
     try:
+        runs_root = Path(settings.data_dir) / "runs"
+        llm_runtime.load(Path(settings.data_dir) / "llm_config.json")
+        task = asyncio.create_task(_ttl_cleanup_loop(runs_root))
         yield
     finally:
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
+        if task is not None:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        _app.state.toolbox.close()
 
 
 app = FastAPI(title=settings.app_name, version="0.2.5",
@@ -97,6 +100,10 @@ app.include_router(structure_router, prefix="/api/v1")
 app.include_router(materials_router, prefix="/api/v1")
 app.include_router(llm_router, prefix="/api/v1")
 app.include_router(chat_router, prefix="/api/v1")
+from backend.toolbox.api import router as toolbox_router, error_handler as toolbox_error_handler
+from backend.toolbox.contracts import ToolboxError
+app.include_router(toolbox_router, prefix="/api/v1")
+app.add_exception_handler(ToolboxError, toolbox_error_handler)
 
 
 def _envelope(request: Request, code: str, message: str,

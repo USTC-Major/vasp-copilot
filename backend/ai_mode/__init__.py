@@ -15,7 +15,7 @@ _repo_root = Path(__file__).resolve().parents[2]
 if (_repo_root / "backend" / "app").is_dir() and str(_repo_root) not in sys.path:
     sys.path.insert(0, str(_repo_root))
 
-from ai_mode.gate import is_ai_mode_enabled as is_enabled
+from .gate import is_ai_mode_enabled as is_enabled
 
 __version__ = "0.2.0"
 VERSION = __version__

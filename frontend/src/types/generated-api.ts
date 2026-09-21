@@ -472,7 +472,8 @@ export interface DiagnosisIssue {
   auto_fixable: boolean;
   confidence: number;
   blocking: boolean;
-  tags: string[];
+  // Optional UI labels: the backend Issue schema does not currently emit tags.
+  tags?: string[] | null;
 }
 
 export interface ScfSeries {
