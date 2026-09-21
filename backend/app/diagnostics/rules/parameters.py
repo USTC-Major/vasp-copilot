@@ -22,6 +22,18 @@ def _as_list(v):
     return None
 
 
+def _vector_magmom(parsed: ParsedRunData) -> bool:
+    """Validate current INCAR; use executed mode only for omitted flags.
+
+    Noncollinear/SOC MAGMOM contains three components per atom, not one.
+    Strict booleans avoid treating an unparsed string such as 'False' as true.
+    """
+    eff = parsed.incar.effective
+    mode = parsed.outcar.calculation_mode
+    return (eff.get("LNONCOLLINEAR", mode.is_noncollinear) is True
+            or eff.get("LSORBIT", mode.is_soc) is True)
+
+
 class LdauArrayLengthRule(Rule):
     rule_id = "LDAU_ARRAY_LENGTH_MISMATCH"
     category = "parameters"
@@ -63,14 +75,16 @@ class MagmomCountMismatchRule(Rule):
         arr = _as_list(mag)
         if arr is None or n == 0:
             return []
-        if len(arr) != n:
+        components = 3 if _vector_magmom(parsed) else 1
+        expected = components * n
+        if len(arr) != expected:
             return [build_issue(
                 rule_id=self.rule_id, severity=Severity.HIGH, category=self.category,
                 title="MAGMOM 展开数与原子数不匹配",
-                summary=f"MAGMOM 展开数 {len(arr)} 不等于原子数 {n}。",
-                evidence=[{"file": "INCAR", "message": f"MAGMOM 数 {len(arr)} vs atom {n}"}],
+                summary=f"MAGMOM 展开数 {len(arr)} 不等于所需分量数 {expected}（{n} 个原子，每原子 {components} 个分量）。",
+                evidence=[{"file": "INCAR", "message": f"MAGMOM 数 {len(arr)} vs expected {expected} (atoms={n}, components={components})"}],
                 recommendations=[
-                    {"action": "review", "target": "user", "rationale": "按元素分组重新确认初始磁矩"}
+                    {"action": "review", "target": "user", "rationale": f"按原子顺序确认初始磁矩，每原子需 {components} 个分量"}
                 ],
                 confidence=0.95, blocking=True,
                 possible_causes=["MAGMOM 数组长度错误", "POSCAR 原子数变化"],
@@ -86,7 +100,7 @@ class IspinMagmomConflictRule(Rule):
         eff = parsed.incar.effective
         ispin = eff.get("ISPIN")
         has_mag = _as_list(eff.get("MAGMOM")) is not None
-        if ispin == 1 and has_mag:
+        if ispin == 1 and has_mag and not _vector_magmom(parsed):
             return [build_issue(
                 rule_id=self.rule_id, severity=Severity.MEDIUM, category=self.category,
                 title="ISPIN=1 却设置了 MAGMOM",

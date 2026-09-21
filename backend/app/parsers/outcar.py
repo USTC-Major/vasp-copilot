@@ -128,12 +128,11 @@ def parse_outcar(text: str) -> OutcarData:
                 data.error_lines.append({"line": i + 1, "text": line.strip()})
                 break
 
-    # 4) termination / truncation
+    # 4) Output completeness is independent of numerical warnings/errors.
+    # A timing footer does not prove convergence or invalidate error_lines.
     has_final_info = any(_FINFO_KEY in ln for ln in lines)
-    data.normal_termination = has_final_info and not data.error_lines
-    data.truncated = (not has_final_info) or bool(data.error_lines)
-    if not has_final_info and data.normal_termination is not None:
-        data.normal_termination = False
+    data.normal_termination = has_final_info
+    data.truncated = not has_final_info
 
     # 5) final energy: last "free  energy   TOTEN" line (energetic)
     last_toten: Optional[float] = None

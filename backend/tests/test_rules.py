@@ -421,8 +421,8 @@ def test_engine_multi_issue_numbering_sorting_evidence():
 
 def test_all_rules_registered_unique():
     ids = [r.rule_id for r in all_rules()]
-    assert len(ids) == 27
-    assert len(set(ids)) == 27
+    assert len(ids) == 28
+    assert len(set(ids)) == 28
 
 # ---------- same-source dedup (MVP 11.1 rule 8) ----------
 def _engine():
