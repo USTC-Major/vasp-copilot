@@ -14,10 +14,10 @@ import AiTaskSidebar from '../components/ai/AiTaskSidebar';
 import AiProjectExtraSettings from '../components/ai/AiProjectExtraSettings';
 import AiContextBar from '../components/ai/AiContextBar';
 import AiDirectoryPicker from '../components/ai/AiDirectoryPicker';
-import ToolboxTaskStatus from '../components/toolbox/ToolboxTaskStatus';
+import ToolboxTaskStatus, { ToolboxEnvironmentTags } from '../components/toolbox/ToolboxTaskStatus';
 import { aiApi, toolboxApi } from '../api/client';
 import { AI_JOB_STATUS_MAP } from '../types/ai';
-import { useAiTasks, useAiTaskCreate, useAiMessages, useAiTaskContext, useAiTaskUpdate, useAiTaskDelete } from '../hooks/useApi';
+import { useAiTasks, useAiTaskCreate, useAiMessages, useAiTaskContext, useAiTaskUpdate, useAiTaskDelete, useToolboxTaskDetail } from '../hooks/useApi';
 import type { AiMessage as AiMsg, AiTask, AiConsentCard } from '../types/ai';
 
 const { Content } = Layout;
@@ -87,6 +87,7 @@ const AiProjectPage: React.FC = () => {
 
   const tasks = tasksQuery.data?.tasks ?? [];
   const selectedTask = tasks.find((t) => t.id === selectedTaskId) ?? null;
+  const executionQuery = useToolboxTaskDetail(projectId, selectedTaskId, { observeOnly: true });
   const messagesQuery = useAiMessages(projectId, selectedTaskId);
   const taskContextQuery = useAiTaskContext(projectId, selectedTaskId);
   const messages: AiMsg[] = messagesQuery.data?.messages ?? [];
@@ -355,9 +356,7 @@ const AiProjectPage: React.FC = () => {
               <Space size={10} wrap style={{ minWidth: 0 }}>
                 <Title level={5} style={{ margin: 0 }}>{selectedTask.title}</Title>
                 {statusLabel && <Tag color={currentColor || 'default'} style={{ margin: 0 }}>{statusLabel}</Tag>}
-                <Tag color={selectedTask.execution_mode === 'Real' ? 'green' : selectedTask.execution_mode === 'Fake' ? 'gold' : 'default'}>
-                  运行环境: {selectedTask.execution_mode || 'None'}
-                </Tag>
+                <ToolboxEnvironmentTags detail={executionQuery.data} unavailable={executionQuery.isError} />
                 <Text type="secondary" style={{ fontSize: 12, maxWidth: 'min(60vw, 460px)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selectedTask.goal}</Text>
               </Space>
               <Space size={8} wrap>

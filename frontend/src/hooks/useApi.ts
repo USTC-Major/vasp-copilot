@@ -460,12 +460,13 @@ export function useToolboxTasks(projectId: string | null) {
   });
 }
 
-export function useToolboxTaskDetail(projectId: string | null, taskId: string | null) {
+export function useToolboxTaskDetail(projectId: string | null, taskId: string | null, options: { observeOnly?: boolean } = {}) {
   return useQuery({
     queryKey: ['toolboxTaskDetail', projectId, taskId],
     queryFn: ({ signal }) => toolboxApi.getTaskDetail(projectId!, taskId!, signal),
-    enabled: !!projectId && !!taskId,
-    refetchInterval: 5_000,
+    // Summaries observe the same cache; the shared status card owns polling.
+    enabled: !!projectId && !!taskId && !options.observeOnly,
+    refetchInterval: options.observeOnly ? false : 5_000,
     staleTime: 0,
     retry: false,
   });

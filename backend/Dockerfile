@@ -13,6 +13,7 @@ ENV PYTHONUNBUFFERED=1 \
     PATH="/opt/venv/bin:$PATH" \
     PYTHONPATH=/repo
 WORKDIR /repo
+COPY --from=deps /opt/venv /opt/venv
 COPY . ./backend
 RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin vaspdoctor \
     && mkdir -p /data/app /data/tmp \
