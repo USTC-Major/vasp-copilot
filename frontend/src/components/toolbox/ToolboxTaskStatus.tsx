@@ -3,7 +3,7 @@ import { Alert, Button, Card, Collapse, Descriptions, Empty, List, Space, Tag, T
 import { Link } from 'react-router-dom';
 import { ReloadOutlined, SafetyCertificateOutlined, StopOutlined } from '@ant-design/icons';
 import { useToolboxResolveConsent, useToolboxTaskDetail } from '../../hooks/useApi';
-import type { ToolboxConsentCard, ToolboxJob } from '../../types/toolbox';
+import type { ToolboxConsentCard, ToolboxJob, ToolboxTaskDetail } from '../../types/toolbox';
 import { renderMarkdown } from '../../utils/markdown';
 
 const { Text, Paragraph } = Typography;
@@ -25,7 +25,23 @@ const STATUS_LABELS: Record<string, string> = {
   not_converged: '未收敛', unknown: '状态待核实', error: '采集错误', executed: '已执行', rejected: '已拒绝',
 };
 const statusLabel = (status?: string) => status ? (STATUS_LABELS[status] ?? status) : '未知';
-const modeLabel = (mode?: string) => mode === 'Real' ? '真实' : mode === 'Fake' ? '模拟' : mode === 'None' ? '未配置' : (mode || '不可用');
+const modeLabel = (mode?: string, historical = false) => mode === 'Real' ? '真实' : mode === 'Fake' ? '模拟' : mode === 'None' ? (historical ? '未记录' : '未配置') : '不可用';
+
+export const ToolboxEnvironmentTags: React.FC<{
+  detail?: ToolboxTaskDetail;
+  unavailable?: boolean;
+}> = ({ detail, unavailable = false }) => {
+  if (unavailable) return <Tag color="red">执行环境：状态暂不可用</Tag>;
+  if (!detail) return <Tag>执行环境：加载中</Tag>;
+  return <>
+    <Tag title="任务已保存的执行环境，不随当前后端配置变化" color={colorForMode(detail.flow.execution_mode)}>
+      历史执行：{modeLabel(detail.flow.execution_mode, true)}
+    </Tag>
+    <Tag title="当前配置的执行后端，不代表 SSH 连通测试已通过" color={colorForMode(detail.backend_mode)}>
+      当前后端：{modeLabel(detail.backend_mode)}
+    </Tag>
+  </>;
+};
 
 const jobSubmissionText = (job: ToolboxJob) => {
   const states: Record<string, string> = { confirmed: '提交已确认', submitted: '提交已确认', unknown: '提交结果待核实', pending: '待提交确认', not_submitted: '尚未提交', failed: '提交失败' };
@@ -121,8 +137,7 @@ const ToolboxTaskStatus: React.FC<Props> = ({
       <Space wrap style={{ marginBottom: 12 }}>
         <Tag title={flow.phase} color={colorForStatus(flow.phase)}>阶段：{statusLabel(flow.phase)}</Tag>
         <Tag title={task.status} color={colorForStatus(task.status)}>任务：{statusLabel(task.status)}</Tag>
-        <Tag title={flow.execution_mode} color={colorForMode(flow.execution_mode)}>历史执行：{modeLabel(flow.execution_mode)}</Tag>
-        <Tag title={String(detail.backend_mode)} color={colorForMode(detail.backend_mode)}>当前后端：{modeLabel(detail.backend_mode)}</Tag>
+        <ToolboxEnvironmentTags detail={detail} />
         <Tag title={monitor?.state} color={colorForStatus(monitor?.state)}>监控：{statusLabel(monitor?.state)}</Tag>
       </Space>
 

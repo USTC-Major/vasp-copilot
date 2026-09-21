@@ -3,7 +3,7 @@
 // （数据来自 MSW 演示后端 aiDemo / aiSettingsHandlers）
 // ============================================================
 
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -23,11 +23,86 @@ function renderPath(path: string) {
       <RouterProvider router={router} />
     </QueryClientProvider>
   );
+  return queryClient;
 }
+
+const executionDetail = (taskId: string, historical: string, current: string) => ({
+  mode: 'toolbox', task_id: taskId,
+  task: { id: taskId, project_id: 'prj_001', title: '状态来源测试', status: 'planned' },
+  flow: { execution_mode: historical, phase: 'planning', jobs: [], waiting: [], report: '', precheck: { ok: false, issues: [] }, draft: [], artifacts: {} },
+  backend_mode: current, consents: [], events: [],
+  monitor: { state: 'idle', interval_seconds: 60, remote_cancelled: false },
+});
 
 describe('AI 前端整合（M12）', () => {
   beforeEach(() => {
     aiDemo.reset();
+  });
+
+  it.each([
+    ['Fake', 'Real', '模拟', '真实'],
+    ['Real', 'Fake', '真实', '模拟'],
+    ['None', 'None', '未记录', '未配置'],
+  ])('顶部与共享卡共用详情：历史 %s / 当前 %s', async (historical, current, historyLabel, currentLabel) => {
+    // The list value is deliberately inconsistent and must not be used.
+    aiDemo.tasks[0].execution_mode = 'None';
+    let reads = 0;
+    server.use(http.get('/api/v1/toolbox/projects/:projectId/tasks/:taskId/detail', ({ params }) => {
+      reads += 1;
+      return HttpResponse.json(executionDetail(String(params.taskId), historical, current));
+    }));
+    renderPath('/ai/projects/prj_001');
+    expect(await screen.findAllByText(`历史执行：${historyLabel}`)).toHaveLength(2);
+    expect(screen.getAllByText(`当前后端：${currentLabel}`)).toHaveLength(2);
+    expect(screen.queryByText(/运行环境: None/)).not.toBeInTheDocument();
+    expect(reads).toBe(1);
+  });
+
+  it('共享详情刷新同步顶部，读取失败不把旧缓存当作当前环境，恢复后同步更新', async () => {
+    aiDemo.tasks[0].updated_at = '2099-01-01T00:00:00Z';
+    let current = 'Real';
+    let unavailable = false;
+    let reads = 0;
+    server.use(http.get('/api/v1/toolbox/projects/:projectId/tasks/:taskId/detail', ({ params }) => {
+      reads += 1;
+      return unavailable ? HttpResponse.json({ error: { code: 'UNAVAILABLE', message: 'offline' } }, { status: 503 })
+        : HttpResponse.json(executionDetail(String(params.taskId), 'Fake', current));
+    }));
+    const queryClient = renderPath('/ai/projects/prj_001');
+    expect(await screen.findAllByText('当前后端：真实')).toHaveLength(2);
+    current = 'None';
+    await act(async () => { await queryClient.refetchQueries({ queryKey: ['toolboxTaskDetail', 'prj_001', 'tsk_001'] }); });
+    await waitFor(() => expect(screen.getAllByText('当前后端：未配置')).toHaveLength(2));
+    expect(screen.getAllByText('历史执行：模拟')).toHaveLength(2);
+    unavailable = true;
+    await act(async () => { await queryClient.refetchQueries({ queryKey: ['toolboxTaskDetail', 'prj_001', 'tsk_001'] }); });
+    expect(await screen.findByText('执行环境：状态暂不可用')).toBeInTheDocument();
+    expect(screen.getByText('Toolbox 状态暂时不可用')).toBeInTheDocument();
+    expect(screen.queryByText('当前后端：未配置')).not.toBeInTheDocument();
+    unavailable = false;
+    current = 'Fake';
+    await act(async () => { await queryClient.refetchQueries({ queryKey: ['toolboxTaskDetail', 'prj_001', 'tsk_001'] }); });
+    await waitFor(() => expect(screen.getAllByText('当前后端：模拟')).toHaveLength(2));
+    expect(reads).toBe(4);
+  });
+
+  it('任务切换等待新详情时不展示前一个任务的执行环境', async () => {
+    aiDemo.tasks[0].updated_at = '2099-01-01T00:00:00Z';
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    server.use(http.get('/api/v1/toolbox/projects/:projectId/tasks/:taskId/detail', async ({ params }) => {
+      const id = String(params.taskId);
+      if (id === 'tsk_002') await gate;
+      return HttpResponse.json(executionDetail(id, id === 'tsk_001' ? 'Real' : 'Fake', 'None'));
+    }));
+    const user = userEvent.setup();
+    renderPath('/ai/projects/prj_001');
+    expect(await screen.findAllByText('历史执行：真实')).toHaveLength(2);
+    await user.click(screen.getByText('带结构计算的能带'));
+    expect(await screen.findByText('执行环境：加载中')).toBeInTheDocument();
+    expect(screen.queryByText('历史执行：真实')).not.toBeInTheDocument();
+    await act(async () => { release?.(); });
+    expect(await screen.findAllByText('历史执行：模拟')).toHaveLength(2);
   });
 
   it('项目列表页渲染种子项目与上下文/等待空位信息', async () => {
@@ -70,7 +145,7 @@ describe('AI 前端整合（M12）', () => {
     const user = userEvent.setup();
     renderPath('/ai/projects/prj_001');
     expect(await screen.findByText('结构优化 + 静态 + DOS')).toBeInTheDocument();
-    expect(await screen.findByText('运行环境: None')).toBeInTheDocument();
+    expect(await screen.findAllByText('当前后端：未配置')).toHaveLength(2);
     await user.clear(await screen.findByPlaceholderText(/描述计算需求/));
     await user.type(screen.getByPlaceholderText(/描述计算需求/), '对 NaCl 结构做 relax → static → dos 计算');
     await user.click(screen.getByRole('button', { name: /发送/ }));
