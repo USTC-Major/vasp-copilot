@@ -340,7 +340,10 @@ def test_linux_owner_cleanup_and_multi_root_failure(
         )
         return source.replace(
             cleanup_marker,
-            "    def _remove_owned(parent, name, expected):\n        return False\n        try:",
+            "    def _remove_owned(parent, name, expected):\n"
+            "        if name.endswith('.tmp'):\n"
+            "            return False\n"
+            "        try:",
             1,
         )
 
