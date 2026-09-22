@@ -22,6 +22,8 @@ export interface ToolboxTask {
 
 export interface ToolboxJob {
   key: string;
+  /** Opaque, current identity for this calculation attempt. */
+  attempt_id?: string;
   label: string;
   kind: string;
   requires: string[];
@@ -32,6 +34,29 @@ export interface ToolboxJob {
   attempts?: Record<string, unknown>[];
   attempt_history?: Record<string, unknown>[];
   diagnosis?: Record<string, unknown>;
+  precheck?: ToolboxJobPrecheck;
+  draft?: ToolboxJobDraft | null;
+}
+
+export interface ToolboxJobPrecheck {
+  attempt_id?: string;
+  ok: boolean;
+  hard?: boolean;
+  digest?: string;
+  snapshot?: Record<string, unknown>;
+  issues?: Record<string, unknown>[];
+}
+
+export interface ToolboxJobDraft {
+  attempt_id?: string;
+  job_key?: string;
+  dir?: string;
+  directory?: string;
+  script_name?: string;
+  script_sha256?: string;
+  scheduler_target?: string | Record<string, unknown>;
+  resources?: Record<string, unknown>;
+  [key: string]: unknown;
 }
 
 export interface ToolboxArtifact {
@@ -49,7 +74,9 @@ export interface ToolboxFlow {
   local_dir: string;
   hpc_dir: string;
   waiting: string[];
-  precheck: { ok: boolean; issues: Record<string, unknown>[]; digest?: string };
+  // In a multi-job task this is an overview only. Submission evidence belongs
+  // to the selected job's `precheck` and `draft` above.
+  precheck: { ok: boolean; issues: Record<string, unknown>[]; digest?: string; per_job?: boolean };
   report: string;
   jobs: ToolboxJob[];
   draft: Record<string, unknown>[];
@@ -88,6 +115,7 @@ export interface ToolboxConsentCard {
   expires_at?: string;
   result?: string;
   options?: string[];
+  args?: Record<string, unknown>;
   binding?: Record<string, unknown>;
 }
 

@@ -72,7 +72,7 @@ def update_task(project_id: str, task_id: str, request: Request, payload: dict):
             if (task.get('flow') or {}).get('phase') == 'monitoring':
                 raise ToolboxError('TASK_ACTIVE', '监控期间不能改变工作区', 409)
             raw = task.get('flow') or {}
-            if any(j.get('submission_state') == 'unknown' or j.get('status') in {'submitted','queued','running','unknown'}
+            if any(j.get('submission_state') in {'unknown', 'executing'} or j.get('status') in {'submitted','queued','running','unknown'}
                    for j in (raw.get('plan') or {}).get('jobs', [])):
                 raise ToolboxError('TASK_UNRESOLVED', '在途或结果不确定的作业不能改变工作区', 409)
             if raw:
@@ -82,6 +82,13 @@ def update_task(project_id: str, task_id: str, request: Request, payload: dict):
                 if 'hpc_workspace' in payload:
                     raw['hpc_dir'] = payload['hpc_workspace'] or ''
                 raw.update(draft=[], artifacts={}, script_attestations={}, precheck={'ok':False,'issues':[]})
+                for job in (raw.get('plan') or {}).get('jobs', []):
+                    if job.get('status') in {'draft', 'waiting', 'skipped'}:
+                        job.pop('precheck', None)
+                        job.pop('draft', None)
+                for scope in (raw.get('consent') or {}).get('computation_scopes', {}).values():
+                    if scope.get('state') in {'proposed', 'active'}:
+                        scope['state'] = 'revoked'
                 for action in (raw.get('consent') or {}).get('actions', {}).values():
                     if action.get('state') in {'pending', 'approved'}:
                         action.update(state='expired', result='工作区已变更，必须重新确认')

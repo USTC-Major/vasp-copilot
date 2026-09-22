@@ -6,7 +6,7 @@ import ToolboxTaskStatus from '../components/toolbox/ToolboxTaskStatus';
 import AiDirectoryPicker from '../components/ai/AiDirectoryPicker';
 import { toolboxApi } from '../api/client';
 import { useToolboxRunTool, useToolboxTaskDetail } from '../hooks/useApi';
-import type { ToolboxIncarEntry, ToolboxPlanJobInput } from '../types/toolbox';
+import type { ToolboxIncarEntry, ToolboxJob, ToolboxPlanJobInput } from '../types/toolbox';
 
 const { Title, Text, Paragraph } = Typography;
 
@@ -63,9 +63,29 @@ const ToolboxTaskPage: React.FC = () => {
   const [mpLimit, setMpLimit] = useState(10);
   const [mpRows, setMpRows] = useState<Record<string, unknown>[]>([]);
   const [mpJob, setMpJob] = useState('');
+  const [authorizationJobKey, setAuthorizationJobKey] = useState('');
 
   const jobOptions = useMemo(() => jobs.map((job) => ({ value: job.key, label: `${job.label || job.key} (${job.status})` })), [jobs]);
   const artifactOptions = useMemo(() => artifactEntries.map(([id, artifact]) => ({ value: id, label: `${artifact.name} · ${artifact.path}` })), [artifactEntries]);
+  const authorizationIdentity = useMemo(
+    () => jobs.map((job) => `${job.key}:${job.attempt_id ?? ''}`).join('|'),
+    [jobs],
+  );
+  const authorizationJob = useMemo(() => {
+    if (jobs.length === 1) return jobs[0];
+    return jobs.find((job) => job.key === authorizationJobKey);
+  }, [authorizationJobKey, jobs]);
+  const selectedAuthorizationAttempt = authorizationJob?.attempt_id;
+  const requiresExplicitAttempt = jobs.length > 1;
+  const authorizationReady = !!authorizationJob && (!requiresExplicitAttempt || !!selectedAuthorizationAttempt);
+  const authorizationArgs = (job: ToolboxJob): Record<string, unknown> => {
+    if (job.attempt_id) return { job_key: job.key, attempt_id: job.attempt_id };
+    // The frozen backend contract keeps the old empty single-job call valid.
+    return jobs.length === 1 ? {} : { job_key: job.key };
+  };
+  const retryArgs = (job: ToolboxJob): Record<string, unknown> => (
+    job.attempt_id ? { job_key: job.key, attempt_id: job.attempt_id } : { job_key: job.key }
+  );
 
   // Only initialize editable metadata when entering another task. Monitoring and
   // tool activity can update the server timestamp every five seconds; using that
@@ -78,6 +98,13 @@ const ToolboxTaskPage: React.FC = () => {
     setEditHpc(detail.task.hpc_workspace ?? '');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detail?.task?.id]);
+
+  // A job key alone is not an authorization identity. Drop local selection and
+  // receipt whenever the route or the server's current attempt set changes.
+  useEffect(() => {
+    setAuthorizationJobKey('');
+    setLastResult('');
+  }, [projectId, taskId, authorizationIdentity]);
 
   const runTool = async (name: string, args: Record<string, unknown> = {}) => {
     try {
@@ -377,10 +404,31 @@ const ToolboxTaskPage: React.FC = () => {
           message="Toolbox 不生成提交脚本"
           description="请先把自己提供的脚本放入工作区。首次“认领脚本”会生成脚本指纹确认卡；确认后再次认领，经过硬预检才会生成提交确认卡。"
         />
+        <Space direction="vertical" size="small" style={{ width: '100%', marginBottom: 12 }}>
+          <Select
+            aria-label="提交授权计算"
+            value={jobs.length === 1 ? jobs[0]?.key : (authorizationJobKey || undefined)}
+            onChange={setAuthorizationJobKey}
+            options={jobs.map((job) => ({ value: job.key, label: `${job.label || job.key}${job.attempt_id ? ` · 尝试 ${job.attempt_id}` : ' · 旧单计算兼容'}` }))}
+            disabled={!jobs.length || jobs.length === 1}
+            placeholder={jobs.length > 1 ? '请先选择一个计算' : '尚无计算'}
+            style={{ maxWidth: 520 }}
+          />
+          {jobs.length > 1 && !authorizationJob && <Text type="warning">多个计算必须先选择一个具有当前尝试身份的计算；不会默认代为选择。</Text>}
+          {requiresExplicitAttempt && authorizationJob && !selectedAuthorizationAttempt && <Text type="danger">此计算缺少当前尝试身份，不能发送准备或提交请求。</Text>}
+          {authorizationJob && (
+            <Space wrap>
+              <Tag>计算：{authorizationJob.label || authorizationJob.key}</Tag>
+              {selectedAuthorizationAttempt ? <Tag>尝试：{selectedAuthorizationAttempt}</Tag> : <Tag>旧单计算兼容参数</Tag>}
+              <Text type="secondary">预检：{authorizationJob.precheck ? (authorizationJob.precheck.ok ? '通过' : '未通过') : '尚未运行'}</Text>
+              <Text type="secondary">草稿：{authorizationJob.draft?.dir ?? authorizationJob.draft?.directory ?? '尚未生成'}</Text>
+            </Space>
+          )}
+        </Space>
         <Space wrap>
-          <Button onClick={() => void runTool('draft')}>认领脚本 / 生成草稿</Button>
-          <Button icon={<FileSearchOutlined />} onClick={() => void runTool('precheck')}>运行硬预检</Button>
-          <Button type="primary" icon={<SafetyCertificateOutlined />} onClick={() => void runTool('submit')}>请求提交确认</Button>
+          <Button disabled={!authorizationReady} onClick={() => authorizationJob && void runTool('draft', authorizationArgs(authorizationJob))}>认领脚本 / 生成草稿</Button>
+          <Button disabled={!authorizationReady} icon={<FileSearchOutlined />} onClick={() => authorizationJob && void runTool('precheck', authorizationArgs(authorizationJob))}>运行硬预检</Button>
+          <Button disabled={!authorizationReady} type="primary" icon={<SafetyCertificateOutlined />} onClick={() => authorizationJob && void runTool('submit', authorizationArgs(authorizationJob))}>请求提交确认</Button>
           <Button onClick={() => void runTool('report')}>汇总确定性报告</Button>
         </Space>
         <Divider />
@@ -400,7 +448,7 @@ const ToolboxTaskPage: React.FC = () => {
               return (
                 <List.Item actions={[
                   <Button key="diagnose" onClick={() => void runTool('diagnose_job', { job_key: job.key })}>诊断</Button>,
-                  <Button key="retry" danger disabled={!retryAllowed} onClick={() => void runTool('retry_job', { job_key: job.key })}>请求恢复确认</Button>,
+                  <Button key="retry" danger disabled={!retryAllowed} onClick={() => void runTool('retry_job', retryArgs(job))}>请求恢复确认</Button>,
                 ]}>
                   <List.Item.Meta title={<Space><Text strong>{job.label || job.key}</Text><Tag>{job.status}</Tag></Space>} description={retryAllowed ? '已有终态诊断，可请求恢复到待准备状态。' : '当前状态不允许恢复；可先诊断或继续等待状态核对。'} />
                 </List.Item>

@@ -28,13 +28,6 @@ def _perform_submit_locked(store: ProjectStore, project_id: str, task_id: str,
     flow = (store.get_task(project_id, task_id) or {}).get("flow") or {}
     orch = orch or Orchestrator.from_settings(load_settings())
     if approved:
-        if flow.get("phase") != "await_submit":
-            action = claim_action(store, project_id, task_id, card_id)
-            if action is not None:
-                finish_action(store, project_id, task_id, card_id,
-                              state="failed",
-                              result="流程已离开待提交阶段，未执行 sbatch")
-            return "流程已不在「待你确认提交」环节，无法提交；请查看当前状态。"
         action = claim_action(store, project_id, task_id, card_id)
         if action is None:
             return "该确认已失效或已被使用；不会重复提交。"
@@ -45,13 +38,12 @@ def _perform_submit_locked(store: ProjectStore, project_id: str, task_id: str,
         binding = action.get("binding") or {}
         current_mode = str(getattr(orch, "execution_mode",
                                    flow.get("execution_mode") or "None"))
-        if (binding.get("project_id") != project_id
+        from .computation import scope_valid
+        if (not scope_valid(flow, action)
+                or binding.get("project_id") != project_id
                 or binding.get("task_id") != task_id
                 or binding.get("remote_root") != str(flow.get("hpc_dir") or flow.get("local_dir") or "").strip()
-                or binding.get("drafts") != (flow.get("draft") or [])
-                or binding.get("execution_mode") != current_mode
-                or binding.get("precheck_digest") != str(
-                    (flow.get("precheck") or {}).get("digest") or "")):
+                or binding.get("execution_mode") != current_mode):
             result = "提交目标或草稿在确认后发生变化；已拒绝执行，sbatch=0。"
             finish_action(store, project_id, task_id, card_id,
                           state="failed", result=result)
@@ -65,7 +57,7 @@ def _perform_submit_locked(store: ProjectStore, project_id: str, task_id: str,
             raise
         current = (store.get_task(project_id, task_id) or {}).get("flow") or {}
         uncertain = any(
-            job.get("submission_state") == "unknown"
+            job.get("submission_action_id") == card_id and job.get("submission_state") == "unknown"
             for job in ((current.get("plan") or {}).get("jobs") or []))
         submitted = any(
             job.get("submission_action_id") == card_id
@@ -81,5 +73,4 @@ def _perform_submit_locked(store: ProjectStore, project_id: str, task_id: str,
         # Defensive only: rejected cards cannot normally be claimed.
         finish_action(store, project_id, task_id, card_id,
                       state="failed", result="提交已取消")
-    return orch._on_await_submit(store, project_id, task_id, dict(flow),
-                                 "取消")
+    return "已取消本次单计算提交；其他计算保持原状态。"

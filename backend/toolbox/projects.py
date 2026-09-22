@@ -47,6 +47,10 @@ class ProjectStore:
         data = read_object(self._path) if self._path.is_file() else import_legacy(self.root, 'execution')
         validate_execution(data)
         recover_actions(data)
+        from .computation import normalize
+        for task in data.get("tasks", []):
+            if task.get("flow"):
+                normalize(task["flow"])
         self._flush_unlocked(data)
         return data
 
@@ -231,6 +235,9 @@ class ProjectStore:
                     target.pop(key, None)
                 else:
                     target[key] = copy.deepcopy(value)
+            if target.get("flow"):
+                from .computation import normalize
+                normalize(target["flow"])
             target["updated_at"] = now
             for p in self._data.get("projects", []):
                 if p.get("id") == project_id:

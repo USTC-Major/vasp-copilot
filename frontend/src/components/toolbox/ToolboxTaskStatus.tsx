@@ -56,6 +56,26 @@ const readableValue = (value: unknown) => {
   return String(value);
 };
 
+const cardIdentity = (card: ToolboxConsentCard) => {
+  const source = { ...(card.args ?? {}), ...(card.binding ?? {}) };
+  const jobKey = source.job_key;
+  const attemptId = source.attempt_id;
+  const scopeId = source.scope_id;
+  return {
+    jobKey: typeof jobKey === 'string' ? jobKey : undefined,
+    attemptId: typeof attemptId === 'string' ? attemptId : undefined,
+    scopeId: typeof scopeId === 'string' ? scopeId : undefined,
+  };
+};
+
+const jobPrecheckText = (job: ToolboxJob) => {
+  const precheck = job.precheck;
+  if (!precheck) return '尚未运行此计算的硬预检';
+  const hard = precheck.hard === true ? '（硬预检）'
+    : precheck.hard === false ? '（非硬预检）' : '（硬预检标记未记录）';
+  return `${precheck.ok ? '通过' : '未通过'}${hard}${precheck.digest ? ` · 摘要 ${precheck.digest}` : ''}`;
+};
+
 const recordDetails = (record: Record<string, unknown>, key: string) => (
   <Descriptions key={key} size="small" column={1} bordered style={{ marginTop: 6 }}>
     {Object.entries(record).map(([name, value]) => (
@@ -177,6 +197,16 @@ const ToolboxTaskStatus: React.FC<Props> = ({
           <Space direction="vertical" size={6} style={{ width: '100%' }}>
             <Space wrap align="start"><Tag color="gold">人工确认</Tag><Text strong style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{card.summary}</Text></Space>
             {card.reason && <Text type="secondary" style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{card.reason}</Text>}
+            {(() => {
+              const identity = cardIdentity(card);
+              return (identity.jobKey || identity.attemptId || identity.scopeId) ? (
+                <Space wrap size={4}>
+                  {identity.jobKey && <Tag>计算：{identity.jobKey}</Tag>}
+                  {identity.attemptId && <Tag>尝试：{identity.attemptId}</Tag>}
+                  {identity.scopeId && <Tag>范围：{identity.scopeId}</Tag>}
+                </Space>
+              ) : null;
+            })()}
             <Space>
               <Button
                 type="primary"
@@ -202,7 +232,7 @@ const ToolboxTaskStatus: React.FC<Props> = ({
         <Descriptions.Item label="轮询间隔">{monitor?.interval_seconds ?? 60} 秒</Descriptions.Item>
         <Descriptions.Item label="最近成功采集">{monitor?.last_success_at || '尚无'}</Descriptions.Item>
         <Descriptions.Item label="等待条件">{flow.waiting?.length ? flow.waiting.join('；') : '无'}</Descriptions.Item>
-        <Descriptions.Item label="预检">{flow.precheck?.ok ? '通过' : '未通过或尚未执行'}</Descriptions.Item>
+        <Descriptions.Item label="预检概览">{flow.precheck?.ok ? '通过' : '未通过或尚未执行'}{flow.precheck?.per_job || (flow.jobs?.length ?? 0) > 1 ? '（多计算时请以各计算项为准）' : ''}</Descriptions.Item>
       </Descriptions>
 
       {flow.jobs?.length ? (
@@ -213,10 +243,12 @@ const ToolboxTaskStatus: React.FC<Props> = ({
           renderItem={(job) => (
             <List.Item>
               <List.Item.Meta
-                title={<Space wrap><Text strong>{job.label || job.key}</Text><Tag title={job.status} color={colorForStatus(job.status)}>{statusLabel(job.status)}</Tag></Space>}
+                title={<Space wrap><Text strong>{job.label || job.key}</Text><Tag title={job.status} color={colorForStatus(job.status)}>{statusLabel(job.status)}</Tag>{job.attempt_id && <Tag>尝试：{job.attempt_id}</Tag>}</Space>}
                 description={<>
                   <div>{job.description || job.kind}</div>
                   <Text type="secondary">{jobSubmissionText(job)}</Text>
+                  <div><Text type="secondary">预检：{jobPrecheckText(job)}</Text></div>
+                  {job.draft && <div><Text type="secondary">草稿：{job.draft.dir ?? job.draft.directory ?? '已生成此计算的提交草稿'}</Text></div>}
                   {((job.attempt_history?.length ?? 0) > 0 || (job.attempts?.length ?? 0) > 0) && (
                     <details style={{ marginTop: 6 }}>
                       <summary>查看提交尝试记录（{job.attempt_history?.length ?? job.attempts?.length ?? 0}）</summary>

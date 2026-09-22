@@ -117,18 +117,24 @@ class ExecutionService:
                         error = {'code': result.code, 'message': str(result), 'retryable': False}
                     raw = self.require_task(project_id, task_id).get('flow') or {}
                     if name in {'precheck', 'draft', 'submit'} and not error:
-                        if not (raw.get('precheck') or {}).get('ok'):
+                        from .computation import select_job
+                        selected = select_job(raw, args)
+                        if not (selected.get('precheck') or {}).get('ok'):
                             error = {'code': 'PRECHECK_BLOCKED', 'message': str(result), 'retryable': False}
-                    if name in {'draft', 'submit'} and not error and raw.get('phase') == 'await_submit':
-                        if raw.get('execution_mode') == 'None':
-                            error = {'code': 'HPC_BACKEND_UNAVAILABLE', 'message': '未配置HPC执行后端；未提交', 'retryable': False}
-                        else:
-                            pending = consent.spawn_submit_card(self.store, project_id, task_id)
+                        elif name in {'draft', 'submit'} and selected.get('draft'):
+                            if raw.get('execution_mode') == 'None':
+                                error = {'code': 'HPC_BACKEND_UNAVAILABLE', 'message': '未配置HPC执行后端；未提交', 'retryable': False}
+                            else:
+                                pending = consent.spawn_submit_card(self.store, project_id, task_id,
+                                    selected['key'], selected['attempt_id'])
             except consent.PendingConsentError as exc:
                 pending = consent.get_card(self.store, project_id, task_id, exc.card_id)
                 result = '请人工确认当前绑定操作；确认前未执行。'
-            except ToolboxError:
-                raise
+            except ToolboxError as exc:
+                if exc.code not in {"JOB_REQUIRED", "JOB_NOT_FOUND", "ATTEMPT_STALE", "JOB_NOT_READY", "SUBMISSION_UNKNOWN", "DEPENDENCY_NOT_READY", "PRECHECK_BLOCKED"}:
+                    raise
+                error = exc.payload()
+                result = str(exc)
             except Exception as exc:
                 # Do not expose credentials/upstream exception bodies.
                 raise ToolboxError('TOOL_EXECUTION_FAILED', f'工具执行失败：{type(exc).__name__}', 400) from exc

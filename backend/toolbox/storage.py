@@ -110,5 +110,29 @@ def recover_actions(data, *, importing=False):
                 action.update(state='unknown', result='服务中断：操作结果待核实，禁止自动重放')
             elif importing and action.get('state') in {'pending', 'approved'}:
                 action.update(state='expired', result='旧版授权已迁移为审计记录，请重新确认')
+            if action.get('kind') == 'submit' and action.get('state') == 'unknown':
+                # The action claim is saved before job dispatch. A crash in
+                # that gap must not leave a fresh-looking attempt behind.
+                # Also repair stores recovered by an earlier owner version.
+                binding = action.get('binding') or {}
+                if not binding.get('job_key') or not binding.get('attempt_id'):
+                    continue
+                scope = (flow.get('consent') or {}).get('computation_scopes', {}).get(binding.get('scope_id'))
+                if scope and scope.get('attempt_id') == binding['attempt_id']:
+                    scope['submit_limit'] = 0
+                for job in (flow.get('plan') or {}).get('jobs', []):
+                    if (job.get('key') != binding['job_key']
+                            or job.get('attempt_id') != binding['attempt_id']):
+                        continue
+                    # A receipt already saved on the job remains authoritative;
+                    # never replace a known job id or terminal evidence.
+                    if (not job.get('slurm_id')
+                            and job.get('submission_state') != 'submitted'
+                            and (job.get('status', 'draft') in {'draft', 'waiting', 'unknown'}
+                                 or job.get('submission_state') == 'executing')):
+                        job.update(status='unknown', submission_state='unknown',
+                                   submission_action_id=action.get('action_id'),
+                                   submission_error='服务在提交确认后中断；结果待核实，禁止同一尝试再次提交')
+                        flow['phase'] = 'blocked'
         if flow.get('phase') == 'monitoring':
             flow.setdefault('monitor', {}).update(state='recovering')

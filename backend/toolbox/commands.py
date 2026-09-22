@@ -347,6 +347,8 @@ class ToolExecutor:
 
     def _save_flow(self, flow: dict) -> None:
         flow = dict(flow)
+        from .computation import normalize
+        normalize(flow)
         flow["updated_at"] = _now_iso()
         self.store.update_task(self.project_id, self.task_id,
                                flow=flow,
@@ -441,7 +443,8 @@ class ToolExecutor:
         jobs = plan.get("jobs") or []
         job_lines = "\n".join(
             f"- {j.get('key')}（{j.get('label') or ''}，{j.get('kind') or 'vasp'}）"
-            f" status={j.get('status') or 'draft'}"
+            f" status={j.get('status') or 'draft'} attempt_id={j.get('attempt_id') or 'legacy'}"
+            + f" precheck={'ok' if (j.get('precheck') or {}).get('ok') else 'blocked_or_unchecked'} draft={'ready' if j.get('draft') else 'none'}"
             + (f" slurm_id={j.get('slurm_id')}" if j.get("slurm_id") else "")
             for j in jobs) or "（暂无规划）"
         drafts = flow.get("draft") or []
@@ -451,7 +454,7 @@ class ToolExecutor:
             for d in drafts) or "（暂无）"
         pre = flow.get("precheck") or {}
         issue_n = len(pre.get("issues") or [])
-        pre_text = "ok" if pre.get("ok") else (f"{issue_n} 项问题" if issue_n else "未检查")
+        pre_text = "按各计算查看" if len(jobs) > 1 else ("ok" if pre.get("ok") else (f"{issue_n} 项问题" if issue_n else "未检查"))
         artifact_text = "、".join(
             f"{item['name']}={artifact_id}({item['size']} B)"
             for artifact_id, item in artifacts.items()
@@ -504,7 +507,6 @@ class ToolExecutor:
         return f"--- 文件 {rel} ---\n{text}"
 
     def tool_precheck(self, args: dict) -> str:
-        del args
         required = ["INCAR", "POSCAR", "KPOINTS", "POTCAR"]
         local_dir = self.local_dir()
         rows: list[str] = []
@@ -518,6 +520,9 @@ class ToolExecutor:
         jobs = (flow.get("plan") or {}).get("jobs") or []
         if not jobs:
             return ToolFailure('TOOL_PRECONDITION_FAILED', "尚未规划作业：请先调用 plan 再 precheck")
+        from .computation import select_job
+        selected = select_job(flow, args)
+        jobs = [selected]
         remote = (self._hpc_root(flow) or "").rstrip("/")
         hpc = None
         try:
@@ -605,6 +610,7 @@ class ToolExecutor:
                                    "level": "error", "message": str(exc)})
             attestation = (flow.get("script_attestations") or {}).get(key)
             attested = (isinstance(attestation, dict)
+                        and attestation.get("attempt_id") == job.get("attempt_id")
                         and isinstance(actual_script, dict)
                         and all(attestation.get(field) == actual_script.get(field)
                                 for field in ("source", "directory", "script_name",
@@ -620,9 +626,10 @@ class ToolExecutor:
         snapshot, digest = precheck_snapshot(
             execution_mode=mode, inputs=input_records, scripts=script_records,
             scheduler_target=target_binding(self.cfg))
-        flow["precheck"] = {"ok": ok, "issues": issues, "hard": True,
+        from .computation import bind_precheck
+        bind_precheck(flow, selected, {"ok": ok, "issues": issues, "hard": True,
                             "execution_mode": mode, "snapshot": snapshot,
-                            "digest": digest}
+                            "digest": digest})
         self._save_flow(flow)
         prefix = "提交前硬检查通过：" if ok else "提交前硬检查失败（禁止提交）："
         return prefix + "\n" + "\n".join(rows)
@@ -803,8 +810,13 @@ class ToolExecutor:
 
     def _execute_script_attestation(self, action: dict) -> str:
         binding = action.get("binding") or {}
+        from .computation import select_job
+        flow = self._load_flow()
+        job = select_job(flow, binding)
         verified: dict[str, dict] = {}
         for item in binding.get("scripts") or []:
+            if item.get("job_key") != job["key"] or item.get("attempt_id") != job.get("attempt_id"):
+                raise ValueError("script attestation identity changed")
             current = self._script_fingerprint(
                 source=item["source"], directory=item["directory"],
                 script_name=item["script_name"])
@@ -816,7 +828,7 @@ class ToolExecutor:
                 "binding_hash": action["binding_hash"],
             }
         flow = self._load_flow()
-        flow["script_attestations"] = verified
+        flow.setdefault("script_attestations", {}).update(verified)
         self._save_flow(flow)
         return "已认领并绑定当前提交脚本：" + "、".join(sorted(verified))
 
@@ -1035,7 +1047,7 @@ class ToolExecutor:
         local_dir = self.local_dir()
         flow = self._load_flow()
         if any(j.get("status") in {"submitted", "queued", "running", "unknown", "failed", "not_converged"}
-               or j.get("attempt_history") or j.get("submission_state") == "unknown"
+               or j.get("attempt_history") or j.get("submission_state") or j.get("slurm_id")
                for j in flow.get("plan", {}).get("jobs", [])):
             return ToolFailure('AI_RECOVERY_REQUIRED', "[AI_RECOVERY_REQUIRED] 当前计划含在途、未知或失败/恢复作业，不能用重新规划覆盖历史；请先 diagnose_job，明确失败再由用户确认 retry_job。")
         normalized: list[dict] = []
@@ -1084,6 +1096,9 @@ class ToolExecutor:
             "local_dir": str(local_dir),
         })
         flow.setdefault("hpc_dir", str(self._task().get("hpc_workspace") or "").strip())
+        from .computation import invalidate
+        invalidate(flow, None, "计划已变化；请按新计算身份重新确认")
+        flow["script_attestations"] = {}
         flow["precheck"] = {"ok": False, "issues": []}
         flow.setdefault("draft", [])
         flow.setdefault("uploaded", False)
@@ -1330,8 +1345,9 @@ class ToolExecutor:
             hpc = getattr(self._ensure_orch(), "hpc", None)
         except Exception:  # noqa: BLE001
             hpc = None
-        active = [j for j in jobs
-                  if j.get("status") not in _TERMINAL_SKIP]
+        from .computation import select_job
+        selected = select_job(flow, args)
+        active = [selected]
         if not active:
             return ("全部作业均已被跳过或缺终态，无需生成草稿；"
                     "可用 select_jobs 重新选择后再 draft。")
@@ -1380,7 +1396,7 @@ class ToolExecutor:
         script_records: list[dict] = []
         for job, job_local, calc_dir, script_name, source, fingerprint in resolved:
             script_records.append({
-                "job_key": job["key"], "source": source,
+                "job_key": job["key"], "attempt_id": job.get("attempt_id"), "source": source,
                 "directory": calc_dir if source == "remote" else str(job_local),
                 "script_name": script_name, **fingerprint,
             })
@@ -1388,20 +1404,21 @@ class ToolExecutor:
         attested = all(
             isinstance(attestations.get(item["job_key"]), dict)
             and all(attestations[item["job_key"]].get(key) == item.get(key)
-                    for key in ("source", "directory", "script_name",
+                    for key in ("attempt_id", "source", "directory", "script_name",
                                 "normalized_path", "sha256", "size"))
             for item in script_records
         )
         if not attested:
             binding = {
                 "operation": "script_attestation",
+                "job_key": selected["key"], "attempt_id": selected["attempt_id"],
                 "project_id": self.project_id, "task_id": self.task_id,
                 "execution_kind": "user_owned_submit_script",
                 "scripts": script_records,
                 "execution_mode": self._execution_mode(),
             }
             payload = card_payload(
-                tool="draft", args={}, risk="high",
+                tool="draft", args={"job_key": selected["key"], "attempt_id": selected["attempt_id"]}, risk="high",
                 reason="提交脚本必须由用户显式认领；确认绑定路径、SHA-256、大小和有效期。",
                 batch_key="script|" + hashlib.sha256(
                     json.dumps(binding, sort_keys=True).encode()).hexdigest(),
@@ -1415,9 +1432,11 @@ class ToolExecutor:
             saved = save_card(self.store, self.project_id, self.task_id,
                               self._load_flow(), payload)
             raise PendingConsentError(saved)
-        precheck_text = self.tool_precheck({})
+        identity = {"job_key": selected["key"], "attempt_id": selected["attempt_id"]}
+        precheck_text = self.tool_precheck(identity)
         flow = self._load_flow()
-        if not (flow.get("precheck") or {}).get("ok"):
+        selected = select_job(flow, identity)
+        if not (selected.get("precheck") or {}).get("ok"):
             flow["phase"] = "blocked"
             self._save_flow(flow)
             return precheck_text + "\n[AI_PRECHECK_BLOCKED] 任一必需项缺失，不能生成可提交草稿"
@@ -1427,6 +1446,7 @@ class ToolExecutor:
             attestation = attestations[job["key"]]
             drafts.append({
                 "job_key": job["key"],
+                "attempt_id": job["attempt_id"],
                 "dir": calc_dir,
                 "script_name": script_name,
                 "script_source": source,
@@ -1441,7 +1461,9 @@ class ToolExecutor:
             lines.append(f"- {job['key']}（{job.get('label') or job['key']}）"
                          f"→ 目录 `{calc_dir}`，使用{where}的提交脚本 "
                          f"{script_name}（SHA-256 {fingerprint['sha256']}）")
-        flow["draft"] = drafts
+        selected["draft"] = drafts[0]
+        selected["draft"]["scheduler_target"] = selected["precheck"]["snapshot"]["scheduler_target"]
+        selected["draft"]["resources"] = {"verification": "human_exact_script", "script_sha256": drafts[0]["script_sha256"]}
         flow["phase"] = "await_submit"
         self._save_flow(flow)
         skipped = [j["key"] for j in jobs
@@ -1455,10 +1477,9 @@ class ToolExecutor:
 
     def tool_submit(self, args: dict) -> str:
         flow = self._load_flow()
-        if any(j.get('status') == 'unknown' or j.get('submission_state') in {'unknown', 'executing'}
-               for j in (flow.get('plan') or {}).get('jobs', [])):
-            return ToolFailure('SUBMISSION_UNKNOWN', '提交结果未知，请核对远端任务；不得重新提交')
-        if not flow.get("draft"):
+        from .computation import select_job
+        selected = select_job(flow, args)
+        if not selected.get("draft"):
             if (flow.get("plan") or {}).get("jobs"):
                 return self.tool_draft(args)
             return ToolFailure('TOOL_PRECONDITION_FAILED', "尚未生成提交草稿：请先 plan + draft")
@@ -1494,16 +1515,25 @@ class ToolExecutor:
                     return True
             return False
 
+        changed = set()
         for job in jobs:
             if (job.get("slurm_id") or job.get("submission_state")
                     or job.get("status") in {"completed", "failed", "not_converged", "unknown", "blocked", "running", "queued", "submitted"}):
                 continue  # Selection cannot erase an attempt and bypass recovery.
             if skip_all or (skip and _matches(job, skip)):
+                if job.get("status") != "skipped":
+                    changed.add(job["key"])
                 job["status"] = "skipped"
             elif submit_all or _matches(job, submit):
                 if job.get("status") in ("skipped", "canceled"):
+                    changed.add(job["key"])
                     job["status"] = "draft"
-        flow["draft"] = []      # 选择变化后旧草稿作废，等待重新 draft
+        for job in jobs:
+            if job["key"] in changed:
+                job.pop("draft", None)
+                job.pop("precheck", None)
+        from .computation import invalidate
+        invalidate(flow, changed, "计算选择已变化；请重新确认")
         self._save_flow(flow)
         to_submit = [str(j.get("key")) + "（" + str(j.get("label")) + "）"
                      for j in jobs
@@ -1519,12 +1549,14 @@ class ToolExecutor:
     # ---------------- 作业诊断与恢复（复用真实 Orchestrator 原语） ----------------
     def tool_diagnose_job(self, args: dict) -> str:
         key = args.get("job_key")
-        if not isinstance(key, str) or set(args) != {"job_key"}:
+        if not isinstance(key, str) or not set(args) <= {"job_key", "attempt_id"}:
             return ToolFailure('AI_DIAGNOSIS_INVALID', "[AI_DIAGNOSIS_INVALID] 需要唯一 job_key")
         flow = self._load_flow()
         job = next((j for j in flow.get("plan", {}).get("jobs", []) if j["key"] == key), None)
         if job is None:
             return ToolFailure('AI_JOB_NOT_FOUND', "[AI_JOB_NOT_FOUND] 作业不存在")
+        if args.get("attempt_id") and args["attempt_id"] != job.get("attempt_id"):
+            return ToolFailure("ATTEMPT_STALE", "计算尝试已变化，请刷新后重新诊断")
         progress = ""
         if job.get("status") in {"running", "queued", "submitted", "unknown"}:
             progress = self.tool_monitor({})
@@ -1539,18 +1571,21 @@ class ToolExecutor:
 
     def tool_retry_job(self, args: dict) -> str:
         key = args.get("job_key")
-        if not isinstance(key, str) or set(args) != {"job_key"}:
+        if not isinstance(key, str) or not set(args) <= {"job_key", "attempt_id"}:
             return ToolFailure('AI_RETRY_INVALID', "[AI_RETRY_INVALID] 需要唯一 job_key；不接受命令或参数修改")
         flow = self._load_flow()
         job = next((j for j in flow.get("plan", {}).get("jobs", []) if j["key"] == key), None)
         if (not job or job.get("status") not in {"failed", "not_converged"}
                 or job.get("submission_state") == "unknown" or not job.get("diagnosis")):
             return ToolFailure('AI_RETRY_BLOCKED', "[AI_RETRY_BLOCKED] 仅有诊断证据的 failed/not_converged 作业可以恢复；unknown/在途/完成作业禁止重提。")
+        from .computation import select_job
+        if job.get("attempt_id") or args.get("attempt_id"):
+            select_job(flow, args, preparing=False)
         binding = {"operation": "retry_job", "project_id": self.project_id,
                    "task_id": self.task_id, "execution_mode": self._execution_mode(),
-                   "job_key": key, "job_snapshot": copy.deepcopy(job)}
+                   "job_key": key, "attempt_id": job.get("attempt_id"), "job_snapshot": copy.deepcopy(job)}
         payload = card_payload(
-            tool="retry_job", args={"job_key": key}, risk="medium", kind="retry_job",
+            tool="retry_job", args={"job_key": key, "attempt_id": job.get("attempt_id")}, risk="medium", kind="retry_job",
             reason="用户确认后才恢复待准备状态；不提交作业、不修改输出或科学参数。",
             batch_key="retry|" + hashlib.sha256(json.dumps(binding, sort_keys=True).encode()).hexdigest(),
             summary=f"恢复 {key}（原 Slurm ID {job.get('slurm_id')}，{job['status']}）？\n"

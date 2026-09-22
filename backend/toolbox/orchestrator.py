@@ -172,6 +172,8 @@ class Orchestrator:
 
     def _save(self, store: ProjectStore, project_id: str, task_id: str,
               flow: dict) -> None:
+        from .computation import normalize
+        normalize(flow)
         flow["updated_at"] = _now_iso()
         store.update_task(project_id, task_id, flow=dict(flow),
                           status=_PHASE_STATUS.get(flow.get("phase"),
@@ -227,13 +229,15 @@ class Orchestrator:
         logs.append("P0 不执行远端探测命令，也不自动生成 KPOINTS/POTCAR。")
 
     def _precheck(self, flow: dict, local_dir: Path, remote_ok: bool,
-                  remote: str, logs: list[str]) -> None:
+                  remote: str, logs: list[str], job_key: str | None = None) -> None:
         issues: list[dict] = []
         input_records: list[dict] = []
         script_records: list[dict] = []
         remote = (remote or "").rstrip("/")
         flow["execution_mode"] = self.execution_mode
         for job in flow["plan"]["jobs"]:
+            if job_key is not None and job["key"] != job_key:
+                continue
             if job.get("status") in ("completed", "failed", "not_converged",
                                       "canceled", "skipped", "blocked",
                                       "unknown"):
@@ -289,6 +293,7 @@ class Orchestrator:
                            "level": level, "message": msg})
             attestation = (flow.get("script_attestations") or {}).get(job["key"])
             attested = (isinstance(attestation, dict) and isinstance(actual, dict)
+                        and attestation.get("attempt_id") == job.get("attempt_id")
                         and all(attestation.get(key) == actual.get(key)
                                 for key in ("source", "directory", "script_name",
                                             "normalized_path", "sha256", "size")))
@@ -301,7 +306,7 @@ class Orchestrator:
         snapshot, digest = precheck_snapshot(
             execution_mode=self.execution_mode, inputs=input_records,
             scripts=script_records, scheduler_target=target_binding(self.cfg))
-        flow["precheck"] = {
+        result = {
             "ok": all(i["level"] == "ok" for i in issues),
             "hard": True,
             "issues": issues,
@@ -309,6 +314,13 @@ class Orchestrator:
             "snapshot": snapshot,
             "digest": digest,
         }
+        if job_key is not None:
+            from .computation import bind_precheck, normalize
+            selected = next(j for j in flow["plan"]["jobs"] if j["key"] == job_key)
+            bind_precheck(flow, selected, result)
+            normalize(flow)
+        else:
+            flow["precheck"] = result
 
     def _file_exists(self, local_dir: Path, remote_ok: bool, remote: str,
                      name: str, *, job_key: str = "") -> bool:
@@ -378,13 +390,14 @@ class Orchestrator:
             attestation = (flow.get("script_attestations") or {}).get(job["key"])
             if not isinstance(attestation, dict) or any(
                     attestation.get(key) != value for key, value in {
+                        "attempt_id": job.get("attempt_id"),
                         "source": source, "script_name": script_name,
                         "normalized_path": fingerprint["normalized_path"],
                         "sha256": fingerprint["sha256"], "size": fingerprint["size"],
                     }.items()):
                 raise RuntimeError(f"{job['key']} 提交脚本未认领或认领已失效")
             drafts.append({
-                "job_key": job["key"],
+                "job_key": job["key"], "attempt_id": job.get("attempt_id"),
                 "dir": calc_dir,
                 "script_name": script_name,
                 "script_source": source,
@@ -395,6 +408,7 @@ class Orchestrator:
                 "attestation_binding_hash": attestation.get("binding_hash"),
                 "submit_cmd": " ".join(submit_command(script_name, self.cfg.scheduler_backend)),
             })
+            job["draft"] = drafts[-1]
             lines.append(
                 f"- {job['key']}（{job['label']}）→ 目录 `{calc_dir}`，"
                 f"使用用户认领脚本 {script_name}（SHA-256 {fingerprint['sha256']}）")
@@ -473,30 +487,25 @@ class Orchestrator:
             return ("[AI_HPC_BACKEND_UNAVAILABLE] 当前流程没有与确认绑定的可用 "
                     "HPC 执行后端；sbatch 次数为 0。")
         remote = str(flow.get("hpc_dir") or flow.get("local_dir") or "").strip()
-        drafts = flow.get("draft") or []
-        precheck_digest = str((flow.get("precheck") or {}).get("digest") or "")
+        from .computation import scope_valid, digest
         executing_action = next((
             action for action in ((flow.get("consent") or {}).get("actions") or {}).values()
-            if action.get("kind") == "submit"
-            and action.get("state") == "executing"
-            and isinstance(action.get("binding"), dict)
-            and action["binding"].get("operation") == "submit"
-            and action["binding"].get("project_id") == project_id
+            if action.get("kind") == "submit" and action.get("state") == "executing"
+            and (action.get("binding") or {}).get("project_id") == project_id
             and action["binding"].get("task_id") == task_id
             and action["binding"].get("execution_mode") == self.execution_mode
-            and action["binding"].get("precheck_digest") == precheck_digest
             and action["binding"].get("remote_root") == remote
-            and action["binding"].get("drafts") == drafts
-            and action.get("binding_hash") == hashlib.sha256(json.dumps(
-                action["binding"], ensure_ascii=False, sort_keys=True,
-                separators=(",", ":"),
-            ).encode("utf-8")).hexdigest()
+            and action.get("binding_hash") == digest(action["binding"])
+            and scope_valid(flow, action)
         ), None)
         if executing_action is None:
-            return ("[AI_SUBMIT_CONFIRMATION_REQUIRED] 缺少与当前草稿和目标绑定的"
-                    "单次提交确认；sbatch 次数为 0。")
-        bound_target = ((flow.get("precheck") or {}).get("snapshot") or {}).get("scheduler_target")
-        if bound_target != target_binding(self.cfg):
+            return "[AI_SUBMIT_CONFIRMATION_REQUIRED] 缺少当前 job/attempt 的有效单次确认；sbatch=0。"
+        binding = executing_action["binding"]
+        selected = next(j for j in flow["plan"]["jobs"] if j["key"] == binding["job_key"])
+        precheck_digest = binding["precheck_digest"]
+        bound_target = ((selected.get("precheck") or {}).get("snapshot") or {}).get("scheduler_target")
+        if (bound_target != target_binding(self.cfg)
+                or binding["endpoint_digest"] != digest({"scheduler_target": target_binding(self.cfg), "host_key_evidence": "unknown"})):
             return "[AI_SCHEDULER_CHANGED] SSH或调度配置已变化；需重新预检和确认，提交次数为0。"
         if self.hpc is None:
             return ("未配置/未连接 SSH，无法真实提交到超算（我不会伪造作业号）。"
@@ -509,18 +518,18 @@ class Orchestrator:
             return "任务未填写超算工作区（会话目录），无法定位提交目录。" \
                    "请补充后重新发起。"
         local_dir = Path(flow["local_dir"])
-        self._precheck(flow, local_dir, True, remote, [])
-        if not flow.get("precheck", {}).get("ok"):
+        self._precheck(flow, local_dir, True, remote, [], job_key=selected["key"])
+        if not selected.get("precheck", {}).get("ok"):
             flow["phase"] = "blocked"
             self._save(store, project_id, task_id, flow)
             return ("[AI_PRECHECK_BLOCKED] 提交前硬检查未通过；缺少任一 "
                     "INCAR/POSCAR/KPOINTS/POTCAR/认领脚本时 sbatch 次数为 0。")
-        if str(flow["precheck"].get("digest") or "") != precheck_digest:
+        if str(selected["precheck"].get("digest") or "") != precheck_digest:
             flow["phase"] = "blocked"
             self._save(store, project_id, task_id, flow)
             return ("[AI_PRECHECK_STALE] VASP 输入或脚本在确认后发生变化；"
                     "必须重新预检并确认，sbatch 次数为 0。")
-        if not flow.get("draft"):
+        if not selected.get("draft"):
             return "[AI_PRECHECK_BLOCKED] 缺少绑定脚本哈希的提交草稿；sbatch 次数为 0。"
         logs_note = "已通过远端硬预检；不会在提交阶段隐式上传或改写文件。"
         account = self.cfg.ssh_username
@@ -534,7 +543,7 @@ class Orchestrator:
         submitted = []
         gate = self._gate(flow)
         flow["waiting"] = []
-        for job in flow["plan"]["jobs"]:
+        for job in [selected]:
             key = job["key"]
             st = job.get("status")
             if st in ("completed", "failed", "not_converged", "canceled",
@@ -575,6 +584,10 @@ class Orchestrator:
             except Exception as exc:  # noqa: BLE001
                 submitted.append(f"- {job['key']} 预提交校验失败：{exc}（sbatch=0）")
                 continue
+            if not scope_valid(flow, executing_action):
+                submitted.append("单计算授权已过期或失效；未提交")
+                continue
+            flow["consent"]["computation_scopes"][binding["scope_id"]]["submit_limit"] = 0
             job["submission_state"] = "executing"
             job["scheduler_target"] = target_binding(self.cfg)
             job["submission_action_id"] = executing_action["action_id"]
@@ -645,9 +658,10 @@ class Orchestrator:
             raise RuntimeError("远端作业目录缺少唯一用户脚本")
         fingerprint = fingerprint_remote_submit_script(self.hpc, calc, script_name)
         attestation = (flow.get("script_attestations") or {}).get(job["key"])
-        draft = next((d for d in flow.get("draft") or []
-                      if d.get("job_key") == job["key"]), None)
-        if not isinstance(attestation, dict) or not isinstance(draft, dict):
+        draft = job.get("draft")
+        if (not isinstance(attestation, dict) or not isinstance(draft, dict)
+                or attestation.get("attempt_id") != job.get("attempt_id")
+                or draft.get("attempt_id") != job.get("attempt_id")):
             raise RuntimeError("脚本认领或提交草稿缺失")
         expected = {
             "script_name": script_name,
@@ -968,6 +982,11 @@ class Orchestrator:
                             "recovery_action_id": action["action_id"]})
             for key in ("slurm_id", "submission_state", "submission_action_id", "submission_error", "wait_reason", "queue_state", "diagnosis", "result_read_error"):
                 job.pop(key, None)
+            from .computation import normalize
+            import uuid
+            job["attempt_id"] = uuid.uuid4().hex
+            job.pop("precheck", None)
+            job.pop("draft", None)
             job["status"] = "draft"
             for child in jobs:
                 if child.get("status") == "blocked" and child.get("blocked_by_dependency"):
@@ -975,13 +994,20 @@ class Orchestrator:
                     child.pop("blocked_by_dependency", None)
             self._cascade_blocks(flow)
             flow["waiting"] = [j["key"] for j in jobs if j.get("status") == "waiting"]
-            flow.update(phase="await_submit", draft=[], precheck={"ok": False, "issues": []}, script_attestations={}, report="")
+            flow.update(phase="await_submit", report="")
+            flow.setdefault("script_attestations", {}).pop(job["key"], None)
+            normalize(flow)
             # Keep audit records, but no old preview or grant can authorize a retry.
             cons = flow.get("consent") or {}
             for previous in (cons.get("actions") or {}).values():
-                if previous.get("state") in {"pending", "approved"}:
+                old_binding = previous.get("binding") or {}
+                if (previous.get("state") in {"pending", "approved"}
+                        and old_binding.get("job_key") in {None, job["key"]}):
                     previous.update(state="expired", result="恢复作业后需重新确认", resolved_at=_now_iso())
-            cons["cards"] = {}
+            for scope in cons.get("computation_scopes", {}).values():
+                if scope.get("job_key") == job["key"]:
+                    scope["state"] = "revoked"
+            cons["cards"] = {k: a for k, a in cons.get("actions", {}).items() if a.get("state") == "pending"}
             flow["consent"] = cons
             self._save(store, project_id, task_id, flow)
             return (f"{job['key']} 已恢复为待准备；历史作业号、诊断和输出摘要已保留，原输出文件未改动。"
