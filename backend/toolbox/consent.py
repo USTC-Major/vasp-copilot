@@ -233,6 +233,15 @@ def resolve_card(store, project_id: str, task_id: str, card_id: str, *,
                 "missing": False, "conflict": True, "card_id": card_id,
                 "state": action.get("state"),
             }
+        if action.get("kind") == "submit":
+            from .computation import scope_valid
+            if approved and not scope_valid(flow, action, active=False):
+                action.update(state="failed", result="SCOPE_STALE: 单计算范围或尝试已变化，未提交")
+                _save_flow(store, project_id, task_id, flow, cons)
+                return {"approved": False, "conflict": True, "card_id": card_id, "state": "failed"}
+            scope = cons.get("computation_scopes", {}).get((action.get("binding") or {}).get("scope_id"))
+            if scope:
+                scope["state"] = "active" if approved else "revoked"
         action["state"] = "approved" if approved else "rejected"
         action["resolved_at"] = _iso()
         action["note"] = str(note or "")[:500]
@@ -303,46 +312,52 @@ def _stable_key(text: str) -> str:
     return uuid.uuid5(uuid.NAMESPACE_URL, str(text)).hex
 
 
-def spawn_submit_card(store, project_id: str, task_id: str) -> dict:
-    flow = (store.get_task(project_id, task_id) or {}).get("flow") or {}
-    jobs = (flow.get("plan") or {}).get("jobs") or []
-    active = [j for j in jobs if j.get("status") not in
-              ("completed", "failed", "not_converged", "canceled",
-               "skipped", "blocked", "unknown")]
-    dir_by_job = {str(d["job_key"]): str(d["dir"])
-                  for d in flow.get("draft") or []
-                  if isinstance(d, dict) and d.get("job_key") and d.get("dir")}
-    lines = "\n".join(
-        f"- {j.get('key')}（{j.get('label') or j.get('key')}）"
-        + (f"→ `{dir_by_job[j.get('key')]}`" if j.get("key") in dir_by_job else "")
-        for j in active) or "（无待提交作业）"
-    remote = str(flow.get("hpc_dir") or flow.get("local_dir") or "").strip()
-    mode = str(flow.get("execution_mode") or "None")
-    precheck = flow.get("precheck") or {}
-    digest = str(precheck.get("digest") or "").lower()
-    if (mode not in {"Fake", "Real", "None"}
-            or not precheck.get("ok") or not precheck.get("hard")
-            or len(digest) != 64
-            or any(ch not in "0123456789abcdef" for ch in digest)):
-        raise ValueError("[AI_PRECHECK_REQUIRED] 必须先完成当前 HPC 环境的不可变硬预检")
-    binding = {
-        "operation": "submit",
-        "project_id": project_id,
-        "task_id": task_id,
-        "execution_kind": ("paracloud_cbatch" if
-            ((precheck.get("snapshot") or {}).get("scheduler_target") or {}).get("scheduler") == "paracloud"
-            else "slurm_sbatch"),
-        "remote_root": remote,
-        "drafts": flow.get("draft") or [],
-        "execution_mode": mode,
-        "precheck_digest": digest,
-    }
-    payload = card_payload(
-        tool="confirm_submit", args={}, risk="high",
-        reason="这是真实的提交动作；确认只对当前绑定草稿生效。",
-        batch_key=f"submit|{_stable_key(json.dumps(binding, sort_keys=True, ensure_ascii=False))}",
-        kind="submit", summary=f"确认提交到超算工作区 `{remote}`？\n{lines}\n"
-            + "执行命令：" + ", ".join(str(d.get("submit_cmd", "")) for d in flow.get("draft") or []),
-        options=["确认提交", "取消"], binding=binding,
-    )
-    return save_card(store, project_id, task_id, dict(flow), payload)
+def spawn_submit_card(store, project_id: str, task_id: str,
+                      job_key: str | None = None, attempt_id: str | None = None) -> dict:
+    from .computation import select_job, digest
+    from .contracts import ToolboxError
+    with task_lock(project_id, task_id):
+        flow, cons = _load(store, project_id, task_id)
+        job = select_job(flow, {"job_key": job_key, "attempt_id": attempt_id})
+        precheck = job.get("precheck") or {}
+        if (not precheck.get("ok") or not precheck.get("hard")
+                or precheck.get("attempt_id") != job.get("attempt_id")
+                or not job.get("draft") or len(str(precheck.get("digest") or "")) != 64):
+            raise ToolboxError("PRECHECK_BLOCKED", "必须先完成当前计算的硬预检与草稿")
+        by_key = {j["key"]: j for j in (flow.get("plan") or {}).get("jobs", [])}
+        if any(by_key.get(key, {}).get("status") != "completed" for key in job.get("requires") or []):
+            raise ToolboxError("DEPENDENCY_NOT_READY", "依赖未完成；完成后需单独重新确认", 409)
+        target = (precheck.get("snapshot") or {}).get("scheduler_target") or {}
+        binding = {
+            "operation": "submit", "project_id": project_id, "task_id": task_id,
+            "job_key": job["key"], "attempt_id": job["attempt_id"],
+            "execution_kind": "paracloud_cbatch" if target.get("scheduler") == "paracloud" else "slurm_sbatch",
+            "remote_root": str(flow.get("hpc_dir") or flow.get("local_dir") or "").strip(),
+            "draft": job["draft"], "execution_mode": str(flow.get("execution_mode") or "None"),
+            "precheck_digest": precheck["digest"],
+            "endpoint_digest": digest({"scheduler_target": target, "host_key_evidence": "unknown"}),
+            "policy_version": "single-job-human-v1",
+        }
+        batch_key = "submit|" + digest(binding)
+        for action in cons["actions"].values():
+            if action.get("state") == "pending" and action.get("batch_key") == batch_key and not _expired(action):
+                from .computation import scope_valid
+                if scope_valid(flow, action, active=False):
+                    return dict(action)
+        scope_id = uuid.uuid4().hex
+        binding.update(scope_id=scope_id, scope_version=1)
+        payload = card_payload(
+            tool="confirm_submit", args={"job_key": job["key"], "attempt_id": job["attempt_id"]},
+            risk="high", reason="仅批准本计算当前尝试的一次提交；用户需审阅脚本及资源，系统未证明全部副作用。",
+            batch_key=batch_key, kind="submit",
+            summary=f"提交计算 {job['key']} / attempt {job['attempt_id']}？\n目录：`{job['draft']['dir']}`\n命令：{job['draft']['submit_cmd']}\nSHA-256：{job['draft']['script_sha256']}\n仅此计算一次，不包含后继或重试。",
+            options=["确认提交", "取消"], binding=binding)
+        cons.setdefault("computation_scopes", {})[scope_id] = {
+            **{key: binding[key] for key in ("project_id", "task_id", "job_key", "attempt_id", "endpoint_digest", "precheck_digest", "draft")},
+            "version": 1, "approval_mode": "human", "allowed_operations": ["submit"],
+            "submit_limit": 1, "expires_at": payload["expires_at"], "state": "proposed",
+            "host_key_evidence": "unknown",
+        }
+        cons["actions"][payload["action_id"]] = payload
+        _save_flow(store, project_id, task_id, flow, cons)
+        return dict(payload)

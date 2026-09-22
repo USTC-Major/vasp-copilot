@@ -46,7 +46,8 @@ def prepared(env, jobs=None):
     for job in flow["plan"]["jobs"]:
         job.setdefault("label", job["key"])
     orch = Orchestrator(cfg, hpc=hpc)
-    orch._precheck(flow, Path(flow["local_dir"]), True, flow["hpc_dir"], [])
+    for job in flow["plan"]["jobs"]:
+        orch._precheck(flow, Path(flow["local_dir"]), True, flow["hpc_dir"], [], job_key=job["key"])
     orch._draft(flow)
     store.update_task(pid, tid, flow=flow)
     return store, pid, tid, cfg, hpc, orch
@@ -105,7 +106,7 @@ def test_cloud_consent_receipt_and_completed_evidence(env):
     store, pid, tid, cfg, hpc, orch = prepared(env)
     card = spawn_submit_card(store, pid, tid)
     assert card["binding"]["execution_kind"] == "paracloud_cbatch"
-    assert card["binding"]["drafts"][0]["submit_cmd"] == "cbatch run.sh"
+    assert card["binding"]["draft"]["submit_cmd"] == "cbatch run.sh"
     answer = _confirmed_submit(orch, store, pid, tid)
     assert SID in answer
     job = store.get_task(pid, tid)["flow"]["plan"]["jobs"][0]

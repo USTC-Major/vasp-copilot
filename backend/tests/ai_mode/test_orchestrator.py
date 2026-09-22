@@ -243,6 +243,8 @@ def test_failure_diagnose_recovery_requires_fresh_precheck_and_approval(env):
             {"key": "post", "label": "post", "requires": ["band"], "status": "waiting"}]
     _ready_flow(store, pid, tid, hpc, jobs)
     orch = Orchestrator(cfg, hpc=hpc, llm_factory=lambda _c: None)
+    initial = store.get_task(pid, tid)["flow"]["plan"]["jobs"][0]
+    old_card = spawn_submit_card(store, pid, tid, initial["key"], initial["attempt_id"])
     _confirmed_submit(orch, store, pid, tid)
     orch.monitor(store, pid, tid, {})
     ex = ToolExecutor(store=store, project_id=pid, task_id=tid, cfg=cfg, orch=orch)
@@ -252,8 +254,7 @@ def test_failure_diagnose_recovery_requires_fresh_precheck_and_approval(env):
     assert failed["plan"]["jobs"][1]["status"] == "blocked"
     failed["plan"]["jobs"][0]["result_read_error"] = "previous attempt read error"
     store.update_task(pid, tid, flow=failed)
-    old_card = spawn_submit_card(store, pid, tid)
-    pending = ex.handle("retry_job", {"job_key": "band"})
+    pending = ex.handle("retry_job", {"job_key": "band", "attempt_id": initial["attempt_id"]})
     assert pending.startswith(_CONSENT_PENDING)
     action_id = pending[len(_CONSENT_PENDING):]
     assert store.get_task(pid, tid)["flow"]["plan"]["jobs"][0]["status"] == "failed"
@@ -269,22 +270,27 @@ def test_failure_diagnose_recovery_requires_fresh_precheck_and_approval(env):
     assert "result_read_error" not in job
     assert job["attempt_history"][0]["extraction"]["output_sha256"]["OUTCAR"]
     assert flow["plan"]["jobs"][1]["status"] == "waiting"
-    assert not flow["draft"] and not flow["precheck"]["ok"] and not flow["script_attestations"]
-    assert get_card(store, pid, tid, old_card["action_id"])["state"] == "expired"
+    assert not job.get("draft") and not job.get("precheck")
+    assert all(d["job_key"] != "band" for d in flow["draft"])
+    assert "band" not in flow["script_attestations"]
+    assert flow["plan"]["jobs"][1]["draft"]  # unrelated computation evidence survives
+    assert get_card(store, pid, tid, old_card["action_id"])["state"] == "executed"
     ex.execute_action(action_id)  # replay cannot reset a second time
     assert len(store.get_task(pid, tid)["flow"]["plan"]["jobs"][0]["attempt_history"]) == 1
-    with pytest.raises(ValueError, match="AI_PRECHECK_REQUIRED"):
-        spawn_submit_card(store, pid, tid)
+    from backend.toolbox.contracts import ToolboxError
+    with pytest.raises(ToolboxError, match="硬预检"):
+        spawn_submit_card(store, pid, tid, "band", job["attempt_id"])
     orch._submit(store, pid, tid, {})
     assert len([c for c in hpc.calls if c.startswith("sbatch")]) == 1
     # Fresh script attestation goes through the same one-use action executor.
-    pending = ex.handle("draft", {})
+    identity = {"job_key": "band", "attempt_id": job["attempt_id"]}
+    pending = ex.handle("draft", identity)
     assert pending.startswith(_CONSENT_PENDING)
     attestation_id = pending[len(_CONSENT_PENDING):]
     resolve_card(store, pid, tid, attestation_id, approved=True)
     ex.execute_action(attestation_id)
-    ex.handle("draft", {})
-    assert store.get_task(pid, tid)["flow"]["precheck"]["hard"]
+    ex.handle("draft", identity)
+    assert store.get_task(pid, tid)["flow"]["plan"]["jobs"][0]["precheck"]["hard"]
     assert len([c for c in hpc.calls if c.startswith("sbatch")]) == 1
     submitted = _confirmed_submit(orch, store, pid, tid)
     current = store.get_task(pid, tid)["flow"]["plan"]["jobs"][0]
@@ -436,6 +442,10 @@ def _ready_flow(store, pid, tid, hpc, jobs, *, root="/home/user/calc/r1"):
         if job.get("status") == "skipped":
             continue
         attestation, draft = _remote_job(hpc, root, job["key"])
+        import uuid
+        job.setdefault("attempt_id", uuid.uuid4().hex)
+        attestation["attempt_id"] = draft["attempt_id"] = job["attempt_id"]
+        job["draft"] = draft
         attestations[job["key"]] = attestation
         drafts.append(draft)
     flow = {
@@ -448,14 +458,19 @@ def _ready_flow(store, pid, tid, hpc, jobs, *, root="/home/user/calc/r1"):
     }
     # Precheck and submission must refer to the same fixture SSH identity.
     checker = Orchestrator(AiModeConfig(data_dir=ws.parent, ssh_username="vaspuser"), hpc=hpc)
-    checker._precheck(flow, ws, True, root, [])
+    for job in jobs:
+        if job.get("status") in {"draft", "waiting"}:
+            checker._precheck(flow, ws, True, root, [], job_key=job["key"])
     store.update_task(pid, tid, flow=flow)
     return flow
 
 
-def _confirmed_submit(orch, store, pid, tid):
+def _confirmed_submit(orch, store, pid, tid, job_key=None):
     """Exercise the same approve -> claim -> submit -> finish boundary as chat."""
-    card = spawn_submit_card(store, pid, tid)
+    jobs = store.get_task(pid, tid)["flow"]["plan"]["jobs"]
+    selected = next(j for j in jobs if j["key"] == job_key) if job_key else next(
+        j for j in jobs if j.get("status") in {"draft", "waiting"} and not j.get("submission_state"))
+    card = spawn_submit_card(store, pid, tid, selected["key"], selected["attempt_id"])
     assert card["binding"]["execution_mode"] == orch.execution_mode
     assert len(card["binding"]["precheck_digest"]) == 64
     resolved = resolve_card(store, pid, tid, card["card_id"], approved=True)
@@ -663,7 +678,10 @@ def test_per_job_dir_submit_runs_sbatch_in_job_dir(env):
     before_files = dict(hpc.files)
     answer = _confirmed_submit(orch, store, pid, tid)
     flow = store.get_task(pid, tid)["flow"]
-    assert "relax 已提交" in answer and "static 已提交" in answer
+    assert "relax 已提交" in answer and "static 已提交" not in answer
+    assert not flow["plan"]["jobs"][1].get("slurm_id")
+    second = _confirmed_submit(orch, store, pid, tid, "static")
+    assert "static 已提交" in second
     assert hpc.files == before_files  # submit never uploads or rewrites inputs
     assert hpc.write_calls == []
     # sbatch 在作业目录内发起（cwd=作业目录），而非工作区根
@@ -753,8 +771,7 @@ def test_submit_dependency_gate_holds_dependent_jobs(env):
     assert flow["plan"]["jobs"][1]["status"] == "draft"
     assert flow["plan"]["jobs"][2]["status"] == "draft"
     assert flow["waiting"] == []
-    assert flow["phase"] == "await_submit"
-    assert "需重新确认" in answer
+    assert flow["phase"] == "monitoring"
     assert len([call for call in hpc.calls if call.startswith("sbatch")]) == 1
 
 
@@ -779,7 +796,7 @@ def test_pump_backfills_chain_after_completion(env):
     # A fresh explicit confirmation may submit only the newly eligible job.
     refreshed = store.get_task(pid, tid)["flow"]
     orch._precheck(refreshed, Path(refreshed["local_dir"]), True,
-                   refreshed["hpc_dir"], [])
+                   refreshed["hpc_dir"], [], job_key="relax/static")
     store.update_task(pid, tid, flow=refreshed)
     second = _confirmed_submit(orch, store, pid, tid)
     flow = store.get_task(pid, tid)["flow"]

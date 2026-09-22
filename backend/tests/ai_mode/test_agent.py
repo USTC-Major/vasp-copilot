@@ -775,9 +775,10 @@ def test_executor_select_jobs_skip_and_reactivate(ctx):
     flow = ctx.store.get_task(ctx.pid, ctx.tid)["flow"]
     statuses = {j["key"]: j["status"] for j in flow["plan"]["jobs"]}
     assert statuses == {"relax": "draft", "static": "skipped"}
-    pending = ex.handle("draft", {})
+    identity = {"job_key": "relax", "attempt_id": flow["plan"]["jobs"][0]["attempt_id"]}
+    pending = ex.handle("draft", identity)
     assert "已认领" in _approve_pending(ex, pending)
-    out = ex.handle("draft", {})
+    out = ex.handle("draft", identity)
     assert "已跳过：static" in out
     flow = ctx.store.get_task(ctx.pid, ctx.tid)["flow"]
     assert [d["job_key"] for d in flow["draft"]] == ["relax"]

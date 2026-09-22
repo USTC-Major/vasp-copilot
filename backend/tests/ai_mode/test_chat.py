@@ -107,6 +107,11 @@ def test_submit_action_stays_executing_through_save_then_finishes_once(
             "draft": [{"job_key": "relax", "script_sha256": "abc"}],
             "plan": {"jobs": [{"key": "relax", "status": "draft"}]}}
     store.update_task(pid, tid, flow=flow)
+    current = store.get_task(pid, tid)["flow"]
+    job = current["plan"]["jobs"][0]
+    job["precheck"] = {"ok": True, "hard": True, "digest": "a" * 64, "attempt_id": job["attempt_id"]}
+    job["draft"] = {"job_key": job["key"], "attempt_id": job["attempt_id"], "dir": "/remote/work", "submit_cmd": "sbatch run.sh", "script_sha256": "abc"}
+    store.update_task(pid, tid, flow=current)
     card = spawn_submit_card(store, pid, tid)
     calls = []
 
@@ -148,6 +153,11 @@ def test_concurrent_submit_confirmations_call_scheduler_at_most_once(
         "draft": [{"job_key": "relax", "script_sha256": "abc"}],
         "plan": {"jobs": [{"key": "relax", "status": "draft"}]},
     })
+    current = store.get_task(pid, tid)["flow"]
+    job = current["plan"]["jobs"][0]
+    job["precheck"] = {"ok": True, "hard": True, "digest": "a" * 64, "attempt_id": job["attempt_id"]}
+    job["draft"] = {"job_key": job["key"], "attempt_id": job["attempt_id"], "dir": "/remote/work", "submit_cmd": "sbatch run.sh", "script_sha256": "abc"}
+    store.update_task(pid, tid, flow=current)
     card = spawn_submit_card(store, pid, tid)
     calls = []
 

@@ -55,12 +55,15 @@ def _remote_ready(api, key):
 
 
 def _attest_draft_and_submit(api, project_id, task_id):
-    attestation = call_tool(api, project_id, task_id, "draft")
+    jobs = api.app.state.toolbox.store.get_task(project_id, task_id)["flow"]["plan"]["jobs"]
+    selected = next(j for j in jobs if j.get("status") == "draft")
+    identity = {"job_key": selected["key"], "attempt_id": selected["attempt_id"]}
+    attestation = call_tool(api, project_id, task_id, "draft", identity)
     assert attestation["pending"]["kind"] == "script_attestation"
     resolve_card(api, project_id, task_id,
                  attestation["pending"]["card_id"], True)
-    draft = call_tool(api, project_id, task_id, "draft")
-    assert draft["flow"]["precheck"]["ok"] is True
+    draft = call_tool(api, project_id, task_id, "draft", identity)
+    assert next(j for j in draft["flow"]["jobs"] if j["key"] == selected["key"])["precheck"]["ok"] is True
     assert draft["pending"]["kind"] == "submit"
     return resolve_card(api, project_id, task_id,
                         draft["pending"]["card_id"], True)
@@ -149,12 +152,15 @@ def test_dependency_completion_requires_fresh_submission_approval(api):
     assert jobs["static"].get("slurm_id") is None
     assert api.hpc.submit_count == 0
 
-    attestation = call_tool(api, project_id, task_id, "draft")
+    jobs = api.app.state.toolbox.store.get_task(project_id, task_id)["flow"]["plan"]["jobs"]
+    selected = next(j for j in jobs if j.get("status") == "draft")
+    identity = {"job_key": selected["key"], "attempt_id": selected["attempt_id"]}
+    attestation = call_tool(api, project_id, task_id, "draft", identity)
     assert attestation["pending"]["kind"] == "script_attestation"
     assert api.hpc.submit_count == 0
     resolve_card(api, project_id, task_id,
                  attestation["pending"]["card_id"], True)
-    draft = call_tool(api, project_id, task_id, "draft")
+    draft = call_tool(api, project_id, task_id, "draft", identity)
     assert draft["pending"]["kind"] == "submit"
     assert api.hpc.submit_count == 0
     submitted = resolve_card(api, project_id, task_id,
@@ -218,10 +224,13 @@ def test_uncertain_submit_receipt_is_persisted_and_never_replayed(api):
         }],
     })
     _remote_ready(api, "relax")
-    attestation = call_tool(api, project_id, task_id, "draft")
+    jobs = api.app.state.toolbox.store.get_task(project_id, task_id)["flow"]["plan"]["jobs"]
+    selected = next(j for j in jobs if j.get("status") == "draft")
+    identity = {"job_key": selected["key"], "attempt_id": selected["attempt_id"]}
+    attestation = call_tool(api, project_id, task_id, "draft", identity)
     resolve_card(api, project_id, task_id,
                  attestation["pending"]["card_id"], True)
-    draft = call_tool(api, project_id, task_id, "draft")
+    draft = call_tool(api, project_id, task_id, "draft", identity)
     submit_card = draft["pending"]
     api.hpc.submit_error = TimeoutError("connection lost after dispatch")
 
