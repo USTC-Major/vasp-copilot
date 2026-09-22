@@ -1,0 +1,74 @@
+name: Remote file foundation POSIX
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  remote-file-posix:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Record exact environment
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/remote-file-foundation"
+          mkdir -p "$evidence"
+          actual_head="$(git rev-parse HEAD)"
+          test "$actual_head" = "$EXPECTED_HEAD"
+          {
+            printf 'expected_head=%s\n' "$EXPECTED_HEAD"
+            printf 'actual_head=%s\n' "$actual_head"
+            printf 'runner_os=%s\n' "$RUNNER_OS"
+            python3 -VV
+            uname -a
+            stat -f -c 'filesystem=%T' "$RUNNER_TEMP"
+          } | tee "$evidence/environment.txt"
+
+      - name: Install only test transport dependencies
+        run: python3 -m pip install --disable-pip-version-check "pytest>=8.2,<9" "httpx>=0.27,<1"
+
+      - name: Verify lightweight imports
+        run: |
+          python3 - <<'PY'
+          import httpx
+          import pytest
+          import backend.toolbox.client
+          import backend.toolbox.ssh.file_helper
+          import backend.toolbox.ssh.remote_files
+          print(f"pytest={pytest.__version__} httpx={httpx.__version__}")
+          PY
+
+      - name: Exercise helper protocol and real POSIX filesystem
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/remote-file-foundation"
+          python3 -m pytest -q \
+            backend/tests/remote_file_foundation \
+            backend/tests/remote_file_review \
+            --basetemp="$RUNNER_TEMP/remote-file-foundation-work" \
+            --junitxml="$evidence/pytest.xml" \
+            2>&1 | tee "$evidence/pytest.log"
+          python3 backend/tests/remote_file_review/ci_assert.py "$evidence/pytest.xml" \
+            | tee "$evidence/critical-tests.txt"
+
+      - name: Keep small diagnostic evidence for one day
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: remote-file-foundation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/remote-file-foundation/
+          retention-days: 1
+          compression-level: 9
+          if-no-files-found: error

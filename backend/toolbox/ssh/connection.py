@@ -229,6 +229,47 @@ class SSHManager:
         except Exception:
             return False
 
+    def file_endpoint(self, scheduler_target: dict, *, connect: bool = True) -> dict:
+        """Public identity evidence only; never expose authentication material.
+
+        An injected transport must also expose a matching trusted host key store.
+        Write sessions use connect=False so loss cannot silently reconnect.
+        """
+        from .file_helper import digest
+        allowed = {"scheduler", "host", "port", "username", "identity_file", "known_hosts_path"}
+        if not isinstance(scheduler_target, dict) or set(scheduler_target) - allowed:
+            raise SSHError("Invalid scheduler target identity")
+        target = dict(scheduler_target)
+        if any(not isinstance(value, (str, int, type(None))) for value in target.values()):
+            raise SSHError("Invalid scheduler target identity")
+        client = self.connect() if connect else self._client
+        if client is None or not self._check_alive(client) or not self._active:
+            raise SSHConnectError("File endpoint is disconnected")
+        active = dict(self._active)
+        for field in ("host", "port", "username"):
+            if field in target and target[field] != active[field]:
+                raise SSHError("Scheduler target differs from active SSH endpoint")
+        local_config = {"identity_file": self.identity_file, "known_hosts_path": self.known_hosts_path}
+        for field, configured in local_config.items():
+            if field in target and target[field] != configured:
+                raise SSHError("Scheduler target differs from local authentication configuration")
+            target.pop(field, None)
+        try:
+            key = client.get_transport().get_remote_server_key()
+            algorithm, key_bytes = key.get_name(), key.asbytes()
+            verified = self.client_factory is None
+            if not verified:
+                hostname = active["host"] if active["port"] == 22 else "[%s]:%s" % (active["host"], active["port"])
+                trusted = client.get_host_keys().lookup(hostname)
+                verified = bool(trusted and algorithm in trusted and trusted[algorithm].asbytes() == key_bytes)
+            host_key = {"algorithm": algorithm, "sha256": hashlib.sha256(key_bytes).hexdigest(),
+                        "verification": "known_hosts" if verified else "unknown"}
+        except Exception:
+            host_key = {"algorithm": None, "sha256": None, "verification": "unknown"}
+        endpoint = {**active, "scheduler_target": target, "host_key": host_key, "local_config_digest": digest(local_config)}
+        endpoint["endpoint_digest"] = digest(endpoint)
+        return endpoint
+
     def test_connection(self, *, host: str | None = None,
                         username: str | None = None,
                         port: int | None = None,
