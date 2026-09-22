@@ -106,8 +106,26 @@ def recover_actions(data, *, importing=False):
     for task in data.get('tasks', []):
         flow = task.get('flow') or {}
         for action in (flow.get('consent') or {}).get('actions', {}).values():
+            if action.get('kind') == 'hpc_upload' and not (action.get('binding') or {}).get('file_identity'):
+                if action.get('state') in {'pending', 'approved'}:
+                    action.update(state='expired', result='旧上传缺少可信主机与目标身份；请重新提案')
+                elif action.get('state') in {'executing', 'unknown'}:
+                    action['legacy_file_unknown'] = True
+            if action.get('kind') == 'remote_file' and action.get('state') == 'approved':
+                action.update(state='expired', result='服务中断：未恢复文件执行队列，请重新提案')
             if action.get('state') == 'executing':
                 action.update(state='unknown', result='服务中断：操作结果待核实，禁止自动重放')
+                if action.get('kind') == 'remote_file':
+                    receipt=action.setdefault('receipt', {})
+                    receipt['phase'] = 'interrupted'
+                    manifest=(action.get('binding') or {}).get('manifest') or {}
+                    done={r.get('item_id') for r in receipt.get('items',[]) if r.get('state')=='committed'}
+                    released={key for key,value in receipt.get('item_outcomes',{}).items() if value.get('state')=='not_executed'} - done
+                    items=manifest.get('items',[])
+                    receipt['spent']={'operations':sum(i['item_id'] in done for i in items),'bytes':sum(i['bytes'] for i in items if i['item_id'] in done)}
+                    receipt['held_unknown']={'operations':sum(i['item_id'] not in done|released for i in items),'bytes':sum(i['bytes'] for i in items if i['item_id'] not in done|released)}
+                    receipt['released']={'operations':sum(i['item_id'] in released for i in items),'bytes':sum(i['bytes'] for i in items if i['item_id'] in released)}
+                    receipt.setdefault('reservation',{})['state']='settled'
             elif importing and action.get('state') in {'pending', 'approved'}:
                 action.update(state='expired', result='旧版授权已迁移为审计记录，请重新确认')
             if action.get('kind') == 'submit' and action.get('state') == 'unknown':

@@ -69,6 +69,7 @@ def update_task(project_id: str, task_id: str, request: Request, payload: dict):
     with consent.task_lock(project_id, task_id):
         task = svc.require_task(project_id, task_id)
         if {'local_workspace', 'hpc_workspace'} & set(payload):
+            svc.files.assert_mutable(project_id,task_id,unresolved=True)
             if (task.get('flow') or {}).get('phase') == 'monitoring':
                 raise ToolboxError('TASK_ACTIVE', '监控期间不能改变工作区', 409)
             raw = task.get('flow') or {}
@@ -124,7 +125,8 @@ def tools(project_id: str, task_id: str, request: Request, payload: dict):
 def cards(project_id: str, task_id: str, request: Request):
     svc = service(request)
     svc.require_task(project_id, task_id)
-    return envelope(cards=consent.list_cards(svc.store, project_id, task_id))
+    from .file_actions import summary
+    return envelope(cards=[summary(a) if a.get('kind')=='remote_file' else a for a in consent.list_cards(svc.store, project_id, task_id)])
 
 @router.get('/projects/{project_id}/tasks/{task_id}/consents/{card_id}')
 def card(project_id: str, task_id: str, card_id: str, request: Request):
@@ -133,11 +135,45 @@ def card(project_id: str, task_id: str, card_id: str, request: Request):
     result = consent.get_card(svc.store, project_id, task_id, card_id)
     if result is None:
         raise ToolboxError('CARD_NOT_FOUND', '授权卡不存在', 404)
-    return envelope(card=result)
+    from .file_actions import public
+    return envelope(card=public(result))
 
 @router.post('/projects/{project_id}/tasks/{task_id}/consents/{card_id}')
 def resolve(project_id: str, task_id: str, card_id: str, request: Request, payload: dict):
-    return service(request).resolve(project_id, task_id, card_id, payload.get('approved'), str(payload.get('note') or '')[:500])
+    from .file_actions import exact
+    exact(payload, {'approved','note','scope_confirmation'}, {'approved'})
+    result=service(request).resolve(project_id, task_id, card_id, payload.get('approved'), str(payload.get('note') or '')[:500],payload.get('scope_confirmation'))
+    if (result.get('card') or {}).get('kind')=='remote_file' and result['card']['state'] in {'approved','executing'}:
+        return JSONResponse(status_code=202,content=result)
+    return result
+
+def file_call(request, method, *args, **kwargs):
+    from .file_actions import file_error, public
+    try:
+        return envelope(ok=True,error=None,data=public(getattr(service(request).files,method)(*args,**kwargs)))
+    except Exception as exc:
+        raise file_error(exc) from exc
+
+@router.put('/projects/{project_id}/tasks/{task_id}/file-roots')
+def file_roots(project_id: str, task_id: str, request: Request, payload: dict):
+    return file_call(request,'set_roots',project_id,task_id,payload)
+
+@router.post('/projects/{project_id}/tasks/{task_id}/computation-scopes', status_code=201)
+def file_scope(project_id: str, task_id: str, request: Request, payload: dict):
+    return file_call(request,'create_scope',project_id,task_id,payload)
+
+@router.post('/projects/{project_id}/tasks/{task_id}/computation-scopes/{scope_id}/revoke')
+def revoke_file_scope(project_id: str, task_id: str, scope_id: str, request: Request, payload: dict):
+    return file_call(request,'revoke',project_id,task_id,scope_id,payload)
+
+@router.get('/projects/{project_id}/tasks/{task_id}/file-actions')
+def file_actions(project_id: str, task_id: str, request: Request, limit: int=Query(20,ge=1,le=100), cursor: str | None=None):
+    return file_call(request,'list',project_id,task_id,limit=limit,cursor=cursor)
+
+@router.post('/projects/{project_id}/tasks/{task_id}/file-actions/{action_id}/reconcile')
+def reconcile_file_action(project_id: str, task_id: str, action_id: str, request: Request, payload: dict):
+    if payload: raise ToolboxError('INVALID_FILE_REQUEST','核对接口不接受写入参数')
+    return file_call(request,'reconcile',project_id,task_id,action_id)
 
 @router.get('/recent-history')
 def history(request: Request, limit: int = Query(10, ge=1, le=20)):
@@ -262,11 +298,14 @@ def mkdir(kind: str, request: Request, payload: dict):
     if kind == 'local':
         result = browse.mkdir_local(path, name)
     elif kind == 'hpc':
-        ssh = browse.create_hpc_ssh(service(request).settings_loader())
+        svc = service(request)
+        cfg = svc.settings_loader()
+        ssh = browse.create_hpc_ssh(cfg)
         if ssh is None:
             raise ToolboxError('SSH_UNCONFIGURED', '未配置SSH主机和用户名')
         try:
-            result = browse.mkdir_hpc(ssh, path, name)
+            with svc.files.legacy_mkdir(path,name,hpc=ssh,cfg=cfg):
+                result = browse.mkdir_hpc(ssh, path, name)
         finally:
             ssh.close()
     else:
@@ -275,13 +314,13 @@ def mkdir(kind: str, request: Request, payload: dict):
         raise ToolboxError('MKDIR_FAILED', result.get('notice', '创建目录失败'))
     return envelope(kind=kind, **result)
 
-def create_toolbox_app(*, root: Path | None = None, settings_loader=None, orch_factory=None, monitor_enabled=True):
+def create_toolbox_app(*, root: Path | None = None, settings_loader=None, orch_factory=None, monitor_enabled=True, file_factory=None):
     root = Path(root) if root is not None else paths.home_dir()
     loader = settings_loader or (lambda: load_settings(config_path=root / 'toolbox_config.json'))
     @asynccontextmanager
     async def lifespan(app):
         app.state.toolbox = ExecutionService(root, settings_loader=loader,
-            orch_factory=orch_factory, monitor_enabled=monitor_enabled).start()
+            orch_factory=orch_factory, monitor_enabled=monitor_enabled, file_factory=file_factory).start()
         try:
             yield
         finally:

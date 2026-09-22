@@ -9,6 +9,7 @@ import posixpath
 import shlex
 import time
 import uuid
+from contextlib import nullcontext
 
 from . import file_helper as protocol
 from .errors import SSHError
@@ -88,12 +89,30 @@ class _Wire:
             raise RemoteFileError("INVALID_FILE_REQUEST", "Request frame exceeds byte limit")
         # An exception from send may still mean a prefix/full frame was sent.
         self.dispatched = True
-        self.channel.sendall(data)
+        deadline = time.monotonic() + 0.2
+        if not callable(getattr(self.channel, "send", None)):
+            self.channel.sendall(data)  # Minimal in-memory channel fixtures only.
+            return
+        while data:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("File control send deadline")
+            self.channel.settimeout(remaining)
+            count = self.channel.send(data)
+            if not isinstance(count, int) or count <= 0:
+                raise EOFError()
+            data = data[count:]
+        self.channel.settimeout(0.2)
 
-    def receive(self, *, timeout=60, writing=False):
+    def receive(self, *, timeout=60, writing=False, should_cancel=None):
         deadline = time.monotonic() + timeout
+        aborted = False
         try:
             while b"\n" not in self.buffer:
+                if should_cancel and should_cancel() and not aborted:
+                    self.send({"op": "abort"})
+                    aborted = True
+                    deadline = min(deadline, time.monotonic() + 2)
                 if time.monotonic() >= deadline:
                     raise TimeoutError()
                 while self.channel.recv_stderr_ready():
@@ -123,6 +142,12 @@ class _Wire:
                                       published=error.get("published", "unknown" if writing else False), leftovers=error.get("leftovers"))
             if set(response) != {"ok", "data"} or not isinstance(response["data"], dict):
                 raise ValueError("helper response")
+            if aborted:
+                data = response["data"]
+                if data.get("state") == "prepared":
+                    data = self.receive(timeout=max(0, deadline - time.monotonic()), writing=True)
+                raise RemoteFileError("ACTION_ABORTED", "Owner cancelled preparation", stage="prepare", dispatched=True,
+                                      published=False, leftovers=data.get("leftovers", []))
             return response["data"]
         except RemoteFileError:
             raise
@@ -131,10 +156,11 @@ class _Wire:
                                   "Helper reply is unavailable, malformed, truncated or late; no write replay",
                                   stage="receive", dispatched=self.dispatched, published="unknown" if writing else False)
 
-    def call(self, request, *, timeout=60, writing=False):
+    def call(self, request, *, timeout=60, writing=False, should_cancel=None, dispatch_guard=None, request_factory=None):
         try:
-            self.send(request)
-            return self.receive(timeout=timeout, writing=writing)
+            with dispatch_guard() if dispatch_guard else nullcontext():
+                self.send(request_factory() if request_factory else request)
+            return self.receive(timeout=timeout, writing=writing, should_cancel=should_cancel)
         except RemoteFileError:
             raise
         except Exception:
@@ -183,15 +209,18 @@ class RemoteFiles:
         except (protocol.FileError, ValueError, TypeError) as exc:
             raise _local_error(exc)
 
-    def inspect(self, path, view="stat", *, provenance=None, limit=200, cursor=None):
+    def inspect(self, path, view="stat", *, provenance=None, limit=200, cursor=None, expected_evidence=None, expected_endpoint=None):
         try:
             protocol.absolute(path)
             protocol.require(view in {"stat", "list", "text"})
             protocol.integer(limit, 1, 500)
             endpoint = self.endpoint()
-            return self._read({"op": "inspect", "path": path, "view": view,
+            if expected_endpoint is not None and endpoint != expected_endpoint:
+                raise RemoteFileError('ENDPOINT_CHANGED', 'Inspection endpoint changed')
+            result = self._read({"op": "inspect", "path": path, "view": view,
                                "provenance": provenance, "endpoint_digest": endpoint["endpoint_digest"],
-                               "limit": limit, "cursor": cursor}, expected_endpoint=endpoint)
+                               "limit": limit, "cursor": cursor, "expected_evidence": expected_evidence}, expected_endpoint=endpoint)
+            return {**result, 'endpoint_digest': endpoint['endpoint_digest']}
         except (protocol.FileError, ValueError, TypeError) as exc:
             raise _local_error(exc)
 
@@ -239,6 +268,7 @@ class RemoteFiles:
                     provenance = (context.get("source_provenance") or {}).get(item_id)
                     protocol.require(isinstance(provenance, dict), "CONTENT_READ_DENIED", "Owner must resolve source provenance")
                     source = self._read({"op": "source", "path": path, "provenance": provenance,
+                                         "expected_evidence": provenance.get("expected_evidence"),
                                          "endpoint_digest": endpoint["endpoint_digest"]}, expected_endpoint=endpoint)
                     label = protocol.strict_class(label, source["content_class"])
                     size = source["size"] if op == "copy" else len(source["canonical_path"].encode("utf-8"))
@@ -267,7 +297,7 @@ class RemoteFiles:
         except (KeyError, TypeError, ValueError, protocol.FileError) as exc:
             raise _local_error(exc)
 
-    def begin(self, manifest, dispatch_context):
+    def begin(self, manifest, dispatch_context, *, dispatch_guard=None):
         try:
             protocol.validated_manifest(manifest)
             fields = ("action_id", "manifest_digest", "project_id", "task_id", "job_key", "attempt_id", "scope_id", "scope_version")
@@ -277,26 +307,32 @@ class RemoteFiles:
             protocol.names(dispatch_context["dispatch_nonce"])
             if self.endpoint() != manifest["endpoint"]:
                 raise RemoteFileError("ENDPOINT_CHANGED", "Current endpoint differs from approved manifest")
-            return FileSession(self, manifest)
+            return FileSession(self, manifest, dispatch_guard=dispatch_guard)
         except (KeyError, ValueError, TypeError, protocol.FileError) as exc:
             raise _local_error(exc)
 
-    def reconcile(self, manifest, receipt_locator=None):
+    def reconcile(self, manifest, receipt_locator=None, *, item_id=None):
         try:
             protocol.validated_manifest(manifest)
             protocol.require(receipt_locator is None, "INVALID_FILE_REQUEST", "Reconciliation uses only manifest-derived receipt paths")
-            return self._read({"op": "reconcile", "manifest": manifest}, expected_endpoint=manifest["endpoint"])
+            request = {"op": "reconcile", "manifest": manifest}
+            if item_id is not None:
+                request["item_id"] = item_id
+            return self._read(request, expected_endpoint=manifest["endpoint"])
         except (KeyError, ValueError, TypeError, protocol.FileError) as exc:
             raise _local_error(exc)
 
 
 class FileSession:
-    def __init__(self, files, manifest):
+    def __init__(self, files, manifest, *, dispatch_guard=None):
         self.files, self.manifest = files, copy.deepcopy(manifest)
+        self.dispatch_guard = dispatch_guard
         self.wire = _Wire(files.manager, expected_endpoint=manifest["endpoint"], scheduler_target=files.scheduler_target)
         self.prepared, self.prepared_at, self.closed = None, None, False
         try:
-            self.wire.call({"op": "begin", "manifest": self.manifest, "remaining_seconds": _remaining(manifest["expires_at"])}, writing=True)
+            self.wire.call({"op": "begin", "manifest": self.manifest, "remaining_seconds": _remaining(manifest["expires_at"])}, writing=True,
+                           dispatch_guard=(lambda: dispatch_guard("begin", None)) if dispatch_guard else None,
+                           request_factory=lambda: {'op':'begin','manifest':self.manifest,'remaining_seconds':_remaining(manifest['expires_at'])})
         except BaseException:
             self.close()
             raise
@@ -315,12 +351,13 @@ class FileSession:
         if not unchanged:
             raise RemoteFileError("ENDPOINT_CHANGED", "File session endpoint changed", dispatched=True, published="unknown")
 
-    def prepare_next(self):
+    def prepare_next(self, *, should_cancel=None):
         self._check()
         if self.prepared is not None:
             raise RemoteFileError("PROTOCOL_ERROR", "Current item is already prepared")
         try:
-            self.prepared = self.wire.call({"op": "prepare_next"}, timeout=_remaining(self.manifest["expires_at"]), writing=True)
+            self.prepared = self.wire.call({"op": "prepare_next"}, timeout=_remaining(self.manifest["expires_at"]), writing=True,
+                                          should_cancel=should_cancel)
             self.prepared_at = time.monotonic()
             return copy.deepcopy(self.prepared)
         except BaseException:
@@ -337,7 +374,17 @@ class FileSession:
         if datetime.datetime.fromisoformat(permit["valid_until"]) > datetime.datetime.fromisoformat(self.manifest["expires_at"]):
             raise RemoteFileError("SCOPE_EXPIRED", "Commit permission exceeds owner scope expiry")
         try:
-            result = self.wire.call({"op": "commit", "permit": permit, "remaining_seconds": remaining}, writing=True, timeout=30)
+            guard = getattr(self, "dispatch_guard", None)
+            def frame():
+                self._check()
+                if time.monotonic() >= self.prepared_at + 30:
+                    raise RemoteFileError('SCOPE_EXPIRED', 'Prepared token expired while waiting for owner')
+                ttl = _remaining(permit.get('valid_until'))
+                if ttl > 30 or datetime.datetime.fromisoformat(permit['valid_until']) > datetime.datetime.fromisoformat(self.manifest['expires_at']):
+                    raise RemoteFileError('SCOPE_EXPIRED', 'Commit permission exceeds owner scope expiry')
+                return {'op':'commit','permit':permit,'remaining_seconds':ttl}
+            result = self.wire.call({"op": "commit", "permit": permit, "remaining_seconds": remaining}, writing=True, timeout=30,
+                                   dispatch_guard=(lambda: guard("commit", permit["item_id"])) if guard else None, request_factory=frame)
             self.prepared = None
             return result
         except BaseException:

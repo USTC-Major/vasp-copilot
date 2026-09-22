@@ -16,11 +16,13 @@ def envelope(**data):
     return {'mode': 'toolbox', **data}
 
 class ExecutionService:
-    def __init__(self, root: Path, *, settings_loader=load_settings, orch_factory=None, monitor_enabled=True):
+    def __init__(self, root: Path, *, settings_loader=load_settings, orch_factory=None, monitor_enabled=True, file_factory=None):
         self.root = Path(root)
         self.settings_loader = settings_loader
         self.orch_factory = orch_factory
         self.monitor_enabled = monitor_enabled
+        self.file_factory = file_factory
+        self.files = None
         self._backend_mode = None
         self.owner = ProcessOwner(root)
         self.store = None
@@ -32,14 +34,22 @@ class ExecutionService:
         self.owner.acquire()
         try:
             self.store = ProjectStore(self.root)
+            from .file_actions import FileActions
+            self.files = FileActions(self, self.file_factory)
+            self.files.start()
             if self.monitor_enabled:
                 self.monitor.start(self.store)
         except BaseException:
+            if self.files:
+                self.files.close()
+            self.monitor.stop()
             self.owner.close()
             raise
         return self
 
     def close(self):
+        if self.files:
+            self.files.close()
         self.monitor.stop()
         self.owner.close()
 
@@ -88,14 +98,36 @@ class ExecutionService:
         cards = [copy.deepcopy(a) for a in (raw.get('consent') or {}).get('actions', {}).values()
                  if a.get('state') == 'pending']
         task.pop('flow', None)
-        return envelope(task_id=task_id, task=task, flow=flow, consents=cards,
+        from .file_actions import public, summary
+        file_scopes = [s for s in (raw.get('consent') or {}).get('computation_scopes', {}).values() if s.get('kind') == 'file']
+        file_actions = [a for a in (raw.get('consent') or {}).get('actions', {}).values() if a.get('kind') == 'remote_file']
+        active_states = {'pending','approved','executing','unknown'}
+        active_files = [a for a in file_actions if a.get('state') in active_states]
+        terminal_files = sorted((a for a in file_actions if a.get('state') not in active_states),
+                                key=lambda a:(a.get('created_at',''),a['action_id']),reverse=True)[:20]
+        return envelope(task_id=task_id, task=task, flow=flow, consents=[summary(a) if a.get('kind')=='remote_file' else public(a) for a in cards],
+                        file_roots=raw.get('file_roots', []), file_roots_version=raw.get('file_roots_version', 0),
+                        file_scopes=public(file_scopes), file_actions=[summary(a) for a in active_files+terminal_files],
                         events=self.store.list_events(project_id, task_id), monitor=monitor,
                         backend_mode=self.backend_mode())
 
     def execute(self, project_id, task_id, name, args):
         if not isinstance(name, str) or not isinstance(args, dict):
             raise ToolboxError('INVALID_TOOL_REQUEST', '工具需要name字符串和args对象')
+        name = name.strip().lower()
+        if name in {'remote_file_plan', 'remote_inspect'}:
+            from .file_actions import public, file_error
+            try:
+                value = (self.files.plan(project_id, task_id, args) if name == 'remote_file_plan'
+                         else self.files.inspect(project_id, task_id, args))
+                return envelope(ok=True, error=None, data=public(value), pending=public(value) if name == 'remote_file_plan' else None)
+            except Exception as exc:
+                raise file_error(exc) from exc
         with consent.task_lock(project_id, task_id):
+            if self.files and name in {'plan', 'select_jobs', 'retry_job'}:
+                self.files.assert_mutable(project_id,task_id,unresolved=True)
+            elif self.files and name not in {'get_state','hpc_list','hpc_read','diagnose_job','ws_list','ws_read','report'}:
+                self.files.assert_mutable(project_id,task_id)
             executor = self.executor(project_id, task_id)
             name = name.strip().lower()
             pending = None
@@ -143,7 +175,7 @@ class ExecutionService:
                             result=str(result), pending=pending,
                             flow=self.detail(project_id, task_id)['flow'])
 
-    def resolve(self, project_id, task_id, card_id, approved, note=''):
+    def resolve(self, project_id, task_id, card_id, approved, note='', scope_confirmation=None):
         if not isinstance(approved, bool):
             raise ToolboxError('INVALID_CONSENT', 'approved必须是布尔值')
         with consent.task_lock(project_id, task_id):
@@ -151,6 +183,15 @@ class ExecutionService:
             card = consent.get_card(self.store, project_id, task_id, card_id)
             if card is None:
                 raise ToolboxError('CARD_NOT_FOUND', '授权卡不存在', 404)
+            if card.get('kind') == 'remote_file':
+                from .file_actions import public, file_error
+                try:
+                    result = self.files.approve(project_id,task_id,card_id,approved,note,scope_confirmation)
+                    return envelope(ok=True,error=None,data=public(result),card=public(result),replayed=card['state']!='pending')
+                except Exception as exc:
+                    raise file_error(exc) from exc
+            if self.files:
+                self.files.assert_mutable(project_id,task_id)
             replayed = card['state'] != 'pending'
             if card['state'] == 'pending':
                 if card.get('kind') == 'submit':

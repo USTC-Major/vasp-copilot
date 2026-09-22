@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import copy
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -102,6 +103,71 @@ class FakeHPC:
         return sum(command.startswith("squeue") for command, _cwd in self.run_calls)
 
 
+class FakeRemoteFiles:
+    """Identity-only adapter for the legacy upload bridge in this offline suite."""
+
+    def __init__(self, hpc: FakeHPC) -> None:
+        from backend.toolbox.ssh import file_helper
+
+        self.hpc = hpc
+        self._endpoint = {
+            "schema_version": 1,
+            "host": "offline-review.invalid",
+            "port": 22,
+            "username": "offline-review",
+            "scheduler_target": {"scheduler": "fixture"},
+            "host_key": {
+                "algorithm": "ssh-ed25519",
+                "sha256": "31" * 32,
+                "verification": "known_hosts",
+            },
+            "local_config_digest": "13" * 32,
+        }
+        self._endpoint["endpoint_digest"] = file_helper.digest(self._endpoint)
+
+    def endpoint(self):
+        return copy.deepcopy(self._endpoint)
+
+    def inspect_root(self, path, *, root_id=None, version=1):
+        identity = {"device": 7, "inode": 700, "type": "directory"}
+        return {
+            "requested_path": path,
+            "canonical_path": path,
+            "identity": identity,
+            "resolution_chain": [],
+            "ancestors": [{"path": path, **identity}],
+            "root_id": root_id,
+            "version": version,
+            "endpoint_digest": self._endpoint["endpoint_digest"],
+        }
+
+    def _read(self, request, *, expected_endpoint=None):
+        assert expected_endpoint == self._endpoint
+        assert request["op"] == "destination"
+        root, relative = request["root"], request["path"]
+        target = root["canonical_path"].rstrip("/") + "/" + relative
+        target_exists = None
+        if target in self.hpc.files:
+            target_exists = {
+                "device": 7,
+                "inode": 1000 + sorted(self.hpc.files).index(target),
+                "type": "file",
+                "size": len(self.hpc.files[target]),
+                "mtime_ns": 1,
+                "ctime_ns": 1,
+                "mode": 0o600,
+            }
+        return {
+            "root_id": root["root_id"],
+            "root_version": root["version"],
+            "relative_path": relative,
+            "parent_chain": copy.deepcopy(root["ancestors"]),
+            "missing_components": [],
+            "parent_item_id": None,
+            "target_exists": target_exists,
+        }
+
+
 def create_isolated_app(root: Path, hpc: FakeHPC | None = None, *,
                         monitor_enabled: bool = False):
     """Use the architecture-owned public app factory with an isolated root."""
@@ -121,6 +187,7 @@ def create_isolated_app(root: Path, hpc: FakeHPC | None = None, *,
         settings_loader=lambda: config,
         orch_factory=lambda: Orchestrator(config, hpc=fake),
         monitor_enabled=monitor_enabled,
+        file_factory=lambda: FakeRemoteFiles(fake),
     )
     return app, fake
 

@@ -61,6 +61,31 @@ class ProjectStore:
     def _commit(self) -> None:
         self._flush_unlocked(self._data)
 
+    def execution_snapshot(self):
+        with self._lock:
+            return copy.deepcopy(self._data)
+
+    def mutate_file_task(self, project_id, task_id, change):
+        """Publish memory only after the owner transaction is durable."""
+        with self._lock:
+            data = copy.deepcopy(self._data)
+            task = next((t for t in data['tasks'] if t['project_id'] == project_id and t['id'] == task_id), None)
+            if task is None:
+                from .contracts import ToolboxError
+                raise ToolboxError('TASK_NOT_FOUND', '计算任务不存在', 404)
+            result = change(task.setdefault('flow', {}))
+            task['updated_at'] = _now_iso()
+            self._flush_unlocked(data)
+            self._data = data
+            return copy.deepcopy(result)
+
+    @staticmethod
+    def _retain_file_audit(task):
+        if any(a.get('kind') == 'remote_file' or (a.get('kind') == 'hpc_upload' and a.get('state') in {'executing', 'unknown'})
+               for a in ((task.get('flow') or {}).get('consent') or {}).get('actions', {}).values()):
+            from .contracts import ToolboxError
+            raise ToolboxError('FILE_AUDIT_RETAINED', '此任务含远端文件审计；须保留未知目标和产物来源证据，暂不能删除', 409)
+
     # ---- 项目 ----
     def list_projects(self) -> list[dict]:
         with self._lock:
@@ -148,6 +173,9 @@ class ProjectStore:
 
     def delete_project(self, project_id: str) -> bool:
         with self._lock:
+            for task in self._data.get('tasks', []):
+                if task.get('project_id') == project_id:
+                    self._retain_file_audit(task)
             projects = self._data.get("projects", [])
             before = len(projects)
             self._data["projects"] = [p for p in projects
@@ -258,6 +286,7 @@ class ProjectStore:
                     kept.append(t)
             if target is None:
                 return None
+            self._retain_file_audit(target)
             self._data["tasks"] = kept
             waiting = self._data.get("waiting", [])
             self._data["waiting"] = [w for w in waiting
