@@ -251,7 +251,7 @@ export interface AiConsentCard {
   reason: string;
   options: string[];
   batch_key: string;
-  kind: 'workspace' | 'submit';
+  kind: 'workspace' | 'submit' | 'remote_file';
   summary: string;
 }
 

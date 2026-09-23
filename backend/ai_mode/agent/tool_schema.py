@@ -19,5 +19,12 @@ def tool_schema_text() -> str:
         "- submit：把流程停在「待你确认提交」边界（同样不会代替用户执行；真实提交由系统在用户确认后执行）。args: {\"job_key\":\"relax\",\"attempt_id\":\"从get_state获取\"}\n"
         "- select_jobs：按用户要求选择本次提交哪些作业/跳过哪些（只调规划不提交；跳过作业不生成草稿也不提交）。args: {\"submit\":[\"relax\"],\"skip\":[\"static\"]}\n"
         "- diagnose_job：查询作业并返回有文件证据的诊断及恢复建议。args: {\"job_key\":\"band\"}\n"
-        "- retry_job：仅在用户明确要求重试时调用；只为已有诊断的 failed/not_converged 作业生成恢复确认卡。当前 attempt 存在时必须传 attempt_id；仅旧终态无 attempt_id 时可只传 job_key。批准后仅恢复待准备状态，保留历史与输出；unknown 禁止重试，后续写入、上传、硬预检和提交必须重新逐次授权。args: {\"job_key\":\"band\",\"attempt_id\":\"从get_state获取\"}"
+        "- retry_job：仅在用户明确要求重试时调用；只为已有诊断的 failed/not_converged 作业生成恢复确认卡。当前 attempt 存在时必须传 attempt_id；仅旧终态无 attempt_id 时可只传 job_key。批准后仅恢复待准备状态，保留历史与输出；unknown 禁止重试，后续写入、上传、硬预检和提交必须重新逐次授权。args: {\"job_key\":\"band\",\"attempt_id\":\"从get_state获取\"}\n"
+        "- remote_file_context：只读查看当前任务的计算/尝试、研究根、人工文件范围和动作摘要。args: {}\n"
+        "- remote_inspect：只读查看远端绝对路径，text 受内容来源限制且回执有界。args: {\"path\":\"/research/input\",\"view\":\"list\",\"limit\":100}\n"
+        "- remote_file_plan：仅用已有人建的 scope_id/version 及其绑定的 job_key/attempt_id 提出 1–32 项精确文件计划，返回待人工完整审阅卡；不得批准。item.op 仅 copy/symlink/write_text/mkdir，on_conflict 仅 fail；copy/symlink 需精确 source.absolute_path，write_text 需 text。args: {\"scope_id\":\"32位ID\",\"scope_version\":1,\"job_key\":\"relax\",\"attempt_id\":\"现有尝试ID\",\"idempotency_key\":\"本次稳定key\",\"items\":[{\"item_id\":\"input1\",\"op\":\"mkdir\",\"destination\":{\"root_id\":\"32位ID\",\"relative_path\":\"relax\"},\"on_conflict\":\"fail\"}]}\n"
+        "- remote_file_status：只读查文件动作卡状态/逐项摘要，不显示完整 manifest。args: {\"action_id\":\"32位ID\"}\n"
+        "- remote_file_history：只读列文件动作活动及历史摘要。args: {\"limit\":20,\"cursor\":\"0\"}\n"
+        "- remote_file_reconcile：仅对已有 unknown 动作核对远端证据，不重新执行文件操作。args: {\"action_id\":\"32位ID\"}\n"
+        "文件计划首次批准必须由用户在同任务 Toolbox 完整审阅并确认；文件执行完成不代表科学适用。软链接可能让后续计算回写根外来源。你不能设置研究根、创建/撤销 scope、批准或拒绝文件卡，也不能请求通用 HTTP、shell 或全局远端 mkdir。"
     )

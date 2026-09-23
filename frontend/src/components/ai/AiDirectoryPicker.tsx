@@ -107,6 +107,7 @@ const AiDirectoryPicker: React.FC<Props> = ({ open, kind, initialPath, onSelect,
   const dirs = entries; // 后端已过滤隐藏/无权目录；此处仅展示目录
   const inFolder = path !== null;
   const createFolder = async () => {
+    if (kind !== 'local') return;
     const name = newFolderName.trim();
     if (!path || !name) return;
     if (name.startsWith('.') || /[\\/]/.test(name) || name === '..') {
@@ -238,7 +239,7 @@ const AiDirectoryPicker: React.FC<Props> = ({ open, kind, initialPath, onSelect,
         )}
       </div>
 
-      {inFolder && (
+      {inFolder && kind === 'local' && (
         <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
           <Input
             aria-label="新建子目录名称"

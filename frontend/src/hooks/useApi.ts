@@ -497,8 +497,18 @@ export function useToolboxRunTool() {
 
 export function useToolboxResolveConsent() {
   return useMutation({
-    mutationFn: ({ projectId, taskId, cardId, approved, note }: {
+    mutationFn: ({ projectId, taskId, cardId, approved, note, scopeConfirmation }: {
       projectId: string; taskId: string; cardId: string; approved: boolean; note?: string;
-    }) => toolboxApi.resolveConsent(projectId, taskId, cardId, approved, note),
+      scopeConfirmation?: { scope_id: string; version: number };
+    }) => toolboxApi.resolveConsent(projectId, taskId, cardId, approved, note, scopeConfirmation),
+  });
+}
+
+export function useToolboxFileAction(projectId: string, taskId: string, actionId: string | null) {
+  return useQuery({
+    queryKey: ['toolboxFileAction', projectId, taskId, actionId],
+    queryFn: () => toolboxApi.getFileAction(projectId, taskId, actionId!),
+    enabled: !!projectId && !!taskId && !!actionId,
+    retry: false,
   });
 }

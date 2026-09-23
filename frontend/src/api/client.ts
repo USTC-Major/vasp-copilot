@@ -368,10 +368,47 @@ export const toolboxApi = {
     request<{ mode: 'toolbox'; card: import('../types/toolbox').ToolboxConsentCard }>(
       `${toolboxTaskPath(projectId, taskId)}/consents/${encodeURIComponent(cardId)}`,
     ),
-  resolveConsent: (projectId: string, taskId: string, cardId: string, approved: boolean, note?: string) =>
+  resolveConsent: (projectId: string, taskId: string, cardId: string, approved: boolean, note?: string, scopeConfirmation?: { scope_id: string; version: number }) =>
     request<import('../types/toolbox').ToolboxConsentResult>(
       `${toolboxTaskPath(projectId, taskId)}/consents/${encodeURIComponent(cardId)}`,
-      { method: 'POST', body: { approved, ...(note ? { note } : {}) } },
+      { method: 'POST', body: { approved, ...(note ? { note } : {}), ...(scopeConfirmation ? { scope_confirmation: scopeConfirmation } : {}) } },
+    ),
+  setFileRoots: (projectId: string, taskId: string, expectedVersion: number, roots: { root_id?: string; path: string }[]) =>
+    request<{ mode: 'toolbox'; version: number; roots: import('../types/toolbox').ToolboxFileRoot[] }>(
+      `${toolboxTaskPath(projectId, taskId)}/file-roots`, { method: 'PUT', body: { expected_version: expectedVersion, roots } },
+    ),
+  createFileScope: (projectId: string, taskId: string, body: {
+    job_key: string; attempt_id: string;
+    root_bindings: { root_id: string; version: number; destination_prefixes: string[] }[];
+    allowed_operations: import('../types/toolbox').ToolboxFileOperation[];
+    source_paths: string[]; max_operations: number; max_total_bytes: number;
+    expires_at: string; approval_mode: 'human';
+  }) => request<{ mode: 'toolbox' } & import('../types/toolbox').ToolboxFileScope>(
+    `${toolboxTaskPath(projectId, taskId)}/computation-scopes`, { method: 'POST', body },
+  ),
+  revokeFileScope: (projectId: string, taskId: string, scopeId: string, expectedVersion: number, reason?: string) =>
+    request<{ mode: 'toolbox' } & import('../types/toolbox').ToolboxFileScope>(
+      `${toolboxTaskPath(projectId, taskId)}/computation-scopes/${encodeURIComponent(scopeId)}/revoke`,
+      { method: 'POST', body: { expected_version: expectedVersion, ...(reason ? { reason } : {}) } },
+    ),
+  planRemoteFile: (projectId: string, taskId: string, args: {
+    scope_id: string; scope_version: number; job_key: string; attempt_id: string;
+    idempotency_key: string; items: import('../types/toolbox').ToolboxFileItemInput[];
+  }) => request<{ mode: 'toolbox'; ok: boolean; pending: import('../types/toolbox').ToolboxFileAction }>(
+    `${toolboxTaskPath(projectId, taskId)}/tools`, { method: 'POST', body: { name: 'remote_file_plan', args } },
+  ),
+  getFileAction: (projectId: string, taskId: string, actionId: string) =>
+    request<{ mode: 'toolbox'; card: import('../types/toolbox').ToolboxFileAction }>(
+      `${toolboxTaskPath(projectId, taskId)}/consents/${encodeURIComponent(actionId)}`,
+    ),
+  listFileActions: (projectId: string, taskId: string, limit = 20, cursor?: string) =>
+    request<{ mode: 'toolbox'; active: import('../types/toolbox').ToolboxFileAction[]; actions: import('../types/toolbox').ToolboxFileAction[]; next_cursor: string | null }>(
+      `${toolboxTaskPath(projectId, taskId)}/file-actions`, { params: { limit, ...(cursor ? { cursor } : {}) } },
+    ),
+  reconcileFileAction: (projectId: string, taskId: string, actionId: string) =>
+    request<{ mode: 'toolbox' } & import('../types/toolbox').ToolboxFileAction>(
+      `${toolboxTaskPath(projectId, taskId)}/file-actions/${encodeURIComponent(actionId)}/reconcile`,
+      { method: 'POST', body: {} },
     ),
 
   browse: (kind: 'local' | 'hpc', path?: string) =>
@@ -382,8 +419,8 @@ export const toolboxApi = {
     request<{ mode: 'toolbox'; kind: 'local'; ok: boolean; path?: string; notice?: string }>('/toolbox/browse/local/pick', {
       method: 'POST', body: initialDir?.trim() ? { initial_dir: initialDir.trim() } : {},
     }),
-  makeDirectory: (kind: 'local' | 'hpc', path: string, name: string) =>
-    request<{ mode: 'toolbox'; kind: 'local' | 'hpc'; ok: true; path: string }>(`/toolbox/browse/${kind}/mkdir`, {
+  makeDirectory: (kind: 'local', path: string, name: string) =>
+    request<{ mode: 'toolbox'; kind: 'local'; ok: true; path: string }>(`/toolbox/browse/${kind}/mkdir`, {
       method: 'POST', body: { path, name },
     }),
 

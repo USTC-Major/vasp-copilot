@@ -6,8 +6,10 @@ import asyncio
 import json
 import logging
 import queue
+import re
 import threading
 from contextlib import asynccontextmanager
+from urllib.parse import quote
 
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -30,8 +32,8 @@ from .settings.project import (
 from . import chat as _chat
 from .consent import get_card as _get_consent_card
 from .consent import list_cards as _list_consent_cards
-from .consent import resolve_card as _resolve_consent_card
 from .consent import task_lock as _task_state_lock
+from .agent.runner import _stream_card
 from .projects import get_project_store as _get_project_store
 from .storage import ensure_layout
 from .streaming import ACTIVE_STOPS as _ACTIVE_STOPS
@@ -483,7 +485,8 @@ def create_ai_mode_app() -> FastAPI:
         return {"mode": "ai",
                 "messages": _get_project_store().list_messages(project_id, task_id),
                 "generation": generation,
-                "pending_actions": _list_consent_cards(_get_project_store(), project_id, task_id)}
+                "pending_actions": [_stream_card(card) for card in
+                                    _list_consent_cards(_get_project_store(), project_id, task_id)]}
 
     @app.post("/ai/v1/projects/{project_id}/tasks/{task_id}/messages")
     def send_message(project_id: str, task_id: str, payload: dict):
@@ -588,11 +591,21 @@ def create_ai_mode_app() -> FastAPI:
         if resp is not None:
             return resp
         card_id = str(payload.get('card_id') or '')
-        if not card_id:
-            return _bad('缺少card_id')
-        result = _get_project_store().client.request('POST', f'/projects/{project_id}/tasks/{task_id}/consents/{card_id}', json={'approved': payload.get('approved'), 'note': payload.get('note', '')})
+        if not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', card_id):
+            return _bad('无效card_id')
+        store = _get_project_store()
+        card = _get_consent_card(store, project_id, task_id, card_id)
+        if card is None:
+            return _project_404('确认卡不存在')
+        if card.get('kind') == 'remote_file':
+            return JSONResponse(status_code=403, content={'mode': 'ai', 'error': {
+                'code': 'REMOTE_FILE_REVIEW_REQUIRED',
+                'message': '文件操作必须前往同一计算任务的 Toolbox 完整审阅卡批准或拒绝',
+                'retryable': False}, 'card_id': card_id, 'kind': 'remote_file'})
+        path = store.client.task_path(project_id, task_id) + '/consents/' + quote(card_id, safe='')
+        result = store.client.request('POST', path, json={'approved': payload.get('approved'), 'note': payload.get('note', '')})
         if result.get('result') and not result.get('replayed'):
-            _get_project_store().append_message(project_id, task_id, role='assistant', content=str(result['result']))
+            store.append_message(project_id, task_id, role='assistant', content=str(result['result']))
         return {**result, 'mode': 'ai', 'state': result['card']['state'], 'kind': result['card'].get('kind'), 'approved': payload.get('approved')}
 
     @app.get("/ai/v1/projects/{project_id}/tasks/{task_id}/context")

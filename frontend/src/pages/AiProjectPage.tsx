@@ -6,7 +6,7 @@
 // ============================================================
 
 import React, { useEffect, useRef, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import { Alert, Layout, Button, Input, Space, Typography, Tag, Modal, message } from 'antd';
 import { PlusOutlined, SendOutlined, SettingOutlined, RobotOutlined, FolderOutlined, FolderOpenOutlined, CloudServerOutlined, LoadingOutlined, StopOutlined, DeleteOutlined } from '@ant-design/icons';
 import AiChatBubble from '../components/ai/AiChatBubble';
@@ -437,7 +437,11 @@ const AiProjectPage: React.FC = () => {
                       </Space>
                     </Space>
                     <div style={{ fontSize: 13, color: '#8c6d1f', marginBottom: 10, whiteSpace: 'pre-wrap' }}>{card.reason}</div>
-                    <Space>
+                    {card.kind === 'remote_file' ? (
+                      <Link to={`/toolbox/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(selectedTaskId || '')}?fileAction=${encodeURIComponent(card.card_id)}#toolbox-files`}>
+                        审阅完整文件计划与授权范围
+                      </Link>
+                    ) : <Space>
                       {(card.options && card.options.length
                         ? card.options.filter((opt) => opt !== '同意本批' && opt !== 'allow_batch')
                         : ['同意本次', '拒绝']).map((opt) => (
@@ -452,7 +456,7 @@ const AiProjectPage: React.FC = () => {
                           {opt}
                         </Button>
                       ))}
-                    </Space>
+                    </Space>}
                   </div>
                 ))}
               </div>
