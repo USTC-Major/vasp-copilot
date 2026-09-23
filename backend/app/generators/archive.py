@@ -88,6 +88,8 @@ class BundleBuilder:
         with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as bundle:
             for relative_path in sorted(files):
                 info = zipfile.ZipInfo(filename=relative_path, date_time=FIXED_ZIP_DATE_TIME)
+                # ZipInfo defaults to the host OS; fix it for byte-identical archives.
+                info.create_system = 3
                 info.compress_type = zipfile.ZIP_DEFLATED
                 info.external_attr = 0o644 << 16
                 bundle.writestr(info, files[relative_path])

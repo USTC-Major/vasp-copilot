@@ -1,11 +1,13 @@
 """验收 1/2：Recipe schema fail closed（未知字段、表达式、URL、eval 一律拒绝）。"""
 
 import textwrap
+import hashlib
 
 import pytest
 
 from backend.app.recipes.errors import RecipeSchemaInvalid
 from backend.app.recipes.loader import RecipePackLoader
+from backend.app.recipes.registry import DEFAULT_PACK_DIR
 from backend.app.schemas.recipe import RecipeManifest
 
 
@@ -26,6 +28,25 @@ scope:
 parameters:
   NSW: 10
 """
+
+
+def test_builtin_recipe_hashes_use_lf_raw_bytes():
+    loader = RecipePackLoader()
+    pack, recipes = loader.load_pack(DEFAULT_PACK_DIR)
+    paths = sorted(DEFAULT_PACK_DIR.rglob("*.yaml"))
+    assert len(paths) == 14
+    for path in paths:
+        assert b"\r" not in path.read_bytes()
+    by_id = {recipe.recipe_id: recipe for recipe in recipes}
+    assert len(by_id) == 13
+    for path in loader._iter_recipe_files(DEFAULT_PACK_DIR):
+        loaded = loader.load_recipe(path)
+        assert by_id[loaded.recipe_id].sha256 == hashlib.sha256(path.read_bytes()).hexdigest()
+    raw = hashlib.sha256()
+    raw.update((DEFAULT_PACK_DIR / "pack.yaml").read_bytes())
+    for recipe in sorted(recipes, key=lambda item: (item.recipe_id, item.version)):
+        raw.update(f"{recipe.recipe_id}@{recipe.version}:{recipe.sha256}".encode())
+    assert pack.sha256 == raw.hexdigest()
 
 
 class TestSchemaFailClosed:

@@ -1,5 +1,5 @@
 {
-  "bundle_sha256": "35aba24f60095486de7946a5df4f2a8b1a9fda89781fac52f760b1b631530724",
+  "bundle_sha256": "3391e26e3db75c3f1f2ca15ab49f1a276297267017ad32e2f27c4c766fdd454e",
   "created_at": "2026-08-10T00:00:00Z",
   "files": [
     {
@@ -9,8 +9,8 @@
     },
     {
       "path": "01_relax/KPOINTS",
-      "sha256": "3102bdf719f6a5301f493fb26d272638ffcc4c9a8229776f3f7b2299a4b17523",
-      "size_bytes": 79
+      "sha256": "244e41fdf37e47715e13f69448b7b621382e685f1ca4a06bb79b968d6ab0cde0",
+      "size_bytes": 70
     },
     {
       "path": "01_relax/POSCAR",
@@ -29,8 +29,8 @@
     },
     {
       "path": "02_static/KPOINTS",
-      "sha256": "d4a8f8308faf40791570611d23c998435e44d3ac9470b25924166bbb1277b3a4",
-      "size_bytes": 80
+      "sha256": "74bb59e71cada017d6a52375f6cf5fb00325da466a67b33c56d5c663c903d0b1",
+      "size_bytes": 71
     },
     {
       "path": "02_static/POSCAR",
@@ -59,12 +59,12 @@
     },
     {
       "path": "workflow_plan.json",
-      "sha256": "43e9f5406d055d8e28938e5d6ae7a1c825613bdc7b84a94d55c9a9bbccd84b92",
+      "sha256": "66c1d6d731f225dbace32dc1529f1dacf731f6c435eba093356164338f3625e6",
       "size_bytes": 8478
     }
   ],
   "generator_version": "0.1.0",
-  "recipe_pack_sha256": "2aab9931ff8ca9c0756b708c63fa9c484bd37c3db2bba3e6149aab6ae3a10461",
+  "recipe_pack_sha256": "dad041b9859d74cc0a3196dd8aa1bf2acc7a3f27d9a3a360729b04db7072d936",
   "recipe_pack_version": "1.0.0",
   "revision": 1,
   "workflow_id": "wf_nacl"

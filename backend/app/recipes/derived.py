@@ -375,6 +375,7 @@ def generate_kpoint_grid(inputs: Dict[str, Any]) -> Dict[str, Any]:
     ``Kpoints.automatic_density(structure, kppa)`` 的 kppa/num_sites 语义一致，
     本项目不调用 pymatgen，采用基于完整倒格矢长度的自有确定性实现），
     各方向 ``n_i ∝ |b_i|``；matrix 存在时为唯一几何真值。
+    自动规则网格默认 Gamma 中心；网格细分数仍由倒格矢和 KPPA 派生。
     返回 ``{"grid", "centering", "kppa"}``；任何非法输入抛 DerivedParameterUnresolved。
     """
 
@@ -403,14 +404,9 @@ def generate_kpoint_grid(inputs: Dict[str, Any]) -> Dict[str, Any]:
         raise DerivedParameterUnresolved(
             "lattice must be a mapping", details={"lattice": repr(lattice)}
         )
-    matrix, _abc, angles = _lattice_geometry(lattice)
+    matrix, _abc, _angles = _lattice_geometry(lattice)
     grid = _grid_from_reciprocal(_reciprocal_lengths(matrix), kppa / atom_count)
-    # Gamma/Monkhorst 选择规则不变：六方（任一实空间角度≈120°±1）或全奇网格 → Gamma。
-    # 角度来自单一几何真值（matrix 存在时由 matrix 派生）。
-    hexagonal = any(abs(angle - 120.0) < 1.0 for angle in angles)
-    all_odd = all(n % 2 == 1 for n in grid)
-    centering = "Gamma" if (hexagonal or all_odd) else "Monkhorst"
-    return {"grid": grid, "centering": centering, "kppa": kppa}
+    return {"grid": grid, "centering": "Gamma", "kppa": kppa}
 
 
 def derive_system_label(inputs: Dict[str, Any]) -> str:

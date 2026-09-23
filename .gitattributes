@@ -3,3 +3,7 @@ backend/tests/be_a/golden/** text eol=lf
 backend/tests/be_a/golden/**/*.zip binary
 # The checksum manifest is generated for canonical release archive bytes.
 SHA256SUMS.txt text eol=lf
+
+# Recipe provenance hashes the exact YAML bytes read from this checkout.
+backend/app/recipes/packs/vasp_mvp_core/**/*.yaml text eol=lf
+backend/app/recipes/packs/vasp_mvp_core/pack.yaml text eol=lf

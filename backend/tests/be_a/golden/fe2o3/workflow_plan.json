@@ -93,7 +93,7 @@
         "display_name": "VASP MVP Core Recipe Pack",
         "pack_id": "vasp-mvp-core",
         "schema_version": "1.0",
-        "sha256": "2aab9931ff8ca9c0756b708c63fa9c484bd37c3db2bba3e6149aab6ae3a10461",
+        "sha256": "dad041b9859d74cc0a3196dd8aa1bf2acc7a3f27d9a3a360729b04db7072d936",
         "version": "1.0.0"
       },
       "revision": 1,
@@ -106,7 +106,7 @@
           "order": 10,
           "recipe_id": "base.vasp",
           "selection_reason": "所有 VASP 任务共享的受审查基础参数",
-          "sha256": "67f39a5b7372996ccbb6560ec254bb200a282a266df850e57231af7e240a3542",
+          "sha256": "023efc9b938e79a4cf9fb834c4f4f83ed18f4adadc75dca949480fa0c5705eda",
           "version": "1.0.0"
         },
         {
@@ -118,7 +118,7 @@
           "order": 20,
           "recipe_id": "task.relax.standard",
           "selection_reason": "目标包含 relax 且精度档位由 precision 层控制",
-          "sha256": "1260e61d7844e1289a9f6a2beccf49988d90e517940de91024a32cd687cc36f7",
+          "sha256": "c3540ed6c89d63e87785f4a769644f8b96c47c33d78b3be8e8ac24bb3018e16d",
           "version": "1.0.0"
         },
         {
@@ -129,7 +129,7 @@
           "order": 30,
           "recipe_id": "electronic.metal",
           "selection_reason": "用户将体系电子类型标记为 metal",
-          "sha256": "93e3e4136e583a464eaf9ee6f81cb1feb23c7cff97e7ad6f6d238ac5e2b40abe",
+          "sha256": "97008222f48608e2a4b0cc07a059006d4208d3277f095015ea4af1fa83ba709b",
           "version": "1.0.0"
         },
         {
@@ -144,7 +144,7 @@
           "order": 40,
           "recipe_id": "modifier.dftu",
           "selection_reason": "用户启用 DFT+U；L/U/J 必须由用户输入并确认",
-          "sha256": "da205c85bca7b03c9a756241262169bead5fa5f9b5b83e22d34d234ae64a2dbe",
+          "sha256": "f925c8f351610bef8e71019dbfc0d8b947dfa1d62e3b020a7e9b1a39ff66b6dc",
           "version": "1.0.0"
         },
         {
@@ -159,7 +159,7 @@
           "order": 41,
           "recipe_id": "modifier.magnetic",
           "selection_reason": "用户确认磁性；MAGMOM 按 POSCAR 顺序派生",
-          "sha256": "d58bc3b4bb5b66af149f1f0a3ce4b0540bb0b6b6a0e5422a6f97fb3d5bc16ab7",
+          "sha256": "2fc797e7c0e4aaa1d58f1edae670ec5017c5e6db8bf2a9d663821e9f82dac4db",
           "version": "1.0.0"
         },
         {
@@ -170,7 +170,7 @@
           "order": 50,
           "recipe_id": "precision.standard",
           "selection_reason": "用户选择精度档位 standard",
-          "sha256": "17bb1c42b3e329509a82ffa678b92d3382b714684650670dc071a64d297357d4",
+          "sha256": "eeab880b47f786bfb833fda65ebb0232e4150980779b16223eeb288899a64010",
           "version": "1.0.0"
         }
       ],
@@ -184,7 +184,7 @@
         "display_name": "VASP MVP Core Recipe Pack",
         "pack_id": "vasp-mvp-core",
         "schema_version": "1.0",
-        "sha256": "2aab9931ff8ca9c0756b708c63fa9c484bd37c3db2bba3e6149aab6ae3a10461",
+        "sha256": "dad041b9859d74cc0a3196dd8aa1bf2acc7a3f27d9a3a360729b04db7072d936",
         "version": "1.0.0"
       },
       "revision": 1,
@@ -197,7 +197,7 @@
           "order": 10,
           "recipe_id": "base.vasp",
           "selection_reason": "所有 VASP 任务共享的受审查基础参数",
-          "sha256": "67f39a5b7372996ccbb6560ec254bb200a282a266df850e57231af7e240a3542",
+          "sha256": "023efc9b938e79a4cf9fb834c4f4f83ed18f4adadc75dca949480fa0c5705eda",
           "version": "1.0.0"
         },
         {
@@ -209,7 +209,7 @@
           "order": 20,
           "recipe_id": "task.static.standard",
           "selection_reason": "目标包含 static 且精度档位由 precision 层控制",
-          "sha256": "69ca83daae5e68ae8715ee9ce4d879208380ef24af715e767fb3d4f0f15adccd",
+          "sha256": "c91534edab085e319b276f71ea2ebda6ff76a3108721083ac6eed99fd4f0ebcc",
           "version": "1.0.0"
         },
         {
@@ -220,7 +220,7 @@
           "order": 30,
           "recipe_id": "electronic.metal",
           "selection_reason": "用户将体系电子类型标记为 metal",
-          "sha256": "93e3e4136e583a464eaf9ee6f81cb1feb23c7cff97e7ad6f6d238ac5e2b40abe",
+          "sha256": "97008222f48608e2a4b0cc07a059006d4208d3277f095015ea4af1fa83ba709b",
           "version": "1.0.0"
         },
         {
@@ -235,7 +235,7 @@
           "order": 40,
           "recipe_id": "modifier.dftu",
           "selection_reason": "用户启用 DFT+U；L/U/J 必须由用户输入并确认",
-          "sha256": "da205c85bca7b03c9a756241262169bead5fa5f9b5b83e22d34d234ae64a2dbe",
+          "sha256": "f925c8f351610bef8e71019dbfc0d8b947dfa1d62e3b020a7e9b1a39ff66b6dc",
           "version": "1.0.0"
         },
         {
@@ -250,7 +250,7 @@
           "order": 41,
           "recipe_id": "modifier.magnetic",
           "selection_reason": "用户确认磁性；MAGMOM 按 POSCAR 顺序派生",
-          "sha256": "d58bc3b4bb5b66af149f1f0a3ce4b0540bb0b6b6a0e5422a6f97fb3d5bc16ab7",
+          "sha256": "2fc797e7c0e4aaa1d58f1edae670ec5017c5e6db8bf2a9d663821e9f82dac4db",
           "version": "1.0.0"
         },
         {
@@ -261,7 +261,7 @@
           "order": 50,
           "recipe_id": "precision.standard",
           "selection_reason": "用户选择精度档位 standard",
-          "sha256": "17bb1c42b3e329509a82ffa678b92d3382b714684650670dc071a64d297357d4",
+          "sha256": "eeab880b47f786bfb833fda65ebb0232e4150980779b16223eeb288899a64010",
           "version": "1.0.0"
         }
       ],
@@ -275,7 +275,7 @@
         "display_name": "VASP MVP Core Recipe Pack",
         "pack_id": "vasp-mvp-core",
         "schema_version": "1.0",
-        "sha256": "2aab9931ff8ca9c0756b708c63fa9c484bd37c3db2bba3e6149aab6ae3a10461",
+        "sha256": "dad041b9859d74cc0a3196dd8aa1bf2acc7a3f27d9a3a360729b04db7072d936",
         "version": "1.0.0"
       },
       "revision": 1,
@@ -288,7 +288,7 @@
           "order": 10,
           "recipe_id": "base.vasp",
           "selection_reason": "所有 VASP 任务共享的受审查基础参数",
-          "sha256": "67f39a5b7372996ccbb6560ec254bb200a282a266df850e57231af7e240a3542",
+          "sha256": "023efc9b938e79a4cf9fb834c4f4f83ed18f4adadc75dca949480fa0c5705eda",
           "version": "1.0.0"
         },
         {
@@ -300,7 +300,7 @@
           "order": 20,
           "recipe_id": "task.dos.standard",
           "selection_reason": "目标包含 dos 且精度档位由 precision 层控制",
-          "sha256": "5c753495f63767f7be50697d9258a870eccb528b62f3990eddcb74bce2562e5b",
+          "sha256": "4726c7122776c2d05e230279f5436ceceaab8904767f07f03a6e18ab54431f76",
           "version": "1.0.0"
         },
         {
@@ -315,7 +315,7 @@
           "order": 40,
           "recipe_id": "modifier.dftu",
           "selection_reason": "用户启用 DFT+U；L/U/J 必须由用户输入并确认",
-          "sha256": "da205c85bca7b03c9a756241262169bead5fa5f9b5b83e22d34d234ae64a2dbe",
+          "sha256": "f925c8f351610bef8e71019dbfc0d8b947dfa1d62e3b020a7e9b1a39ff66b6dc",
           "version": "1.0.0"
         },
         {
@@ -330,7 +330,7 @@
           "order": 41,
           "recipe_id": "modifier.magnetic",
           "selection_reason": "用户确认磁性；MAGMOM 按 POSCAR 顺序派生",
-          "sha256": "d58bc3b4bb5b66af149f1f0a3ce4b0540bb0b6b6a0e5422a6f97fb3d5bc16ab7",
+          "sha256": "2fc797e7c0e4aaa1d58f1edae670ec5017c5e6db8bf2a9d663821e9f82dac4db",
           "version": "1.0.0"
         },
         {
@@ -341,7 +341,7 @@
           "order": 50,
           "recipe_id": "precision.standard",
           "selection_reason": "用户选择精度档位 standard",
-          "sha256": "17bb1c42b3e329509a82ffa678b92d3382b714684650670dc071a64d297357d4",
+          "sha256": "eeab880b47f786bfb833fda65ebb0232e4150980779b16223eeb288899a64010",
           "version": "1.0.0"
         }
       ],

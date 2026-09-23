@@ -1,13 +1,62 @@
 """库级 contract：门面对象/响应体对齐 6.4/6.5、workflow_plan.json 对齐 7.2 节。"""
 
+import hashlib
 import json
 
 import pytest
 
 from backend.app.recipes.errors import BeAError
-from backend.app.schemas.generation import DftuEntry, DftuSettings
-from backend.app.schemas.recipe import TaskType
+from backend.app.schemas.generation import (
+    DftuEntry, DftuSettings, MaterialAssumptions, SchedulerSettings,
+    StructureContext, WorkflowGenerateRequest,
+)
+from backend.app.schemas.recipe import ElectronicType, PrecisionLevel, TaskType
 from backend.app.workflow.pipeline import WorkflowGenerationPipeline
+
+
+SI2_POSCAR = """Si diamond primitive cell; demonstration starting geometry, not optimized
+5.43
+0.0000000000 0.5000000000 0.5000000000
+0.5000000000 0.0000000000 0.5000000000
+0.5000000000 0.5000000000 0.0000000000
+Si
+2
+Direct
+0.0000000000 0.0000000000 0.0000000000
+0.2500000000 0.2500000000 0.2500000000
+"""
+
+
+def test_si2_static_default_generates_gamma_8_with_unchanged_other_inputs():
+    """Replay the accepted Si2 static options through the real generation pipeline."""
+    source_sha = hashlib.sha256(SI2_POSCAR.encode("utf-8")).hexdigest()
+    assert source_sha == "45db62da59abe72824c5628262451a4aaa6540a7af2356dcb0de955c53dcf8e7"
+    request = WorkflowGenerateRequest(
+        workflow_id="wf_e39f0382",
+        structure=StructureContext(formula="Si2", elements=["Si"], counts=[2],
+                                   poscar_text=SI2_POSCAR, source_sha256=source_sha),
+        requested_tasks=[TaskType.STATIC], goal_text="static",
+        material_assumptions=MaterialAssumptions(
+            electronic_type=ElectronicType.SEMICONDUCTOR, magnetic=False),
+        precision=PrecisionLevel.STANDARD,
+        scheduler=SchedulerSettings(type="slurm", nodes=1, tasks_per_node=8,
+                                    walltime="00:10:00"),
+    )
+    result = WorkflowGenerationPipeline().generate(request)
+    files = result.bundle.files
+    assert files["02_static/KPOINTS"].decode("utf-8").splitlines()[1:] == [
+        "0", "Gamma", "8 8 8", "0 0 0",
+    ]
+    expected_hashes = {
+        "02_static/POSCAR": source_sha,
+        "02_static/INCAR": "dc5a2f04cb6cc114d8810d802498a31e76c5d293ea4211d8b2c5163c7bef9c47",
+        "02_static/submit.sh": "fecb66fc0671638aef33bb95c33d28a1675de946b8348d07515fcf1bfa960cb8",
+    }
+    for path, expected in expected_hashes.items():
+        assert hashlib.sha256(files[path]).hexdigest() == expected, path
+    manifest = json.loads(files["workflow_manifest.json"].decode("utf-8"))
+    kpoints_entry = next(item for item in manifest["files"] if item["path"] == "02_static/KPOINTS")
+    assert kpoints_entry["sha256"] == hashlib.sha256(files["02_static/KPOINTS"]).hexdigest()
 
 
 class TestFacadeContract:

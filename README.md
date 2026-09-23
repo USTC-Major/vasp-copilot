@@ -261,7 +261,7 @@ powershell -ExecutionPolicy Bypass -File backend\run_ci.ps1   # Windows
 - **诊断链路**：上传 zip → 安全解压（防路径逃逸/zip bomb）→ 文件识别（INCAR/OUTCAR/OSZICAR/POSCAR/CONTCAR/CIF/KPOINTS/日志）→ 规则诊断（证据+严重度）→ 修复建议 → Markdown 报告 → 下一步门控；
 - **CIF 转换**：通过 pymatgen 保留真实晶格与原子坐标；无效、缺坐标、无序、部分占据及多结构 CIF 采用 fail-closed 处理，不生成占位坐标；
 - **OSZICAR 诊断**：区分真实电子迭代与离子步汇总，支持 DAV/RMM/CG/DMP/SDA，并为 NELM、NSW 与 SCF 震荡提供对应文件证据；
-- **KPOINTS 科学语义**：自动网格按标准 KPPA÷原子数确定目标总 K 点数，并依据倒易晶格分配各方向网格；band 路径使用合法的 VASP Line-mode/Reciprocal 格式；
+- **KPOINTS 科学语义**：自动规则网格按标准 KPPA÷原子数确定目标总 K 点数，依据倒易晶格分配各方向网格并默认 Γ 中心；仍需按具体体系审阅网格比例与收敛性。显式 Monkhorst-Pack 输入/渲染保持支持，band 路径使用合法的 VASP Line-mode/Reciprocal 格式；
 - **续算文件证据**：诊断记录 CHGCAR/WAVECAR 的存在性、大小与哈希，但不读取其二进制正文或交给 LLM；
 - **工作流生成**：`POST /api/v1/workflows/plan|generate`，支持 AI 规划（自然语言→DAG，LLM 不稳定自动降级）与手工确认；产物含 workflow_plan.json / workflow_manifest.json / README_run_order.md / INPUT_CHECK_REPORT.md / POTCAR_REQUIRED.md 与各 step 输入文件，zip 字节级可复现；
 - **DFT+U 参数确认**：DFT+U 默认关闭；U/J/L 由用户填写并逐条明确确认；用户修改 element/L/U/J 后原有确认自动失效，必须重新确认；生成前展示最终参数摘要，摘要与实际 API payload 使用同一快照；
@@ -271,6 +271,8 @@ powershell -ExecutionPolicy Bypass -File backend\run_ci.ps1   # Windows
 - **LLM 解释与对话**：`POST /api/v1/chat` 通用多轮对话（模型设置界面配置，默认关闭）；agent/handle 自然语言映射为诊断工具；
 - **plots 输出**：SCF 曲线只使用真实电子迭代能量；证据不足时返回空序列、不伪造曲线；磁矩以结构化序列供前端直接绘图。
 - **AI Mode 受控写入与提交**：INCAR/KPOINTS 分别走结构化校验器与确定性生成器；提交脚本必须由用户提供并认领；授权卡单次有效且绑定目标、内容哈希、预检摘要和实际运行环境。
+
+工作流产物的字节可复现性以相同规范输入和经验证的依赖环境为前提：仓库内置 recipe YAML 在 checkout 时固定为 LF，loader 仍对实际读取的原始字节计算 SHA-256；ZIP 条目固定 Unix 主机元数据。已有 Windows 工作树在新增 `.gitattributes` 后可能仍保留旧 CRLF，需在保存未提交改动后用干净检出或新 clone 获取规范字节。既有保存的计划和归档不会自动重写；不同压缩库版本的 ZIP 字节一致性不在此保证范围内。
 
 ## 6. 安全边界与已知限制
 
