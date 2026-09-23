@@ -58,7 +58,11 @@ async function request<T>(endpoint: string, options: RequestOptions = {}): Promi
   });
 
   if (responseType === 'blob') {
-    if (!response.ok) throw new ApiError('DOWNLOAD_FAILED', '下载失败', false, response.status);
+    if (!response.ok) {
+      const failed = await response.json().catch(() => null) as { error?: { code?: string; message?: string; retryable?: boolean } } | null;
+      throw new ApiError(failed?.error?.code || 'DOWNLOAD_FAILED', failed?.error?.message || '下载失败',
+        failed?.error?.retryable || false, response.status);
+    }
     return response.blob() as unknown as T;
   }
 
@@ -347,6 +351,11 @@ export const toolboxApi = {
     request<{ mode: 'toolbox'; deleted: true; task_id: string }>(toolboxTaskPath(projectId, taskId), { method: 'DELETE' }),
   getTaskDetail: (projectId: string, taskId: string, signal?: AbortSignal) =>
     request<import('../types/toolbox').ToolboxTaskDetail>(`${toolboxTaskPath(projectId, taskId)}/detail`, { signal }),
+  downloadResult: (projectId: string, taskId: string, jobKey: string, attemptId: string,
+                   name: import('../types/toolbox').ToolboxResultName, signal?: AbortSignal) =>
+    request<Blob>(`${toolboxTaskPath(projectId, taskId)}/results/${name}`, {
+      params: { job_key: jobKey, attempt_id: attemptId }, responseType: 'blob', signal,
+    }),
   getEvents: (projectId: string, taskId: string, after = 0) =>
     request<{ mode: 'toolbox'; events: import('../types/toolbox').ToolboxExecutionEvent[]; cursor: number }>(
       `${toolboxTaskPath(projectId, taskId)}/events`, { params: { after } },

@@ -1,6 +1,7 @@
 """BE-A 测试公共 fixtures（运行方式：仓库根目录 python -m pytest backend/tests/be_a -q）。"""
 
 import sys
+import hashlib
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -73,7 +74,7 @@ def fe2o3_structure() -> StructureContext:
         counts=[2, 3],
         lattice=LatticeInfo(a=5.03, b=5.03, c=13.75, alpha=90, beta=90, gamma=120),
         poscar_text=FE2O3_POSCAR,
-        source_sha256="0" * 64,
+        source_sha256=hashlib.sha256(FE2O3_POSCAR.encode("utf-8")).hexdigest(),
         transition_metals=["Fe"],
     )
 
@@ -87,7 +88,7 @@ def nacl_structure() -> StructureContext:
         counts=[1, 1],
         lattice=LatticeInfo(a=5.6, b=5.6, c=5.6, alpha=90, beta=90, gamma=90),
         poscar_text=NACL_POSCAR,
-        source_sha256="1" * 64,
+        source_sha256=hashlib.sha256(NACL_POSCAR.encode("utf-8")).hexdigest(),
     )
 
 

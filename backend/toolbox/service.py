@@ -72,6 +72,10 @@ class ExecutionService:
             raise ToolboxError('TASK_NOT_FOUND', '计算任务不存在或已删除', 404)
         return task
 
+    def download_result(self, project_id, task_id, job_key, attempt_id, name):
+        from .results import download_result
+        return download_result(self, project_id, task_id, job_key, attempt_id, name)
+
     def executor(self, project_id, task_id):
         self.require_task(project_id, task_id)
         return ToolExecutor(store=self.store, project_id=project_id, task_id=task_id,

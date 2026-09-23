@@ -4,6 +4,7 @@ This file is sent as product code to ``python3 -I -u -c``. Request data is
 strictly JSON on stdin; importing it performs no filesystem operations.
 """
 import ctypes
+import base64
 import errno
 import hashlib
 import json
@@ -21,6 +22,9 @@ POLICY = "remote-files-v1"
 MAX_FRAME = 1024 * 1024
 MAX_REPLY = 64 * 1024
 TEXT_LIMIT = 12000
+RESULT_LIMIT = 32 * 1024 * 1024
+RESULT_CHUNK = 32 * 1024
+RESULT_NAMES = frozenset({"OUTCAR", "OSZICAR", "CONTCAR"})
 CHUNK = 1024 * 1024
 RESERVED = ".vasp-doctor-"
 CREDENTIAL_PARTS = ("/.ssh", "/.gnupg", "/.aws", "/.azure", "/.codex", "/.config", "/.vasp-ai")
@@ -309,6 +313,68 @@ def root_evidence(path):
                 "identity": metadata(os.fstat(fd)), "ancestors": chain, "resolution_chain": links}
     finally:
         os.close(fd)
+
+
+class ResultReader:
+    """One fixed-name, read-only FD session; no path supplied after begin."""
+
+    def __init__(self, root, name):
+        require(name in RESULT_NAMES, "CONTENT_READ_DENIED", "Unsupported result name")
+        require(isinstance(root, dict) and root.get("resolution_chain") == [],
+                "PATH_SYMLINK_ESCAPE", "Result directory must not contain links")
+        require(root.get("requested_path") == root.get("canonical_path"),
+                "PATH_SYMLINK_ESCAPE", "Result directory must be direct")
+        self.root, self.name = root, name
+        self.directory_fd = self.file_fd = None
+        self.length = 0
+        self.index = 0
+        self.sha = hashlib.sha256()
+        try:
+            verify_root(root)
+            self.directory_fd, _ = open_directory(root["requested_path"])
+            require(identity_matches(metadata(os.fstat(self.directory_fd)), root["identity"], stable=True),
+                    "ROOT_CHANGED", "Result directory changed")
+            self.file_fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                                   dir_fd=self.directory_fd)
+            self.info = metadata(os.fstat(self.file_fd))
+            require(self.info["type"] == "file", "CONTENT_READ_DENIED", "Result must be an ordinary file")
+            require(self.info["size"] <= RESULT_LIMIT, "RESULT_TOO_LARGE", "Result exceeds 32 MiB")
+            self._check()
+        except BaseException:
+            self.close()
+            raise
+
+    def _check(self):
+        require(identity_matches(metadata(os.fstat(self.file_fd)), self.info, stable=True),
+                "SOURCE_CHANGED", "Result file changed during download")
+        require(identity_matches(metadata(os.stat(self.name, dir_fd=self.directory_fd,
+                                                  follow_symlinks=False)), self.info, stable=True),
+                "SOURCE_CHANGED", "Result path changed during download")
+        require(identity_matches(metadata(os.fstat(self.directory_fd)), self.root["identity"], stable=True),
+                "ROOT_CHANGED", "Result directory changed during download")
+        verify_root(self.root)
+
+    def next(self):
+        self._check()
+        chunk = os.read(self.file_fd, RESULT_CHUNK)
+        self._check()
+        self.length += len(chunk)
+        require(self.length <= RESULT_LIMIT, "RESULT_TOO_LARGE", "Result exceeds 32 MiB")
+        self.sha.update(chunk)
+        if chunk:
+            index = self.index
+            self.index += 1
+            return {"state": "chunk", "index": index, "data": base64.b64encode(chunk).decode("ascii")}
+        require(self.length == self.info["size"], "SOURCE_CHANGED", "Result length changed during download")
+        return {"state": "complete", "length": self.length, "sha256": self.sha.hexdigest()}
+
+    def close(self):
+        if self.file_fd is not None:
+            os.close(self.file_fd)
+            self.file_fd = None
+        if self.directory_fd is not None:
+            os.close(self.directory_fd)
+            self.directory_fd = None
 
 
 def rename_noreplace(parent_fd, source, target):
@@ -920,6 +986,7 @@ def _reply(data=None, error=None):
 
 def main():
     transaction = None
+    result_reader = None
     def cancellation():
         if select.select([sys.stdin.buffer], [], [], 0)[0]:
             request = _read_request()
@@ -933,9 +1000,14 @@ def main():
                     timeout = min(60, transaction.deadline - transaction.clock())
                     if transaction.current and "prepared_at" in transaction.current:
                         timeout = min(timeout, transaction.current["prepared_at"] + 30 - transaction.clock())
+                if result_reader:
+                    timeout = 60
                 request = _read_request(timeout)
                 require(isinstance(request, dict) and isinstance(request.get("op"), str))
                 op = request["op"]
+                if result_reader is not None:
+                    require(op in {"result_next", "result_abort"}, "PROTOCOL_ERROR",
+                            "Only result continuation or abort is accepted")
                 if op == "probe" and transaction is None:
                     require(set(request) == {"op"})
                     _reply(probe())
@@ -954,6 +1026,25 @@ def main():
                 elif op == "root" and transaction is None:
                     require(set(request) == {"op", "path"})
                     _reply(root_evidence(request["path"]))
+                elif op == "result_begin" and transaction is None and result_reader is None:
+                    require(set(request) == {"op", "root", "name", "max_bytes"})
+                    require(request["max_bytes"] == RESULT_LIMIT)
+                    result_reader = ResultReader(request["root"], request["name"])
+                    _reply({"state": "ready", "size": result_reader.info["size"]})
+                elif op == "result_next" and transaction is None and result_reader is not None:
+                    require(set(request) == {"op"})
+                    result = result_reader.next()
+                    _reply(result)
+                    if result["state"] == "complete":
+                        result_reader.close()
+                        result_reader = None
+                        break
+                elif op == "result_abort" and transaction is None and result_reader is not None:
+                    require(set(request) == {"op"})
+                    result_reader.close()
+                    result_reader = None
+                    _reply({"state": "aborted"})
+                    break
                 elif op == "destination" and transaction is None:
                     require(set(request) == {"op", "root", "path"})
                     _reply(destination_evidence(request["root"], request["path"]))
@@ -982,11 +1073,16 @@ def main():
                 error = map_error(exc)
                 if transaction:
                     error.leftovers.extend(transaction.abort()["leftovers"])
+                if result_reader:
+                    result_reader.close()
+                    result_reader = None
                 _reply(error=error)
                 break
     finally:
         if transaction:
             transaction.close()
+        if result_reader:
+            result_reader.close()
 
 
 if __name__ == "__main__":

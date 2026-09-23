@@ -34,13 +34,14 @@ from .exec.errors import ExecutionPolicyViolation
 from .exec.policy import check_path_in_bounds
 from .incar_draft import (IncarUnknownTagError, build_incar_action,
                            commit_incar_action)
+from .input_checks import bounded_fingerprint, read_bound_input, validate_input_set
+from backend.input_validation import InputValidationError
 from .projects import ProjectStore
 from .schemas import PlanSnapshot, PlanStep
 from .tools.draft import (find_remote_submit_script,
                            fingerprint_local_submit_script,
                            fingerprint_remote_submit_script,
-                           input_fingerprint_local,
-                           input_fingerprint_remote, precheck_snapshot,
+                           precheck_snapshot,
                            resolve_user_submit_script, submit_command)
 from .workflow.plan import validate_plan
 from .workspace import snapshot_hpc_workspace, snapshot_workspace
@@ -538,6 +539,7 @@ class ToolExecutor:
             suffix = (f"（作业目录 {key}）" if job_dir is not None else "")
             calc = (self._remote_job_dir(hpc, remote, key)
                     if (hpc is not None and remote) else "")
+            contents: dict[str, bytes] = {}
             for name in required:
                 name = str(name or "").strip()
                 if not name:
@@ -547,23 +549,39 @@ class ToolExecutor:
                 try:
                     if calc:
                         path = f"{calc}/{name}"
-                        fingerprint = input_fingerprint_remote(hpc, path)
+                        fingerprint = bounded_fingerprint(name, path, hpc=hpc)
                         source = "remote"
                         where = "（超算）"
                     else:
                         target = (base / name).resolve()
                         target.relative_to(local_dir.resolve())
-                        fingerprint = input_fingerprint_local(target)
+                        fingerprint = bounded_fingerprint(name, target)
                         source = "local"
                         where = "（本地）"
+                    contents[name] = read_bound_input(name, fingerprint,
+                                                      hpc=hpc if calc else None)
                     input_records.append({"job_key": key, "name": name,
                                           "source": source, **fingerprint})
                     rows.append(f"- [ok] {name} 非空且哈希已绑定{where}{suffix}")
+                except InputValidationError as exc:
+                    ok = False
+                    rows.append(f"- [error] {name} {exc}{suffix}，硬预检阻止提交")
+                    issues.append({"job": key, "file": name, "level": "error",
+                                   "message": f"{name} {exc}{suffix}"})
                 except Exception:  # noqa: BLE001
                     ok = False
                     rows.append(f"- [error] {name} 缺失、为空或无法哈希，硬预检阻止提交" + suffix)
                     issues.append({"job": key, "file": name, "level": "error",
                                    "message": f"{name} 缺失、为空或无法哈希{suffix}"})
+            if len(contents) == len(required):
+                try:
+                    validate_input_set(contents)
+                    rows.append(f"- [ok] 基础格式与物种顺序检查通过{suffix}；参数与科学适用性仍需用户判断")
+                except InputValidationError as exc:
+                    ok = False
+                    rows.append(f"- [error] 基础输入检查失败：{exc}{suffix}")
+                    issues.append({"job": key, "file": "基础输入", "level": "error",
+                                   "message": str(exc)})
             # 提交脚本：超算作业目录优先，本地回退（M51 超算为主）
             script_ok = False
             actual_script: dict | None = None

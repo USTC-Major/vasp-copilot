@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from .conftest import call_tool, create_project_task, resolve_card
 from .test_monitor_events_report import OUTCAR_OK, OSZICAR_OK
+from backend.tests.valid_vasp_inputs import FILES as VALID_INPUTS
 
 
 def _failed_flow(api, old_job_id=6101):
@@ -45,10 +46,10 @@ def _failed_flow(api, old_job_id=6101):
 def _remote_ready(api, key):
     base = f"/review/calc/{key}"
     api.hpc.files.update({
-        f"{base}/INCAR": b"SYSTEM = retry\nEDIFF = 1e-4\n",
-        f"{base}/POSCAR": b"retry POSCAR\n",
-        f"{base}/KPOINTS": b"Automatic mesh\n0\nGamma\n1 1 1\n0 0 0\n",
-        f"{base}/POTCAR": b"TITEL = PAW_PBE offline\n",
+        f"{base}/INCAR": VALID_INPUTS["INCAR"],
+        f"{base}/POSCAR": VALID_INPUTS["POSCAR"],
+        f"{base}/KPOINTS": VALID_INPUTS["KPOINTS"],
+        f"{base}/POTCAR": VALID_INPUTS["POTCAR"],
         f"{base}/run.sh": b"#!/bin/bash\nsrun vasp_std\n",
     })
     return base

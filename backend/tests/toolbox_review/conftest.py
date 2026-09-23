@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from backend.tests.valid_vasp_inputs import FILES as VALID_INPUTS
 
 
 @dataclass
@@ -197,12 +198,8 @@ def api(tmp_path, monkeypatch):
     root = tmp_path / "isolated-home"
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    for name, content in {
-        "POSCAR": "offline POSCAR\n",
-        "INCAR": "SYSTEM = offline-review\n",
-        "KPOINTS": "Automatic mesh\n0\nGamma\n1 1 1\n0 0 0\n",
-    }.items():
-        (workspace / name).write_text(content, encoding="utf-8")
+    for name in ("POSCAR", "INCAR", "KPOINTS"):
+        (workspace / name).write_bytes(VALID_INPUTS[name])
 
     monkeypatch.setenv("VASP_AI_HOME", str(root))
     monkeypatch.setenv("ENABLE_AI_MODE", "false")

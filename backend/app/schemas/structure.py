@@ -11,6 +11,7 @@ from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict
 
+from backend.input_validation import InputValidationError, PoscarInfo, validate_poscar
 from backend.app.schemas.generation import LatticeInfo, StructureContext
 
 
@@ -29,6 +30,8 @@ class StructureSummary(BaseModel):
     poscar_text: str = ""
     source_sha256: Optional[str] = None
     transition_metals: List[str] = []
+    coordinate_mode: str = "direct"
+    selective_dynamics: bool = False
 
 
 # d-block metals commonly checked for magnetism/DFT+U hints.
@@ -50,42 +53,18 @@ def _detect_transition_metals(elements: List[str]) -> List[str]:
     return [element for element in elements if element in _TRANSITION_METALS]
 
 
-def _parse_lattice(text: str) -> Optional[LatticeInfo]:
-    """解析 POSCAR scale factor + 3 个晶格矢量得到 LatticeInfo。"""
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
-    if len(lines) < 5:
-        return None
-    try:
-        scale = float(lines[1])
-    except ValueError:
-        scale = 1.0
-    rows: List[List[float]] = []
-    for index in range(2, 5):
-        try:
-            rows.append([float(v) for v in lines[index].split()[:3]])
-        except ValueError:
-            return None
-    if len(rows) != 3 or any(len(row) != 3 for row in rows):
-        return None
-    matrix = [[scale * value for value in row] for row in rows]
+def _lattice_from_validated(info: PoscarInfo) -> LatticeInfo:
+    """Derive all lattice fields from the strictly validated POSCAR matrix."""
+    matrix = [list(row) for row in info.matrix]
 
-    def _dot(u: List[float], v: List[float]) -> float:
-        return sum(x * y for x, y in zip(u, v))
-
-    def _norm(u: List[float]) -> float:
-        return math.sqrt(sum(x * x for x in u))
-
-    (a, b, c) = (_norm(matrix[i]) for i in range(3))
+    (a, b, c) = (math.hypot(*matrix[i]) for i in range(3))
+    unit = [[v / length for v in row] for row, length in zip(matrix, (a, b, c))]
+    def cosine(i: int, j: int) -> float:
+        return sum(x * y for x, y in zip(unit[i], unit[j]))
     acos_v = lambda v: math.degrees(math.acos(max(-1.0, min(1.0, v))))
-    alpha = acos_v(_dot(matrix[1], matrix[2]) / (_norm(matrix[1]) * _norm(matrix[2])))
-    beta = acos_v(_dot(matrix[0], matrix[2]) / (_norm(matrix[0]) * _norm(matrix[2])))
-    gamma = acos_v(_dot(matrix[0], matrix[1]) / (_norm(matrix[0]) * _norm(matrix[1])))
-    cross = [
-        matrix[1][1] * matrix[2][2] - matrix[1][2] * matrix[2][1],
-        matrix[1][2] * matrix[2][0] - matrix[1][0] * matrix[2][2],
-        matrix[1][0] * matrix[2][1] - matrix[1][1] * matrix[2][0],
-    ]
-    volume = abs(_dot(matrix[0], cross))
+    alpha = acos_v(cosine(1, 2))
+    beta = acos_v(cosine(0, 2))
+    gamma = acos_v(cosine(0, 1))
     return LatticeInfo(
         matrix=matrix,
         a=a,
@@ -94,7 +73,7 @@ def _parse_lattice(text: str) -> Optional[LatticeInfo]:
         alpha=alpha,
         beta=beta,
         gamma=gamma,
-        volume=volume,
+        volume=info.volume,
     )
 
 
@@ -105,8 +84,14 @@ def build_structure_summary(
     counts: List[int],
     source_file: str = "POSCAR",
     structure_id: Optional[str] = None,
+    validated: Optional[PoscarInfo] = None,
 ) -> StructureSummary:
     """由 POSCAR 派生数据构建 doctor 侧 StructureSummary。"""
+    info = validated or validate_poscar(poscar_text)
+    if info.vasp4:
+        raise InputValidationError("POSCAR_SPECIES_REQUIRED", "该 POSCAR 未列物种；请提供含元素符号行的 POSCAR")
+    if tuple(elements) != info.elements or tuple(counts) != info.counts:
+        raise InputValidationError("POSCAR_METADATA_MISMATCH", "POSCAR 物种或数量与结构信息不一致")
     sha = hashlib.sha256(poscar_text.encode("utf-8")).hexdigest()
     return StructureSummary(
         structure_id=structure_id,
@@ -115,11 +100,31 @@ def build_structure_summary(
         elements=list(elements),
         counts=list(counts),
         atom_count=int(sum(counts)),
-        lattice=_parse_lattice(poscar_text),
+        lattice=_lattice_from_validated(info),
         poscar_text=poscar_text,
         source_sha256=sha,
         transition_metals=_detect_transition_metals(elements),
+        coordinate_mode=info.coordinate_mode,
+        selective_dynamics=info.selective_dynamics,
     )
+
+
+def validated_structure_context(context: StructureContext) -> StructureContext:
+    """Discard untrusted derived fields and check metadata against source text."""
+    info = validate_poscar(context.poscar_text)
+    if info.vasp4:
+        raise InputValidationError("POSCAR_SPECIES_REQUIRED", "该 POSCAR 未列物种；请提供含元素符号行的 POSCAR")
+    if (tuple(context.elements) != info.elements or tuple(context.counts) != info.counts
+            or context.atom_count != info.atom_count):
+        raise InputValidationError("POSCAR_METADATA_MISMATCH", "工作流物种、数量或原子总数与 POSCAR 不一致")
+    summary = build_structure_summary(poscar_text=context.poscar_text,
+                                      elements=list(info.elements), counts=list(info.counts),
+                                      validated=info)
+    return context.model_copy(update={
+        "formula": summary.formula, "lattice": summary.lattice,
+        "source_sha256": summary.source_sha256,
+        "transition_metals": list(summary.transition_metals),
+    })
 
 
 def to_structure_context(summary: StructureSummary) -> StructureContext:

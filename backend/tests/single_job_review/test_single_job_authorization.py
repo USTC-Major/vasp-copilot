@@ -19,6 +19,7 @@ from backend.toolbox.orchestrator import Orchestrator
 from backend.toolbox.projects import ProjectStore
 from backend.toolbox.service import ExecutionService
 from backend.toolbox.submission import perform_submit
+from backend.tests.valid_vasp_inputs import FILES as VALID_INPUTS
 
 
 def _stack(tmp_path: Path, jobs: list[dict], *, hpc: FakeHPC | None = None):
@@ -41,7 +42,7 @@ def _stack(tmp_path: Path, jobs: list[dict], *, hpc: FakeHPC | None = None):
         job.setdefault("attempt_id", uuid.uuid4().hex)
         calc = f"/review/calc/{job['key']}"
         for name in ("INCAR", "POSCAR", "KPOINTS", "POTCAR"):
-            fake.files[f"{calc}/{name}"] = f"{job['key']}:{name}\n".encode()
+            fake.files[f"{calc}/{name}"] = VALID_INPUTS[name]
         script = b"#!/bin/bash\nsrun vasp_std\n"
         script_path = f"{calc}/run.sh"
         fake.files[script_path] = script

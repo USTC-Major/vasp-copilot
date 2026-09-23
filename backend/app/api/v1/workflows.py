@@ -20,6 +20,7 @@ from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field
 
+from backend.input_validation import InputValidationError, TEXT_LIMIT
 from backend.app.schemas.generation import (
     DftuSettings,
     MaterialAssumptions,
@@ -33,7 +34,7 @@ from backend.app.schemas.recipe import (
     PrecisionLevel,
     TaskType,
 )
-from backend.app.schemas.structure import build_structure_summary, to_structure_context
+from backend.app.schemas.structure import build_structure_summary, to_structure_context, validated_structure_context
 from ...llm import get_explainer
 from backend.app.workflow.nl_planner import (
     LlmWorkflowPlanner,
@@ -42,8 +43,7 @@ from backend.app.workflow.nl_planner import (
 )
 from backend.app.services.workflow_service import WorkflowService
 
-from ...core.errors import ConflictError, NotFoundError
-from ...parsers.poscar import parse_poscar
+from ...core.errors import ConflictError, NotFoundError, ValidationError
 from ...schemas.api import ApiEnvelope
 from .deps import file_store, get_request_id, settings, store
 
@@ -148,7 +148,11 @@ def _read_structure_text(base_dir: Path):
             target = base_dir / name
             if target.is_file():
                 try:
-                    return target.read_text(encoding="utf-8", errors="replace"), name
+                    if target.stat().st_size > TEXT_LIMIT:
+                        raise ValidationError("INPUT_SIZE_INVALID", "诊断结构文件超过本轮 2 MiB 上限")
+                    return target.read_text(encoding="utf-8"), name
+                except UnicodeDecodeError as exc:
+                    raise ValidationError("INPUT_ENCODING_INVALID", "诊断结构文件不是有效 UTF-8") from exc
                 except OSError:
                     return None, None
     return None, None
@@ -163,19 +167,16 @@ def _structure_from_diagnosis(diagnosis_id: str) -> StructureContext:
             "STRUCTURE_NOT_FOUND",
             "no POSCAR/CONTCAR found for diagnosis_id",
         )
-    parsed = parse_poscar(text)
-    if not parsed.elements or not parsed.counts:
-        raise ConflictError(
-            "STRUCTURE_UNPARSEABLE",
-            "POSCAR/CONTCAR species/counts could not be parsed",
+    try:
+        from backend.input_validation import validate_poscar
+        parsed = validate_poscar(text)
+        summary = build_structure_summary(
+            poscar_text=text, elements=list(parsed.elements),
+            counts=list(parsed.counts), source_file=source or "POSCAR",
+            structure_id=diagnosis_id, validated=parsed,
         )
-    summary = build_structure_summary(
-        poscar_text=text,
-        elements=parsed.elements,
-        counts=parsed.counts,
-        source_file=source or "POSCAR",
-        structure_id=diagnosis_id,
-    )
+    except InputValidationError as exc:
+        raise ValidationError(exc.code, str(exc)) from exc
     return to_structure_context(summary)
 
 
@@ -185,12 +186,17 @@ def _structure_from_file_store(structure_id: str) -> StructureContext:
 
 
 def _resolve_workflow(req: WorkflowApiRequest, config: WorkflowConfig) -> WorkflowGenerateRequest:
+    def build(structure: StructureContext) -> WorkflowGenerateRequest:
+        try:
+            return config.to_request(validated_structure_context(structure))
+        except InputValidationError as exc:
+            raise ValidationError(exc.code, str(exc)) from exc
     if config.structure is not None and config.structure.poscar_text:
-        return config.to_request(config.structure)
+        return build(config.structure)
     if req.structure_id:
-        return config.to_request(_structure_from_file_store(req.structure_id))
+        return build(_structure_from_file_store(req.structure_id))
     if req.diagnosis_id:
-        return config.to_request(_structure_from_diagnosis(req.diagnosis_id))
+        return build(_structure_from_diagnosis(req.diagnosis_id))
     raise ConflictError(
         "STRUCTURE_REQUIRED",
         "provide workflow.structure, structure_id, or a diagnosis_id with a POSCAR",
@@ -310,7 +316,18 @@ async def plan_from_nl(
     if not req.structure_id:
         raise ConflictError("STRUCTURE_REQUIRED", "provide structure_id for AI planning")
     record = file_store.get_structure(req.structure_id)
-    summary = record.summary
+    # Validate legacy persisted structures before even constructing a model call.
+    # The model sees only metadata derived from the actual source POSCAR.
+    try:
+        trusted = validated_structure_context(to_structure_context(record.summary))
+        summary = build_structure_summary(
+            poscar_text=trusted.poscar_text,
+            elements=list(trusted.elements), counts=list(trusted.counts),
+            source_file=record.summary.source_file,
+            structure_id=req.structure_id,
+        )
+    except InputValidationError as exc:
+        raise ValidationError(exc.code, str(exc)) from exc
 
     explainer = settings and get_explainer(settings)
     planner = LlmWorkflowPlanner(explainer=explainer)
