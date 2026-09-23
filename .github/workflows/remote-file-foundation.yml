@@ -126,6 +126,7 @@ jobs:
             backend/tests/be_a/test_pipeline_contract.py \
             backend/tests/be_a/test_golden.py \
             backend/tests/be_a/test_bundle_zip.py \
+            backend/tests/be_a/test_recipe_schema_fail_closed.py \
             backend/tests/be_a/test_reports.py \
             --basetemp="$RUNNER_TEMP/file-action-integration-work" \
             --junitxml="$evidence/pytest.xml" \
@@ -140,6 +141,8 @@ jobs:
             | tee "$evidence/critical-basic-release-tests.txt"
           python3 backend/tests/gamma_default_review/ci_assert.py "$evidence/pytest.xml" \
             | tee "$evidence/critical-gamma-default-tests.txt"
+          python3 backend/tests/gamma_default_review/artifact_evidence.py \
+            --output "$evidence/gamma-artifacts.json"
 
       - name: Keep small diagnostic evidence for one day
         if: always()

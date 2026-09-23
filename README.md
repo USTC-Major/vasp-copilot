@@ -272,6 +272,8 @@ powershell -ExecutionPolicy Bypass -File backend\run_ci.ps1   # Windows
 - **plots 输出**：SCF 曲线只使用真实电子迭代能量；证据不足时返回空序列、不伪造曲线；磁矩以结构化序列供前端直接绘图。
 - **AI Mode 受控写入与提交**：INCAR/KPOINTS 分别走结构化校验器与确定性生成器；提交脚本必须由用户提供并认领；授权卡单次有效且绑定目标、内容哈希、预检摘要和实际运行环境。
 
+工作流产物的字节可复现性以相同规范输入和经验证的依赖环境为前提：仓库内置 recipe YAML 在 checkout 时固定为 LF，loader 仍对实际读取的原始字节计算 SHA-256；ZIP 条目固定 Unix 主机元数据。已有 Windows 工作树在新增 `.gitattributes` 后可能仍保留旧 CRLF，需在保存未提交改动后用干净检出或新 clone 获取规范字节。既有保存的计划和归档不会自动重写；不同压缩库版本的 ZIP 字节一致性不在此保证范围内。
+
 ## 6. 安全边界与已知限制
 
 - POTCAR：本项目**不下载、不内置、不拼接**（`ENABLE_POTCAR_ASSEMBLY=false`，VASP 许可证限制）；无 POTCAR 时生成 POTCAR_REQUIRED.md 且全部 step `runnable=false`；

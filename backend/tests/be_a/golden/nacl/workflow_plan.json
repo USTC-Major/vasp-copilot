@@ -59,7 +59,7 @@
         "display_name": "VASP MVP Core Recipe Pack",
         "pack_id": "vasp-mvp-core",
         "schema_version": "1.0",
-        "sha256": "2aab9931ff8ca9c0756b708c63fa9c484bd37c3db2bba3e6149aab6ae3a10461",
+        "sha256": "dad041b9859d74cc0a3196dd8aa1bf2acc7a3f27d9a3a360729b04db7072d936",
         "version": "1.0.0"
       },
       "revision": 1,
@@ -72,7 +72,7 @@
           "order": 10,
           "recipe_id": "base.vasp",
           "selection_reason": "所有 VASP 任务共享的受审查基础参数",
-          "sha256": "67f39a5b7372996ccbb6560ec254bb200a282a266df850e57231af7e240a3542",
+          "sha256": "023efc9b938e79a4cf9fb834c4f4f83ed18f4adadc75dca949480fa0c5705eda",
           "version": "1.0.0"
         },
         {
@@ -84,7 +84,7 @@
           "order": 20,
           "recipe_id": "task.relax.standard",
           "selection_reason": "目标包含 relax 且精度档位由 precision 层控制",
-          "sha256": "1260e61d7844e1289a9f6a2beccf49988d90e517940de91024a32cd687cc36f7",
+          "sha256": "c3540ed6c89d63e87785f4a769644f8b96c47c33d78b3be8e8ac24bb3018e16d",
           "version": "1.0.0"
         },
         {
@@ -95,7 +95,7 @@
           "order": 30,
           "recipe_id": "electronic.semiconductor",
           "selection_reason": "用户将体系电子类型标记为 semiconductor",
-          "sha256": "4f32e45ab16d58e660ac2f55f37ba773140e732f07892aacd9ab4c9ecad5e8dc",
+          "sha256": "7e241b177cd1ad5f5c8ffc50b2ac9fc6f315326ecbbfc8e5cd029e00eefa9621",
           "version": "1.0.0"
         },
         {
@@ -106,7 +106,7 @@
           "order": 50,
           "recipe_id": "precision.quick",
           "selection_reason": "用户选择精度档位 quick",
-          "sha256": "3c9366571d686ae3e95ca8c199e9e008a8b2246797f79a1c61445408a60ec811",
+          "sha256": "61b308c822aec3daf5ef7be39413f93b7d8f7b7f1f6fd099812a09130f4b14d1",
           "version": "1.0.0"
         }
       ],
@@ -120,7 +120,7 @@
         "display_name": "VASP MVP Core Recipe Pack",
         "pack_id": "vasp-mvp-core",
         "schema_version": "1.0",
-        "sha256": "2aab9931ff8ca9c0756b708c63fa9c484bd37c3db2bba3e6149aab6ae3a10461",
+        "sha256": "dad041b9859d74cc0a3196dd8aa1bf2acc7a3f27d9a3a360729b04db7072d936",
         "version": "1.0.0"
       },
       "revision": 1,
@@ -133,7 +133,7 @@
           "order": 10,
           "recipe_id": "base.vasp",
           "selection_reason": "所有 VASP 任务共享的受审查基础参数",
-          "sha256": "67f39a5b7372996ccbb6560ec254bb200a282a266df850e57231af7e240a3542",
+          "sha256": "023efc9b938e79a4cf9fb834c4f4f83ed18f4adadc75dca949480fa0c5705eda",
           "version": "1.0.0"
         },
         {
@@ -145,7 +145,7 @@
           "order": 20,
           "recipe_id": "task.static.standard",
           "selection_reason": "目标包含 static 且精度档位由 precision 层控制",
-          "sha256": "69ca83daae5e68ae8715ee9ce4d879208380ef24af715e767fb3d4f0f15adccd",
+          "sha256": "c91534edab085e319b276f71ea2ebda6ff76a3108721083ac6eed99fd4f0ebcc",
           "version": "1.0.0"
         },
         {
@@ -156,7 +156,7 @@
           "order": 30,
           "recipe_id": "electronic.semiconductor",
           "selection_reason": "用户将体系电子类型标记为 semiconductor",
-          "sha256": "4f32e45ab16d58e660ac2f55f37ba773140e732f07892aacd9ab4c9ecad5e8dc",
+          "sha256": "7e241b177cd1ad5f5c8ffc50b2ac9fc6f315326ecbbfc8e5cd029e00eefa9621",
           "version": "1.0.0"
         },
         {
@@ -167,7 +167,7 @@
           "order": 50,
           "recipe_id": "precision.quick",
           "selection_reason": "用户选择精度档位 quick",
-          "sha256": "3c9366571d686ae3e95ca8c199e9e008a8b2246797f79a1c61445408a60ec811",
+          "sha256": "61b308c822aec3daf5ef7be39413f93b7d8f7b7f1f6fd099812a09130f4b14d1",
           "version": "1.0.0"
         }
       ],

@@ -26,6 +26,10 @@ CRITICAL_CASES = {
      "test_zip_roundtrip_matches_manifest"),
     ("backend.tests.be_a.test_reports.TestFileTreeConsistency",
      "test_file_tree_matches_bundle"),
+    ("backend.tests.be_a.test_bundle_zip.TestBundleBuilder",
+     "test_zip_entries_sorted_with_fixed_mtime"),
+    ("backend.tests.be_a.test_recipe_schema_fail_closed",
+     "test_builtin_recipe_hashes_use_lf_raw_bytes"),
 }
 
 

@@ -36,6 +36,8 @@ class TestBundleBuilder:
             assert [info.filename for info in infos] == sorted(SAMPLE_FILES)
             for info in infos:
                 assert info.date_time == FIXED_ZIP_DATE_TIME
+                assert info.create_system == 3
+                assert info.external_attr == 0o644 << 16
 
     def test_manifest_timestamp_is_fixed(self):
         result = BundleBuilder().build("wf_x", SAMPLE_FILES)
