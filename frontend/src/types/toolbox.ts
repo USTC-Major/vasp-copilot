@@ -121,6 +121,19 @@ export interface ToolboxConsentCard {
 }
 
 export type ToolboxFileOperation = 'copy' | 'symlink' | 'write_text' | 'mkdir';
+export type ToolboxFileApprovalMode = 'human' | 'reviewer';
+export interface ToolboxFileReview {
+  protocol_version?: string;
+  state: 'queued' | 'reviewing' | 'approved' | 'rejected' | 'needs_human';
+  requested_at?: string | null;
+  finished_at?: string | null;
+  decision?: 'approve' | 'reject' | 'needs_human' | null;
+  reason_code?: string | null;
+  reason?: string | null;
+  checks?: Record<string, boolean | 'unknown'>;
+  reviewer_model?: string | null;
+  decided_by?: 'human' | 'reviewer' | null;
+}
 export interface ToolboxFileRoot {
   root_id: string;
   version: number;
@@ -134,11 +147,21 @@ export interface ToolboxFileScope {
   version: number;
   kind: 'file';
   state: 'proposed' | 'active' | 'revoked' | 'expired';
+  approval_mode?: ToolboxFileApprovalMode;
+  activated_by?: 'human' | null;
+  activated_at?: string | null;
   job_key: string;
   attempt_id: string;
+  endpoint?: Record<string, unknown> & { host_key?: Record<string, unknown> };
+  endpoint_digest?: string;
+  source_policy?: string;
+  submit_limit?: number;
   root_bindings: { root_id: string; version: number; destination_prefixes: string[] }[];
   allowed_operations: ToolboxFileOperation[];
-  source_bindings: { requested_path: string; canonical_path: string; size?: number; content_class?: string }[];
+  source_bindings: {
+    requested_path: string; canonical_path: string; type?: string; size?: number; mtime_ns?: number;
+    sha256?: string; content_class?: string; identity?: Record<string, unknown>;
+  }[];
   max_operations: number;
   max_total_bytes: number;
   expires_at: string;
@@ -176,6 +199,8 @@ export interface ToolboxFileReceipt {
 }
 export interface ToolboxFileAction extends ToolboxConsentCard {
   kind: 'remote_file';
+  binding_hash?: string;
+  review?: ToolboxFileReview | null;
   binding: Record<string, unknown> & {
     scope_id: string;
     scope_version: number;

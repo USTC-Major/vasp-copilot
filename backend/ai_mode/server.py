@@ -101,6 +101,24 @@ def create_ai_mode_app() -> FastAPI:
         return JSONResponse(status_code=exc.status, content={'mode': 'ai', 'ok': False, 'error': payload})
     app.add_exception_handler(ToolboxError, error_handler)
 
+    @app.post('/ai/internal/reviewer/review', include_in_schema=False)
+    def internal_file_review(request: Request, payload: dict):
+        import hmac
+        import os
+        from .reviewer import ReviewError, review_request
+        secret = os.environ.get('VASP_REVIEWER_SHARED_SECRET', '')
+        token = request.headers.get('authorization', '')
+        if (os.environ.get('VASP_REVIEWER_ENABLED', '').lower() != 'true' or
+            len(secret.encode('utf-8')) < 32 or
+            not hmac.compare_digest(token.encode('utf-8'), ('Bearer ' + secret).encode('utf-8'))):
+            return JSONResponse(status_code=403, content={'error': {'code': 'REVIEWER_FORBIDDEN'}})
+        try:
+            return review_request(payload, secret=secret)
+        except ReviewError as exc:
+            return JSONResponse(status_code=422, content={'error': {'code': exc.code}})
+        except Exception:
+            return JSONResponse(status_code=503, content={'error': {'code': 'REVIEWER_UNAVAILABLE'}})
+
     @app.get("/")
     def root() -> dict:
         return {"mode": "ai", "enabled": is_ai_mode_enabled(), "version": APP_VERSION}

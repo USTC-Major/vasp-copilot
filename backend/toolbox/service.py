@@ -16,12 +16,13 @@ def envelope(**data):
     return {'mode': 'toolbox', **data}
 
 class ExecutionService:
-    def __init__(self, root: Path, *, settings_loader=load_settings, orch_factory=None, monitor_enabled=True, file_factory=None):
+    def __init__(self, root: Path, *, settings_loader=load_settings, orch_factory=None, monitor_enabled=True, file_factory=None, reviewer_transport=None):
         self.root = Path(root)
         self.settings_loader = settings_loader
         self.orch_factory = orch_factory
         self.monitor_enabled = monitor_enabled
         self.file_factory = file_factory
+        self.reviewer_transport = reviewer_transport
         self.files = None
         self._backend_mode = None
         self.owner = ProcessOwner(root)

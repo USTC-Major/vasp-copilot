@@ -166,6 +166,25 @@ def file_scope(project_id: str, task_id: str, request: Request, payload: dict):
 def revoke_file_scope(project_id: str, task_id: str, scope_id: str, request: Request, payload: dict):
     return file_call(request,'revoke',project_id,task_id,scope_id,payload)
 
+@router.post('/projects/{project_id}/tasks/{task_id}/computation-scopes/{scope_id}/activate')
+def activate_file_scope(project_id: str, task_id: str, scope_id: str, request: Request, payload: dict):
+    return file_call(request,'activate',project_id,task_id,scope_id,payload)
+
+@router.post('/projects/{project_id}/tasks/{task_id}/file-actions/{action_id}/review')
+def review_file_action(project_id: str, task_id: str, action_id: str, request: Request, payload: dict):
+    from .file_actions import exact
+    exact(payload, {'binding_hash'})
+    svc = service(request)
+    card = svc.files._flow(project_id, task_id).get('consent', {}).get('actions', {}).get(action_id)
+    if not card or card.get('binding_hash') != payload['binding_hash']:
+        raise ToolboxError('CARD_NOT_FOUND', '文件卡不存在或绑定已变化', 404)
+    from .file_actions import public
+    return envelope(ok=True, error=None, data=public(svc.files.reviewer.schedule(project_id, task_id, action_id)))
+
+@router.get('/reviewer/status')
+def reviewer_status(request: Request):
+    return envelope(**service(request).files.reviewer.status())
+
 @router.get('/projects/{project_id}/tasks/{task_id}/file-actions')
 def file_actions(project_id: str, task_id: str, request: Request, limit: int=Query(20,ge=1,le=100), cursor: str | None=None):
     return file_call(request,'list',project_id,task_id,limit=limit,cursor=cursor)
@@ -314,13 +333,14 @@ def mkdir(kind: str, request: Request, payload: dict):
         raise ToolboxError('MKDIR_FAILED', result.get('notice', '创建目录失败'))
     return envelope(kind=kind, **result)
 
-def create_toolbox_app(*, root: Path | None = None, settings_loader=None, orch_factory=None, monitor_enabled=True, file_factory=None):
+def create_toolbox_app(*, root: Path | None = None, settings_loader=None, orch_factory=None, monitor_enabled=True, file_factory=None, reviewer_transport=None):
     root = Path(root) if root is not None else paths.home_dir()
     loader = settings_loader or (lambda: load_settings(config_path=root / 'toolbox_config.json'))
     @asynccontextmanager
     async def lifespan(app):
         app.state.toolbox = ExecutionService(root, settings_loader=loader,
-            orch_factory=orch_factory, monitor_enabled=monitor_enabled, file_factory=file_factory).start()
+            orch_factory=orch_factory, monitor_enabled=monitor_enabled, file_factory=file_factory,
+            reviewer_transport=reviewer_transport).start()
         try:
             yield
         finally:

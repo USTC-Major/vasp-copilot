@@ -83,3 +83,21 @@ python -m uvicorn ai_mode.server:app --host 127.0.0.1 --port 8500
 允许的结果文本读取上限为 16 MiB，超限不会将截断内容判为成功；模型延迟
 与调度排队仍需现场预留时间。环境以具体任务的 Real/Fake/None 标识及
 调度/文件证据为准，工具箱离线演示不代表智能任务的运行环境。
+
+## 独立文件 reviewer（可选）
+
+8000 与 8500 均显式设置 `VASP_REVIEWER_ENABLED=true` 和同一份至少 32 字节的
+`VASP_REVIEWER_SHARED_SECRET`；8000 另须设置固定 `VASP_REVIEWER_URL`。
+回环部署可用 `http://127.0.0.1:8500`，现有 Compose 私有网络可显式用
+`http://ai_mode:8500`，其他受信部署使用 HTTPS。服务间密钥不是模型 API key，
+不得放入浏览器配置、公开 API 或模型输入。8500 还需 `ENABLE_AI_MODE=true`
+以及现有设置中的真实 OpenAI 兼容模型地址、key、模型名；reviewer 不使用
+fake 模型，未配置或调用失败时文件卡保持待人工处理。状态接口只报告 8000
+本地配置是否齐备，不测试 8500 或付费模型连通。
+
+用户只能在 Toolbox 文件页为具体 job/attempt 建立精确 reviewer 范围，并单独
+确认激活。reviewer 仅核对机械文件操作的路径、范围和预算；copy 与 write_text
+正文均不发送模型，正文与科学适用性仍需人工审阅。脚本、已知科学输入、
+受限文件及不确定用途回人工。模型建议通过 8000 owner 的一次性绑定与原子
+决议后，才可能进入原文件执行队列；scope 撤销即可停止新审查，已有执行结果
+仍以原回执为准。当前仅有离线替身验证，真实提供方/远端环境尚未验证。

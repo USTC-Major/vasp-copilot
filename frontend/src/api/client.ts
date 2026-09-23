@@ -382,10 +382,22 @@ export const toolboxApi = {
     root_bindings: { root_id: string; version: number; destination_prefixes: string[] }[];
     allowed_operations: import('../types/toolbox').ToolboxFileOperation[];
     source_paths: string[]; max_operations: number; max_total_bytes: number;
-    expires_at: string; approval_mode: 'human';
+    expires_at: string; approval_mode: import('../types/toolbox').ToolboxFileApprovalMode;
   }) => request<{ mode: 'toolbox' } & import('../types/toolbox').ToolboxFileScope>(
     `${toolboxTaskPath(projectId, taskId)}/computation-scopes`, { method: 'POST', body },
   ),
+  getReviewerStatus: () =>
+    request<{ mode: 'toolbox'; configured: boolean; reason_code: string }>('/toolbox/reviewer/status'),
+  activateFileScope: (projectId: string, taskId: string, scopeId: string, expectedVersion: number) =>
+    request<{ mode: 'toolbox' } & import('../types/toolbox').ToolboxFileScope>(
+      `${toolboxTaskPath(projectId, taskId)}/computation-scopes/${encodeURIComponent(scopeId)}/activate`,
+      { method: 'POST', body: { expected_version: expectedVersion, approval_mode: 'reviewer' } },
+    ),
+  reviewFileAction: (projectId: string, taskId: string, actionId: string, bindingHash: string) =>
+    request<{ mode: 'toolbox' } & import('../types/toolbox').ToolboxFileAction>(
+      `${toolboxTaskPath(projectId, taskId)}/file-actions/${encodeURIComponent(actionId)}/review`,
+      { method: 'POST', body: { binding_hash: bindingHash } },
+    ),
   revokeFileScope: (projectId: string, taskId: string, scopeId: string, expectedVersion: number, reason?: string) =>
     request<{ mode: 'toolbox' } & import('../types/toolbox').ToolboxFileScope>(
       `${toolboxTaskPath(projectId, taskId)}/computation-scopes/${encodeURIComponent(scopeId)}/revoke`,

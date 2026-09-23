@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 def atomic_json(path: Path, value):
@@ -106,6 +107,16 @@ def recover_actions(data, *, importing=False):
     for task in data.get('tasks', []):
         flow = task.get('flow') or {}
         for action in (flow.get('consent') or {}).get('actions', {}).values():
+            if action.get('kind') == 'remote_file':
+                private = action.get('_review_private')
+                if isinstance(private, dict) and private.get('status') == 'issued':
+                    private.update(status='invalidated', invalidated_reason='OWNER_RESTART')
+                    if action.get('state') == 'pending':
+                        review = action.get('review') or {}
+                        review.update(state='needs_human', finished_at=datetime.now(timezone.utc).isoformat(), decision=None,
+                            reason_code='REVIEWER_INTERRUPTED',
+                            reason='独立 reviewer 审查中断，请人工审核。', decided_by=None)
+                        action['review'] = review
             if action.get('kind') == 'hpc_upload' and not (action.get('binding') or {}).get('file_identity'):
                 if action.get('state') in {'pending', 'approved'}:
                     action.update(state='expired', result='旧上传缺少可信主机与目标身份；请重新提案')
