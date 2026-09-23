@@ -10,15 +10,14 @@ POST /materials/import  - fetch the selected material, build a POSCAR, store
 from __future__ import annotations
 
 from json import loads as _loads
-import re as _re
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict
 
+from backend.input_validation import InputValidationError, validate_poscar
 from ...core.errors import ValidationError
 from ...llm import get_explainer
-from ...parsers.poscar import parse_poscar
 from ...schemas.api import ApiEnvelope
 from ...schemas.structure import build_structure_summary
 from .deps import file_store, get_request_id, settings
@@ -178,22 +177,21 @@ async def import_material(
     finally:
         client.close()
 
-    poscar_text = _structure_to_poscar(doc, material_id)
-    parsed = parse_poscar(poscar_text)
-    if not parsed.elements or not parsed.counts:
-        raise ValidationError(
-            "STRUCTURE_UNPARSEABLE",
-            "从 Materials Project 返回的结构无法生成 POSCAR",
+    try:
+        poscar_text = _structure_to_poscar(doc, material_id)
+    except (ValueError, TypeError, KeyError, IndexError, OverflowError) as exc:
+        raise ValidationError("MP_INVALID_STRUCTURE", "Materials Project 结构数据不完整或无效") from exc
+    try:
+        parsed = validate_poscar(poscar_text)
+        summary = build_structure_summary(
+            poscar_text=poscar_text,
+            elements=list(parsed.elements), counts=list(parsed.counts),
+            source_file="MaterialsProject/" + material_id, validated=parsed,
         )
-
+    except InputValidationError as exc:
+        raise ValidationError(exc.code, str(exc)) from exc
     stored = file_store.store_file("POSCAR", "poscar",
                                    poscar_text.encode("utf-8"))
-    summary = build_structure_summary(
-        poscar_text=poscar_text,
-        elements=parsed.elements,
-        counts=parsed.counts,
-        source_file="MaterialsProject/" + material_id,
-    )
     struct_rec = file_store.store_structure(
         file_id=stored.file_id, summary=summary,
         normalized_poscar_file_id=stored.file_id,
@@ -231,11 +229,6 @@ def _structure_to_poscar(doc: Dict[str, Any], material_id: str) -> str:
         for sp in species:
             if isinstance(sp, dict) and (sp.get("element") or sp.get("symbol")):
                 return str(sp.get("element") or sp.get("symbol"))
-        label = site.get("label")
-        if label:
-            m = _re.match(r"^([A-Za-z])", str(label))
-            if m:
-                return m.group(1)
         return None
 
     elements: List[str] = []
@@ -244,13 +237,13 @@ def _structure_to_poscar(doc: Dict[str, Any], material_id: str) -> str:
     coords: Dict[str, List[List[float]]] = {}
     for site in sites:
         if not isinstance(site, dict):
-            continue
+            raise ValidationError("MP_INVALID_STRUCTURE", "structure sites 包含无效位点")
         abc = site.get("abc")
         if not isinstance(abc, list) or len(abc) != 3:
-            continue
+            raise ValidationError("MP_INVALID_STRUCTURE", "structure sites 缺少完整坐标")
         el = _el(site)
         if not el:
-            continue
+            raise ValidationError("MP_INVALID_STRUCTURE", "structure sites 缺少可靠物种")
         if el not in order:
             order[el] = len(elements)
             elements.append(el)

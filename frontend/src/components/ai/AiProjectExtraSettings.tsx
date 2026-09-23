@@ -117,6 +117,7 @@ const AiProjectExtraSettings: React.FC<{
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved'>('idle');
   const lastSavedRef = useRef<string | null>(null);
   const loadedProjectRef = useRef<string | null>(null);
+  const canEdit = hasLoaded && loadedProjectRef.current === projectId;
 
   useEffect(() => {
     loadedProjectRef.current = null;
@@ -140,7 +141,7 @@ const AiProjectExtraSettings: React.FC<{
 
   // 增/改/删条目即自动保存（防抖）：有内容 → PUT；全部清空 → DELETE。
   useEffect(() => {
-    if (!hasLoaded) return;
+    if (!canEdit) return;
     const cleaned = entries.map((e) => e.trim()).filter(Boolean);
     const snapshot = JSON.stringify(cleaned);
     if (snapshot === lastSavedRef.current) return;
@@ -161,7 +162,7 @@ const AiProjectExtraSettings: React.FC<{
     }, AUTO_SAVE_DELAY_MS);
     return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [entries, hasLoaded, projectId, saveMutation, deleteMutation]);
+  }, [entries, canEdit, projectId, saveMutation, deleteMutation]);
 
   const addEntry = () => {
     const text = newEntry.trim();
@@ -253,13 +254,14 @@ const AiProjectExtraSettings: React.FC<{
           </span>
           <button
             type="button"
+            disabled={!canEdit}
             onClick={clearAll}
-            style={{ all: 'unset', color: '#ff3b30', cursor: 'pointer', fontSize: 13 }}
+            style={{ all: 'unset', color: '#ff3b30', cursor: canEdit ? 'pointer' : 'not-allowed', opacity: canEdit ? 1 : 0.5, fontSize: 13 }}
           >
             清空
           </button>
-          <Button onClick={saveAsTemplate}>存为模板</Button>
-          <Button onClick={appendSavedTemplate}>追加本机模板</Button>
+          <Button disabled={!canEdit} onClick={saveAsTemplate}>存为模板</Button>
+          <Button disabled={!canEdit} onClick={appendSavedTemplate}>追加本机模板</Button>
         </Space>
       }
     >
@@ -271,6 +273,16 @@ const AiProjectExtraSettings: React.FC<{
         description="每一条只有内容、没有名字，可填写任何要求（如计算精度、流程偏好、禁忌等）。新增、修改或删除条目会立即自动保存，无需手动点击保存。AI 在本项目规划作业、生成输入、判断与提交时都受这些条目约束；它们每次对话都会实时注入 AI，不属于聊天记录，不会被聊天上下文覆盖或裁剪。"
       />
       {error && <ErrorAlert error={error} title="加载/保存失败" onRetry={dataQuery.refetch} />}
+      {!canEdit && (
+        <Alert
+          type={dataQuery.isError ? 'warning' : 'info'}
+          showIcon
+          style={{ marginBottom: 16 }}
+          message={dataQuery.isError
+            ? '项目设置加载失败，暂不可编辑；请重试加载'
+            : '正在加载项目设置，加载完成后可编辑'}
+        />
+      )}
 
       <Card size="small" style={{ marginBottom: 16, background: '#fafafa' }}>
         <Typography.Text strong>内置常用模板</Typography.Text>
@@ -283,6 +295,7 @@ const AiProjectExtraSettings: React.FC<{
             <Button
               key={template.key}
               size="small"
+              disabled={!canEdit}
               title={template.summary}
               onClick={() => appendBuiltInTemplate(template)}
             >
@@ -297,6 +310,7 @@ const AiProjectExtraSettings: React.FC<{
             <Button
               key={template.key}
               size="small"
+              disabled={!canEdit}
               title={template.summary}
               onClick={() => appendBuiltInTemplate(template)}
             >
@@ -315,13 +329,14 @@ const AiProjectExtraSettings: React.FC<{
 
       <div style={{ marginBottom: 12, display: 'flex', gap: 8 }}>
         <Input.TextArea
+          disabled={!canEdit}
           placeholder="新增一条要求/指引，内容可任意填写、可写很多行…"
           value={newEntry}
           onChange={(e) => setNewEntry(e.target.value)}
           autoSize={{ minRows: 2, maxRows: 6 }}
           style={{ flex: 1 }}
         />
-        <Button type="primary" ghost icon={<PlusOutlined />} onClick={addEntry}>
+        <Button type="primary" ghost icon={<PlusOutlined />} disabled={!canEdit} onClick={addEntry}>
           新增条目
         </Button>
       </div>
@@ -341,12 +356,12 @@ const AiProjectExtraSettings: React.FC<{
           extra={
             <Space>
               <Button type="text" size="small" icon={<ArrowUpOutlined />}
-                disabled={idx === 0} onClick={() => moveEntry(idx, -1)} />
+                disabled={!canEdit || idx === 0} onClick={() => moveEntry(idx, -1)} />
               <Button type="text" size="small" icon={<ArrowDownOutlined />}
-                disabled={idx === entries.length - 1}
+                disabled={!canEdit || idx === entries.length - 1}
                 onClick={() => moveEntry(idx, 1)} />
               <Button type="text" size="small" danger
-                icon={<DeleteOutlined />} onClick={() => removeEntry(idx)} />
+                disabled={!canEdit} icon={<DeleteOutlined />} onClick={() => removeEntry(idx)} />
             </Space>
           }
         >
@@ -354,6 +369,7 @@ const AiProjectExtraSettings: React.FC<{
             条目 {idx + 1}（只有内容，没有名字 · 内容可写很多行、回车换行）
           </div>
           <Input.TextArea
+            disabled={!canEdit}
             autoSize={{ minRows: 2, maxRows: 10 }}
             placeholder={`条目 ${idx + 1}（只有内容，没有名字）`}
             value={text}

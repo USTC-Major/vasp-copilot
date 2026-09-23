@@ -16,6 +16,7 @@ from ai_mode.config import AiModeConfig
 from backend.toolbox.consent import claim_action, get_card, resolve_card
 from ai_mode.llm.fake import FakeLLM
 from backend.tests.toolbox.legacy_bridge import ProjectStore
+from backend.tests.valid_vasp_inputs import FILES as VALID_INPUTS
 
 
 def _intent(kind: str = "compute") -> str:
@@ -40,7 +41,7 @@ def _approve_pending(executor: ToolExecutor, pending: str) -> str:
 def _write_complete_local_job(directory, *, script: str = "run.sh"):
     directory.mkdir(parents=True, exist_ok=True)
     for name in ("INCAR", "POSCAR", "KPOINTS", "POTCAR"):
-        (directory / name).write_text(f"{name} test\n", encoding="utf-8")
+        (directory / name).write_bytes(VALID_INPUTS[name])
     (directory / script).write_text("#!/bin/bash\n", encoding="utf-8")
 
 
@@ -981,7 +982,7 @@ def _hpc_task(ctx, tmp_path):
 
 
 def _remote_vasp_inputs(root: str, job_key: str) -> dict[str, bytes]:
-    return {f"{root}/{job_key}/{name}": f"{name} input\n".encode()
+    return {f"{root}/{job_key}/{name}": VALID_INPUTS[name]
             for name in ("INCAR", "POSCAR", "KPOINTS", "POTCAR")}
 
 

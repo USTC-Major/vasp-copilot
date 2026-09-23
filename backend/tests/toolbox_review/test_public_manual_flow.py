@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from .conftest import call_tool, create_project_task, resolve_card
+from backend.tests.valid_vasp_inputs import POTCAR as SYNTHETIC_POTCAR
 
 
 def _plan_one_job(api, project_id, task_id):
@@ -124,8 +125,7 @@ def test_workspace_is_confined_to_fixture(api):
 
 def test_complete_manual_fake_submission_monitor_and_report(api):
     """Frozen no-model path through attestation, consent, receipt and report."""
-    (api.workspace / "POTCAR").write_text(
-        "TITEL = PAW_PBE offline-review\n", encoding="utf-8")
+    (api.workspace / "POTCAR").write_bytes(SYNTHETIC_POTCAR)
     project, task = create_project_task(api)
     project_id, task_id = project["id"], task["id"]
     _plan_one_job(api, project_id, task_id)

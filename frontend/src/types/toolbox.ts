@@ -1,4 +1,5 @@
 export type ToolboxExecutionMode = 'None' | 'Fake' | 'Real';
+export type ToolboxResultName = 'OUTCAR' | 'OSZICAR' | 'CONTCAR';
 
 export interface ToolboxProject {
   id: string;

@@ -180,3 +180,28 @@ def test_endpoint_plan_from_nl_with_stub_llm():
 def test_endpoint_plan_from_nl_missing_structure_409():
     r = client.post("/api/v1/workflows/plan_from_nl", json={"structure_id": "", "goals": ["x"]})
     assert r.status_code in (404, 409)
+
+
+def test_invalid_legacy_structure_never_calls_nl_model():
+    valid = build_structure_summary(poscar_text=POSCAR, elements=["Fe", "O"],
+                                    counts=[2, 3], source_file="POSCAR")
+    valid.poscar_text = POSCAR.split("Direct\n", 1)[0] + "Direct\n"
+    rec = deps.file_store.store_structure(file_id="file_nl_invalid", summary=valid)
+
+    class CountingExplainer:
+        calls = 0
+
+        def complete(self, messages):
+            self.calls += 1
+            raise AssertionError("invalid structure must not reach model")
+
+    stub = CountingExplainer()
+    set_explainer(stub)
+    try:
+        response = client.post("/api/v1/workflows/plan_from_nl",
+                               json={"structure_id": rec.structure_id, "goals": ["relax"]})
+    finally:
+        reset_explainer()
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "POSCAR_COORDINATES_MISSING"
+    assert stub.calls == 0

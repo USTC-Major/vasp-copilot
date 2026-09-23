@@ -16,6 +16,7 @@ from backend.toolbox.projects import ProjectStore
 from ai_mode.tools.draft import fingerprint_remote_submit_script
 from backend.toolbox.commands import ToolExecutor, _CONSENT_PENDING
 from backend.toolbox.consent import get_card
+from backend.tests.valid_vasp_inputs import FILES as VALID_INPUTS
 
 
 class FakeHPC:
@@ -412,7 +413,7 @@ def env(tmp_path):
 def _remote_job(hpc, root: str, key: str, *, script_name: str = "run.sh"):
     calc = f"{root.rstrip('/')}/{key}" if key else root.rstrip("/")
     for name in ("INCAR", "POSCAR", "KPOINTS", "POTCAR"):
-        hpc.files[f"{calc}/{name}"] = f"{name} {key}\n".encode()
+        hpc.files[f"{calc}/{name}"] = VALID_INPUTS[name]
     script = b"#!/bin/bash\nsrun vasp_std\n"
     script_path = f"{calc}/{script_name}"
     hpc.files[script_path] = script
@@ -721,7 +722,8 @@ def test_changed_vasp_input_invalidates_confirmed_precheck_snapshot(env):
     resolve_card(store, pid, tid, card["card_id"], approved=True)
     assert claim_action(store, pid, tid, card["action_id"]) is not None
 
-    hpc.files["/home/user/calc/r1/relax/POTCAR"] = b"changed POTCAR\n"
+    hpc.files["/home/user/calc/r1/relax/POTCAR"] = VALID_INPUTS["POTCAR"].replace(
+        b"End of Dataset", b"Changed synthetic metadata\nEnd of Dataset")
     answer = orch._submit(store, pid, tid, flow)
     assert "AI_PRECHECK_STALE" in answer
     assert not [call for call in hpc.calls if call.startswith("sbatch")]

@@ -6,6 +6,7 @@ list and a Pymatgen-style structure document.
 """
 from __future__ import annotations
 
+import copy
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -140,3 +141,27 @@ def test_materials_import_missing_id_422():
     r = client.post("/api/v1/materials/import", json={"material_id": ""})
     assert r.status_code == 422
     assert r.json()["error"]["code"] == "MP_EMPTY_MATERIAL_ID"
+
+
+def test_materials_import_invalid_lattice_has_no_new_records(monkeypatch):
+    _enable_mp(monkeypatch)
+    bad = copy.deepcopy(_STRUCTURE_DOC)
+    bad["structure"]["lattice"]["matrix"][2] = [0.0, 0.0, 0.0]
+    monkeypatch.setattr(FakeMpClient, "get_structure_doc", lambda self, _id: bad)
+    before = (len(deps.file_store._files), len(deps.file_store._structures))
+    response = client.post("/api/v1/materials/import", json={"material_id": "mp-12345"})
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "POSCAR_LATTICE_DEGENERATE"
+    assert (len(deps.file_store._files), len(deps.file_store._structures)) == before
+
+
+def test_materials_import_missing_site_coordinates_does_not_drop_atom(monkeypatch):
+    _enable_mp(monkeypatch)
+    bad = copy.deepcopy(_STRUCTURE_DOC)
+    bad["structure"]["sites"][0].pop("abc")
+    monkeypatch.setattr(FakeMpClient, "get_structure_doc", lambda self, _id: bad)
+    before = (len(deps.file_store._files), len(deps.file_store._structures))
+    response = client.post("/api/v1/materials/import", json={"material_id": "mp-12345"})
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "MP_INVALID_STRUCTURE"
+    assert (len(deps.file_store._files), len(deps.file_store._structures)) == before

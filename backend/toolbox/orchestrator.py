@@ -21,6 +21,8 @@ from typing import Callable, Optional
 from .commands import _label_slug
 from .config import AiModeConfig, execution_mode
 from .consent import task_lock as _task_lock
+from .input_checks import bounded_fingerprint, read_bound_input, validate_input_set
+from backend.input_validation import InputValidationError
 from .scheduler_profile import (target_binding, queue_command, parse_queue,
                                 occupied, parse_receipt, accounting_command,
                                 parse_accounting, PENDING, RUNNING, TERMINAL, profile)
@@ -32,8 +34,7 @@ from .schemas import JobEntry, JobStatus as SessionJobStatus, \
 from .tools.draft import (find_remote_submit_script,
                           fingerprint_local_submit_script,
                           fingerprint_remote_submit_script,
-                          input_fingerprint_local,
-                          input_fingerprint_remote, precheck_snapshot,
+                          precheck_snapshot,
                           resolve_user_submit_script, submit_command)
 from .workflow.plan import gate_jobs
 
@@ -242,29 +243,43 @@ class Orchestrator:
                                       "canceled", "skipped", "blocked",
                                       "unknown"):
                 continue
+            contents: dict[str, bytes] = {}
             for name in ("INCAR", "POSCAR", "KPOINTS", "POTCAR"):
                 try:
                     if remote_ok and self.hpc is not None:
                         calc = self._job_calc_dir(remote, local_dir, job["key"])
                         path = f"{calc.rstrip('/')}/{name}"
-                        fingerprint = input_fingerprint_remote(self.hpc, path)
+                        fingerprint = bounded_fingerprint(name, path, hpc=self.hpc)
                         source = "remote"
                     else:
                         root = local_dir.resolve()
                         base = self._contained_job_dir(root, job["key"]) or root
                         target = (base / name).resolve()
                         target.relative_to(root)
-                        fingerprint = input_fingerprint_local(target)
+                        fingerprint = bounded_fingerprint(name, target)
                         source = "local"
+                    contents[name] = read_bound_input(name, fingerprint,
+                                                      hpc=self.hpc if remote_ok and self.hpc is not None else None)
                     input_records.append({"job_key": job["key"], "name": name,
                                           "source": source, **fingerprint})
                     level = "ok"
                     msg = f"{name} 非空且 SHA-256 已绑定"
+                except InputValidationError as exc:
+                    level = "error"
+                    msg = f"{name} {exc}，无法提交"
                 except Exception:  # noqa: BLE001
                     level = "error"
                     msg = f"{name} 缺失、为空或无法哈希，无法提交"
                 issues.append({"job": job["key"], "file": name, "level": level,
                                "message": msg})
+            if len(contents) == 4:
+                try:
+                    validate_input_set(contents)
+                    issues.append({"job": job["key"], "file": "基础输入", "level": "ok",
+                                   "message": "本轮基础格式与物种顺序检查通过；参数与科学适用性仍需用户判断"})
+                except InputValidationError as exc:
+                    issues.append({"job": job["key"], "file": "基础输入", "level": "error",
+                                   "message": str(exc)})
             calc = self._job_calc_dir(remote, local_dir, job["key"])
             has_script = False
             actual: dict | None = None

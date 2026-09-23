@@ -19,6 +19,8 @@ from typing import Any, Dict, List, Optional
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
+from backend.input_validation import InputValidationError
+from backend.app.schemas.structure import validated_structure_context
 from backend.app.generators.archive import FIXED_TIMESTAMP, BundleBuilder
 from backend.app.generators.incar import IncarGenerator
 from backend.app.generators.kpoints import KpointsGenerator
@@ -294,6 +296,7 @@ class WorkflowGenerationPipeline:
         }
 
     def _validate_plan_input(self, request: WorkflowGenerateRequest) -> None:
+        self._validate_structure(request)
         if not request.structure.elements:
             raise BeAError(
                 "structure.elements is required for workflow planning",
@@ -325,6 +328,14 @@ class WorkflowGenerationPipeline:
                 code="UPSTREAM_OUTPUT_MISSING",
                 details={"structure_id": request.structure.structure_id},
             )
+        self._validate_structure(request)
+
+    @staticmethod
+    def _validate_structure(request: WorkflowGenerateRequest) -> None:
+        try:
+            request.structure = validated_structure_context(request.structure)
+        except InputValidationError as exc:
+            raise BeAError(str(exc), code=exc.code) from exc
 
     def _selection_context(
         self, request: WorkflowGenerateRequest, task: TaskType

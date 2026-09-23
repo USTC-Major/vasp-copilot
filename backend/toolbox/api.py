@@ -3,7 +3,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import APIRouter, FastAPI, Request, Query
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from . import browse, consent, paths
 from .config import ExecutionConfig, load_settings, save_settings
 from .contracts import ToolboxError
@@ -109,6 +109,16 @@ def delete_task(project_id: str, task_id: str, request: Request):
 @router.get('/projects/{project_id}/tasks/{task_id}/detail')
 def detail(project_id: str, task_id: str, request: Request):
     return service(request).detail(project_id, task_id)
+
+@router.get('/projects/{project_id}/tasks/{task_id}/results/{name}')
+def result_download(project_id: str, task_id: str, name: str, request: Request,
+                    job_key: str = Query(...), attempt_id: str = Query(...)):
+    data, sha256 = service(request).download_result(project_id, task_id, job_key, attempt_id, name)
+    return Response(content=data, media_type='application/octet-stream', headers={
+        'Content-Disposition': f'attachment; filename="{name}"',
+        'Content-Length': str(len(data)), 'X-Content-SHA256': sha256,
+        'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff',
+    })
 
 @router.get('/projects/{project_id}/tasks/{task_id}/events')
 def events(project_id: str, task_id: str, request: Request, after: int = Query(0, ge=0)):

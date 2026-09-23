@@ -4,6 +4,7 @@ import { ArrowLeftOutlined, CloudUploadOutlined, FileSearchOutlined, FolderOpenO
 import { Link, useParams } from 'react-router-dom';
 import ToolboxTaskStatus from '../components/toolbox/ToolboxTaskStatus';
 import ToolboxFilesPanel from '../components/toolbox/ToolboxFilesPanel';
+import ToolboxResultsPanel from '../components/toolbox/ToolboxResultsPanel';
 import AiDirectoryPicker from '../components/ai/AiDirectoryPicker';
 import { toolboxApi } from '../api/client';
 import { useToolboxRunTool, useToolboxTaskDetail } from '../hooks/useApi';
@@ -240,6 +241,9 @@ const ToolboxTaskPage: React.FC = () => {
         onStopMonitor={stopMonitor}
         stopPending={runToolMutation.isPending}
       />
+
+      <ToolboxResultsPanel projectId={projectId} taskId={taskId} jobs={jobs}
+        report={detail?.flow.report ?? ''} onRefresh={() => detailQuery.refetch()} />
 
       <ToolboxFilesPanel projectId={projectId} taskId={taskId} />
 

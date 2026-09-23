@@ -13,8 +13,8 @@ from typing import Any, Dict, List
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict
 
+from backend.input_validation import InputValidationError, TEXT_LIMIT, validate_poscar
 from ...core.errors import ValidationError
-from ...parsers.poscar import parse_poscar
 from ...schemas.api import ApiEnvelope
 from ...schemas.structure import StructureSummary, build_structure_summary
 from ...services.cif_converter import convert_cif_to_poscar
@@ -49,8 +49,8 @@ def _summary_json(summary: StructureSummary, source_format: str,
         "counts": list(summary.counts),
         "atom_count": summary.atom_count,
         "lattice": summary.lattice.model_dump(mode="json") if summary.lattice else None,
-        "coordinate_mode": "direct",
-        "selective_dynamics": False,
+        "coordinate_mode": summary.coordinate_mode,
+        "selective_dynamics": summary.selective_dynamics,
         "transition_metals": list(summary.transition_metals),
         "magnetism_hint": (
             "possible" if summary.transition_metals
@@ -70,6 +70,8 @@ async def analyze(
 ) -> ApiEnvelope:
     """Design 6.3: parse structure; for CIF also produce normalized POSCAR."""
     record = file_store.get_file(req.file_id)
+    if record.size_bytes > TEXT_LIMIT:
+        raise ValidationError("INPUT_SIZE_INVALID", "结构文件超过本轮 2 MiB 上限")
     try:
         text = record.path.read_text(encoding="utf-8")
     except UnicodeDecodeError as exc:
@@ -96,20 +98,17 @@ async def analyze(
         poscar_text = text
         normalized_name = None
 
-    parsed = parse_poscar(poscar_text)
-    if not parsed.elements or not parsed.counts:
-        raise ValidationError(
-            "STRUCTURE_UNPARSEABLE",
-            "structure species/counts could not be parsed; "
-            "only POSCAR and CIF are supported",
+    try:
+        parsed = validate_poscar(poscar_text)
+        summary = build_structure_summary(
+            poscar_text=poscar_text,
+            elements=list(parsed.elements),
+            counts=list(parsed.counts),
+            source_file=record.name,
+            validated=parsed,
         )
-
-    summary = build_structure_summary(
-        poscar_text=poscar_text,
-        elements=parsed.elements,
-        counts=parsed.counts,
-        source_file=record.name,
-    )
+    except InputValidationError as exc:
+        raise ValidationError(exc.code, str(exc)) from exc
 
     normalized_file_id = None
     if is_cif:

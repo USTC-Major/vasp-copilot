@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import copy
+import base64
+import binascii
 import datetime
+import hashlib
 import importlib.resources
 import json
 import posixpath
@@ -196,6 +199,55 @@ class RemoteFiles:
 
     def probe(self):
         return self._read({"op": "probe"})
+
+    def read_result(self, directory, name):
+        """Read one fixed result through the verified helper, then validate whole bytes."""
+        try:
+            protocol.absolute(directory)
+            protocol.require(name in protocol.RESULT_NAMES, "CONTENT_READ_DENIED", "Unsupported result name")
+        except protocol.FileError as exc:
+            raise _local_error(exc) from exc
+        endpoint = self.endpoint()
+        if endpoint["host_key"]["verification"] != "known_hosts":
+            raise RemoteFileError("ENDPOINT_CHANGED", "Verified host identity required")
+        wire = _Wire(self.manager, expected_endpoint=endpoint, scheduler_target=self.scheduler_target)
+        data = bytearray()
+        sha = hashlib.sha256()
+        deadline = time.monotonic() + 180
+        def timeout():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise RemoteFileError("RESULT_TIMEOUT", "Result download deadline exceeded")
+            return min(60, remaining)
+        try:
+            root = wire.call({"op": "root", "path": directory}, timeout=timeout())
+            if root.get("requested_path") != directory or root.get("canonical_path") != directory or root.get("resolution_chain") != []:
+                raise RemoteFileError("PATH_SYMLINK_ESCAPE", "Result directory must not contain links")
+            ready = wire.call({"op": "result_begin", "root": root, "name": name,
+                               "max_bytes": protocol.RESULT_LIMIT}, timeout=timeout())
+            if ready.get("state") != "ready" or type(ready.get("size")) is not int or not 0 <= ready["size"] <= protocol.RESULT_LIMIT:
+                raise RemoteFileError("PROTOCOL_ERROR", "Invalid result metadata")
+            for index in range((protocol.RESULT_LIMIT // protocol.RESULT_CHUNK) + 2):
+                frame = wire.call({"op": "result_next"}, timeout=timeout())
+                wire.check_endpoint()
+                if frame.get("state") == "complete":
+                    if (frame.get("length") != len(data) or len(data) != ready["size"]
+                            or frame.get("sha256") != sha.hexdigest()):
+                        raise RemoteFileError("SOURCE_CHANGED", "Result checksum or length changed")
+                    return bytes(data), sha.hexdigest()
+                if frame.get("state") != "chunk" or frame.get("index") != index:
+                    raise RemoteFileError("PROTOCOL_ERROR", "Out-of-order result frame")
+                try:
+                    chunk = base64.b64decode(frame["data"], validate=True)
+                except (KeyError, ValueError, TypeError, binascii.Error) as exc:
+                    raise RemoteFileError("PROTOCOL_ERROR", "Invalid result frame") from exc
+                if not 0 < len(chunk) <= protocol.RESULT_CHUNK or len(data) + len(chunk) > protocol.RESULT_LIMIT:
+                    raise RemoteFileError("PROTOCOL_ERROR", "Result frame exceeds byte budget")
+                data.extend(chunk)
+                sha.update(chunk)
+            raise RemoteFileError("PROTOCOL_ERROR", "Result frame count exceeds byte budget")
+        finally:
+            wire.close()
 
     def inspect_root(self, path, *, root_id=None, version=1):
         try:
