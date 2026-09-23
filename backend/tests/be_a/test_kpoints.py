@@ -9,6 +9,7 @@ from backend.app.parsers.kpoints import parse_kpoints
 from backend.app.recipes.derived import KPPA_TABLE, generate_kpoint_grid
 from backend.app.recipes.errors import DerivedParameterUnresolved, KpointsGenerationFailed
 from backend.app.schemas.generation import KpointsSpec
+from backend.input_validation import validate_kpoints
 
 NACL_POSCAR = (
     "NaCl\n1.0\n5.6 0.0 0.0\n0.0 5.6 0.0\n0.0 0.0 5.6\n"
@@ -89,6 +90,16 @@ class TestGridFormula:
         })
         assert info["centering"] == "Gamma"
         assert info["grid"] == [15, 15, 5]
+
+    @pytest.mark.parametrize("kppa,atoms,grid", [
+        (1000.0, 1, [10, 10, 10]),
+        (1000.0, 2, [8, 8, 8]),
+        (729.0, 1, [9, 9, 9]),
+    ])
+    def test_automatic_grid_defaults_gamma_without_changing_subdivisions(self, kppa, atoms, grid):
+        info = generate_kpoint_grid({"kppa": kppa, "atom_count": atoms,
+                                     "lattice": CUBIC_LATTICE})
+        assert info == {"grid": grid, "centering": "Gamma", "kppa": kppa}
 
     def test_kppa_table_versioned_by_precision(self):
         assert KPPA_TABLE["relax"]["quick"] < KPPA_TABLE["relax"]["standard"]
@@ -309,6 +320,7 @@ class TestUniformRendering:
     def test_monkhorst_text(self):
         text = KpointsGenerator().uniform([4, 4, 4], "Monkhorst")
         assert "Monkhorst-Pack" in text.splitlines()[2]
+        validate_kpoints(text)
 
     def test_invalid_grid_rejected(self):
         with pytest.raises(KpointsGenerationFailed):
