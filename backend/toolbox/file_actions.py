@@ -40,6 +40,16 @@ def exact(payload, allowed, required=None):
 
 def public(value):
     if isinstance(value, dict):
+        if value.get("kind") == "remote_file":
+            allowed = {"kind", "tool", "args", "risk", "reason", "batch_key", "summary",
+                       "action_id", "card_id", "expires_at", "created_at", "state",
+                       "binding", "binding_hash", "receipt", "result", "resolved_at", "note",
+                       "executing_at", "finished_at", "review"}
+            return {k: public(v) for k, v in value.items() if k in allowed}
+        if set(value) & {"protocol_version", "requested_at", "reviewer_model"} and "reason_code" in value:
+            allowed = {"protocol_version", "state", "requested_at", "finished_at", "decision",
+                       "reason_code", "reason", "checks", "reviewer_model", "decided_by"}
+            return {k: public(v) for k, v in value.items() if k in allowed}
         return {
             k: public(v)
             for k, v in value.items()
@@ -95,9 +105,13 @@ class FileActions:
         self.generation = 0
         self.closed = False
         self.owner_id = uuid.uuid4().hex
+        self.reviewer = None
 
     def start(self):
         self.store.file_actions = self
+        from .reviewer import Reviewer
+        self.reviewer = Reviewer(self, self.service.reviewer_transport)
+        self.reviewer.start()
         for n in range(self.worker_count):
             thread = threading.Thread(
                 target=self._loop, name="toolbox-file-%s" % n, daemon=True
@@ -377,7 +391,7 @@ class FileActions:
             "approval_mode",
         }
         exact(payload, fields)
-        check(payload["approval_mode"] == "human")
+        check(payload["approval_mode"] in {"human", "reviewer"})
         _remaining(payload["expires_at"])
         h.integer(payload["max_operations"], 1, 32)
         h.integer(payload["max_total_bytes"])
@@ -475,6 +489,9 @@ class FileActions:
         for action in (flow.get("consent") or {}).get("actions", {}).values():
             if (action.get("binding") or {}).get("scope_id") != scope["scope_id"]:
                 continue
+            private = action.get("_review_private")
+            if private and private.get("status") == "issued":
+                private.update(status="invalidated", invalidated_reason="SCOPE_REVOKED")
             if action["state"] in {"pending", "approved"}:
                 action.update(state="expired", result=reason)
             elif action["state"] == "executing":
@@ -521,6 +538,18 @@ class FileActions:
             value = self._save(project, task, update)
             self._signal(project, task)
             return value
+
+    def activate(self, project, task, scope_id, payload):
+        exact(payload, {"expected_version", "approval_mode"})
+        check(payload["approval_mode"] == "reviewer", "SCOPE_STALE", "仅可显式启用独立 reviewer 范围", 409)
+        with consent.task_lock(project, task), self.guard:
+            def update(flow):
+                scope = self._scope(flow, scope_id, payload["expected_version"])
+                check(scope.get("approval_mode") == "reviewer", "SCOPE_STALE", "范围模式不匹配", 409)
+                if scope["state"] == "proposed":
+                    scope.update(state="active", activated_by="human", activated_at=now())
+                return scope
+            return self._save(project, task, update)
 
     def _dedup(self, flow, key, request_digest):
         for action in (flow.get("consent") or {}).get("actions", {}).values():
@@ -712,7 +741,12 @@ class FileActions:
                 ] = card
                 return card
 
-            return self._save(project, task, update)
+            action = self._save(project, task, update)
+            if action["action_id"] == action_id:
+                current_scope = self._scope(self._flow(project, task), args["scope_id"], args["scope_version"])
+                if current_scope.get("approval_mode") == "reviewer" and current_scope["state"] == "active":
+                    action = self.reviewer.schedule(project, task, action_id)
+            return action
 
     def _conflicts(self, manifest, *, exclude=None, protect_finished=False):
         held = list(
@@ -742,6 +776,26 @@ class FileActions:
             "目标或其祖先有执行中/未知动作保留",
             409,
         )
+
+    @staticmethod
+    def _budget_available(flow, action, scope):
+        manifest = action["binding"]["manifest"]
+        used_ops = used_bytes = 0
+        for other in flow["consent"]["actions"].values():
+            if (other.get("binding") or {}).get("scope_id") != scope["scope_id"] or other is action:
+                continue
+            receipt = other.get("receipt") or {}
+            for field in ("spent", "held_unknown", "reservation"):
+                value = receipt.get(field) or {}
+                if field == "reservation" and value.get("state") != "reserved":
+                    continue
+                used_ops += value.get("operations", 0)
+                used_bytes += value.get("bytes", 0)
+        amount = sum(item["bytes"] for item in manifest["items"])
+        check(used_ops + len(manifest["items"]) <= scope["max_operations"]
+              and used_bytes + amount <= scope["max_total_bytes"],
+              "BUDGET_EXCEEDED", "范围剩余额度不足", 409)
+        return amount
 
     def list(self, project, task, *, limit=20, cursor=None):
         h.integer(limit, 1, 100)
@@ -789,70 +843,61 @@ class FileActions:
                 return copy.deepcopy(current)
 
             def update(flow):
-                action = (flow.get("consent") or {}).get("actions", {}).get(action_id)
-                check(
-                    action and action.get("kind") == "remote_file",
-                    "CARD_NOT_FOUND",
-                    "文件卡不存在",
-                    404,
-                )
-                if action["state"] != "pending":
-                    return action
-                check(
-                    consent._valid_binding(action), "SCOPE_STALE", "卡绑定校验失败", 409
-                )
-                check(
-                    not consent._expired(action), "SCOPE_EXPIRED", "文件卡已过期", 409
-                )
-                if approved:
-                    self._global_write()
-                    queued_count = sum(
-                        a.get("kind") == "remote_file" and a.get("state") == "approved"
-                        for _, a in evidence.actions(self.snapshot())
-                    )
-                    check(
-                        queued_count < self.queue_limit,
-                        "FILE_QUEUE_FULL",
-                        "文件队列已满，尚未批准",
-                        503,
-                    )
-                    b = action["binding"]
-                    scope = self._scope(flow, b["scope_id"], b["scope_version"])
-                    if scope["state"] == "proposed":
-                        check(
-                            scope_confirmation
-                            == {
-                                "scope_id": scope["scope_id"],
-                                "version": scope["version"],
-                            },
-                            "SCOPE_STALE",
-                            "首次批准须确认所展示的范围版本",
-                            409,
-                        )
-                        scope.update(state="active", activated_at=now())
-                    action["state"] = "approved"
-                    action["receipt"]["phase"] = "queued"
-                else:
-                    action["state"] = "rejected"
-                action.update(resolved_at=now(), note=str(note)[:500])
-                return action
+                return self._decide_in_flow(flow, action_id, approved, note,
+                                            scope_confirmation, reviewer=False)
 
             action = self._save(project, task, update)
-            key = (project, task, action_id)
-            if (
-                action["state"] == "approved"
-                and key not in self.queue
-                and (project, task) not in self.active
-            ):
-                self.queue.append(key)
-            elif (
-                action["state"] == "approved"
-                and key not in self.queue
-                and self.active.get((project, task), {}).get("action_id") != action_id
-            ):
-                self.queue.append(key)
-            self.wake.set()
+            if action["state"] == "approved":
+                self._enqueue(project, task, action_id)
             return action
+
+    def _enqueue(self, project, task, action_id):
+        key = (project, task, action_id)
+        if key not in self.queue and self.active.get((project, task), {}).get("action_id") != action_id:
+            self.queue.append(key)
+        self.wake.set()
+
+    def _decide_in_flow(self, flow, action_id, approved, note, scope_confirmation,
+                        *, reviewer=False):
+        """One store mutation owns both the decision and reviewer consumption."""
+        action = (flow.get("consent") or {}).get("actions", {}).get(action_id)
+        check(action and action.get("kind") == "remote_file", "CARD_NOT_FOUND", "文件卡不存在", 404)
+        if action["state"] != "pending":
+            return action
+        check(consent._valid_binding(action), "SCOPE_STALE", "卡绑定校验失败", 409)
+        check(not consent._expired(action), "SCOPE_EXPIRED", "文件卡已过期", 409)
+        b = action["binding"]
+        scope = None
+        if approved or reviewer:
+            scope = self._scope(flow, b["scope_id"], b["scope_version"])
+            if reviewer:
+                check(scope.get("approval_mode") == "reviewer" and scope["state"] == "active",
+                      "SCOPE_STALE", "reviewer范围未激活", 409)
+            elif scope.get("approval_mode", "human") == "reviewer" and scope["state"] == "proposed":
+                check(False, "SCOPE_STALE", "reviewer范围须单独激活", 409)
+        if approved:
+            self._global_write()
+            queued_count = sum(a.get("kind") == "remote_file" and a.get("state") == "approved"
+                               for _, a in evidence.actions(self.snapshot()))
+            check(queued_count < self.queue_limit, "FILE_QUEUE_FULL", "文件队列已满，尚未批准", 503)
+            if scope["state"] == "proposed":
+                check(scope_confirmation == {"scope_id": scope["scope_id"], "version": scope["version"]},
+                      "SCOPE_STALE", "首次批准须确认所展示的范围版本", 409)
+                scope.update(state="active", activated_at=now())
+            action["state"] = "approved"
+            action["receipt"]["phase"] = "queued"
+        else:
+            action["state"] = "rejected"
+        if not reviewer:
+            private = action.get("_review_private")
+            if private and private.get("status") == "issued":
+                private.update(status="invalidated", invalidated_reason="HUMAN_DECISION")
+            if action.get("review"):
+                action["review"].update(state="needs_human", decision=None,
+                    reason_code="REVIEWER_NEEDS_HUMAN", reason="用户已人工决议。",
+                    finished_at=now(), decided_by="human")
+        action.update(resolved_at=now(), note=str(note)[:500])
+        return action
 
     def _claim(self, project, task, action_id):
         # task -> file guard -> store: scan, budget reservation and durable
@@ -887,27 +932,7 @@ class FileActions:
                     409,
                 )
                 self._conflicts(manifest, exclude=action_id)
-                used_ops = used_bytes = 0
-                for other in flow["consent"]["actions"].values():
-                    if (other.get("binding") or {}).get("scope_id") != scope[
-                        "scope_id"
-                    ] or other is action:
-                        continue
-                    r = other.get("receipt") or {}
-                    for field in ("spent", "held_unknown", "reservation"):
-                        value = r.get(field) or {}
-                        if field == "reservation" and value.get("state") != "reserved":
-                            continue
-                        used_ops += value.get("operations", 0)
-                        used_bytes += value.get("bytes", 0)
-                amount = sum(i["bytes"] for i in manifest["items"])
-                check(
-                    used_ops + len(manifest["items"]) <= scope["max_operations"]
-                    and used_bytes + amount <= scope["max_total_bytes"],
-                    "BUDGET_EXCEEDED",
-                    "范围剩余额度不足",
-                    409,
-                )
+                amount = self._budget_available(flow, action, scope)
                 action.update(
                     state="executing",
                     executing_at=now(),
@@ -1603,6 +1628,8 @@ class FileActions:
         with self.guard:
             if self.closed:
                 return
+        if self.reviewer:
+            self.reviewer.close()
         self.stopping.set()
         self.wake.set()
         with self.guard:

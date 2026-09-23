@@ -54,6 +54,10 @@ jobs:
           import backend.toolbox.service
           import backend.toolbox.ssh.file_helper
           import backend.toolbox.ssh.remote_files
+          import backend.toolbox.reviewer
+          import backend.toolbox.review_transport
+          import backend.ai_mode.reviewer
+          import backend.ai_mode.server
           print(
               f"pytest={pytest.__version__} httpx={httpx.__version__} "
               f"fastapi={fastapi.__version__} pydantic={pydantic.__version__}"
@@ -69,6 +73,8 @@ jobs:
             backend/tests/remote_file_review \
             backend/tests/file_action_integration \
             backend/tests/file_action_review \
+            backend/tests/reviewer \
+            backend/tests/reviewer_review \
             --basetemp="$RUNNER_TEMP/file-action-integration-work" \
             --junitxml="$evidence/pytest.xml" \
             2>&1 | tee "$evidence/pytest.log"
@@ -76,6 +82,8 @@ jobs:
             | tee "$evidence/critical-foundation-tests.txt"
           python3 backend/tests/file_action_review/ci_assert.py "$evidence/pytest.xml" \
             | tee "$evidence/critical-action-tests.txt"
+          python3 backend/tests/reviewer_review/ci_assert.py "$evidence/pytest.xml" \
+            | tee "$evidence/critical-reviewer-tests.txt"
 
       - name: Keep small diagnostic evidence for one day
         if: always()

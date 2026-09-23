@@ -2,8 +2,8 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Button, Card, Descriptions, Input, InputNumber, List, Select, Space, Tag, Typography, message } from 'antd';
 import { useLocation } from 'react-router-dom';
 import { toolboxApi } from '../../api/client';
-import { useToolboxFileAction, useToolboxTaskDetail } from '../../hooks/useApi';
-import type { ToolboxFileAction, ToolboxFileItemInput, ToolboxFileOperation, ToolboxFileScope, ToolboxFileRoot } from '../../types/toolbox';
+import { useToolboxFileAction, useToolboxReviewerStatus, useToolboxTaskDetail } from '../../hooks/useApi';
+import type { ToolboxFileAction, ToolboxFileApprovalMode, ToolboxFileItemInput, ToolboxFileOperation, ToolboxFileScope, ToolboxFileRoot } from '../../types/toolbox';
 import AiDirectoryPicker from '../ai/AiDirectoryPicker';
 
 const { Text, Paragraph } = Typography;
@@ -20,6 +20,14 @@ const stateLabels: Record<string, string> = {
   committing: '发布中', finished: '执行已结束', committed: '已发布', not_executed: '已证明未执行',
 };
 const stateLabel = (value: string | undefined) => value ? stateLabels[value] ?? value : '尚无回执';
+const reviewLabels: Record<string, string> = {
+  queued: '待 reviewer 审查', reviewing: 'reviewer 审查中', needs_human: '需要人工审阅',
+  rejected: 'reviewer 已拒绝', approved: 'reviewer 已批准',
+};
+const reviewerStatusLabels: Record<string, string> = {
+  REVIEWER_DISABLED: '独立 reviewer 未启用', REVIEWER_SECRET_MISSING: '服务间凭据未配置',
+  REVIEWER_URL_INVALID: 'reviewer 服务地址未配置或不受信', READY: '本地配置已就绪',
+};
 const errorText = (error: unknown) => {
   if (error && typeof error === 'object' && 'code' in error && 'message' in error) {
     return `[${String(error.code)}] ${String(error.message)}`;
@@ -54,12 +62,17 @@ const ToolboxFilesPanel: React.FC<ToolboxFilesPanelProps> = ({ projectId, taskId
   const [scopeRootIds, setScopeRootIds] = useState<string[]>([]);
   const [prefix, setPrefix] = useState('');
   const [scopeOps, setScopeOps] = useState<ToolboxFileOperation[]>(['copy']);
+  const [approvalMode, setApprovalMode] = useState<ToolboxFileApprovalMode>('human');
   const [sources, setSources] = useState('');
   const [maxOps, setMaxOps] = useState(1);
   const [maxBytes, setMaxBytes] = useState(4096);
   const [expiresAt, setExpiresAt] = useState(expiresDefault);
   const [scopeId, setScopeId] = useState('');
   const scope = scopes.find((item) => item.scope_id === scopeId && item.job_key === jobKey && item.attempt_id === job?.attempt_id);
+  const reviewerStatus = useToolboxReviewerStatus(approvalMode === 'reviewer' || scope?.approval_mode === 'reviewer');
+  const reviewerStatusText = reviewerStatus.isLoading ? '读取中' : reviewerStatus.isError ? '暂不可读，文件卡仍可人工处理' :
+    reviewerStatus.data?.configured ? '本地配置已就绪（不代表模型在线或连通）' :
+      reviewerStatusLabels[reviewerStatus.data?.reason_code ?? ''] ?? '本地配置不可用，文件卡仍可人工处理';
   const [itemOp, setItemOp] = useState<ToolboxFileOperation>('copy');
   const [itemRootId, setItemRootId] = useState('');
   const [destination, setDestination] = useState('');
@@ -72,8 +85,12 @@ const ToolboxFilesPanel: React.FC<ToolboxFilesPanelProps> = ({ projectId, taskId
   const selectedSummary = actions.find((item) => item.action_id === selectedActionId);
   const fullAction = selectedActionQuery.data?.card;
   const linkedScope = scopes.find((item) => item.scope_id === fullAction?.binding.scope_id);
+  const summaryIsNewer = detailQuery.dataUpdatedAt >= selectedActionQuery.dataUpdatedAt;
   const action: ToolboxFileAction | undefined = fullAction
-    ? { ...fullAction, state: selectedSummary?.state ?? fullAction.state, receipt: selectedSummary?.receipt ?? fullAction.receipt, result: selectedSummary?.result ?? fullAction.result }
+    ? { ...fullAction, state: summaryIsNewer ? selectedSummary?.state ?? fullAction.state : fullAction.state,
+        receipt: summaryIsNewer ? selectedSummary?.receipt ?? fullAction.receipt : fullAction.receipt,
+        review: summaryIsNewer ? selectedSummary?.review ?? fullAction.review : fullAction.review,
+        result: summaryIsNewer ? selectedSummary?.result ?? fullAction.result : fullAction.result }
     : selectedSummary;
   const [history, setHistory] = useState<ToolboxFileAction[]>([]);
   const [cursor, setCursor] = useState<string | null | undefined>(undefined);
@@ -95,7 +112,7 @@ const ToolboxFilesPanel: React.FC<ToolboxFilesPanelProps> = ({ projectId, taskId
     const firstForRoute = !previous || previous.route !== route;
     const firstLoadedIdentity = previous?.route === route && previous.identity === '' && identity !== '';
     const deepLinkId = new URLSearchParams(location.search).get('fileAction');
-    setJobKey(jobs.length === 1 ? jobs[0].key : ''); setScopeId(''); setItems([]);
+    setJobKey(jobs.length === 1 ? jobs[0].key : ''); setScopeId(''); setItems([]); setApprovalMode('human');
     setSelectedActionId(firstForRoute || firstLoadedIdentity ? deepLinkId : null);
     setHistory([]); setCursor(undefined); setNotice('');
     previousIdentityRef.current = { route, identity };
@@ -167,9 +184,20 @@ const ToolboxFilesPanel: React.FC<ToolboxFilesPanelProps> = ({ projectId, taskId
       job_key: job.key, attempt_id: job.attempt_id!,
       root_bindings: scopeRootIds.map((rootId) => ({ root_id: rootId, version: roots.find((root) => root.root_id === rootId)!.version, destination_prefixes: [prefix.trim()] })),
       allowed_operations: scopeOps, source_paths: sourcePaths,
-      max_operations: maxOps, max_total_bytes: maxBytes, expires_at: expiry.toISOString(), approval_mode: 'human',
-    }), '文件范围已提出；首次批准精确文件卡时才激活', true);
+      max_operations: maxOps, max_total_bytes: maxBytes, expires_at: expiry.toISOString(), approval_mode: approvalMode,
+    }), approvalMode === 'reviewer' ? 'reviewer 范围已提出；请核对服务器范围并单独激活' : '文件范围已提出；首次批准精确文件卡时才激活', true);
     if (result && contextRef.current.generation === startedIn && 'scope_id' in result) setScopeId(String(result.scope_id));
+  };
+  const activate = async (selected: ToolboxFileScope) => {
+    await run(() => toolboxApi.activateFileScope(projectId, taskId, selected.scope_id, selected.version),
+      'reviewer 范围已激活；已有待确认卡仍需逐卡请求审查', true);
+  };
+  const requestReview = async () => {
+    if (!fullAction || !fullAction.binding_hash || !canApprove || linkedScope?.approval_mode !== 'reviewer' || linkedScope.state !== 'active') return;
+    const startedIn = contextRef.current.generation;
+    const result = await run(() => toolboxApi.reviewFileAction(projectId, taskId, fullAction.action_id, fullAction.binding_hash!),
+      '审查请求已受理；请读取原卡确认最新决议与执行状态', true);
+    if (result && contextRef.current.generation === startedIn) await selectedActionQuery.refetch();
   };
   const addItem = () => {
     if (!scope || !itemRootId || !destination.trim() || (['copy', 'symlink'].includes(itemOp) && !source.trim()) || (itemOp === 'write_text' && !text)) {
@@ -197,7 +225,8 @@ const ToolboxFilesPanel: React.FC<ToolboxFilesPanelProps> = ({ projectId, taskId
     const result = await run(() => toolboxApi.planRemoteFile(projectId, taskId, {
       scope_id: scope.scope_id, scope_version: scope.version, job_key: job.key, attempt_id: job.attempt_id!,
       idempotency_key: key, items,
-    }), '已生成精确文件确认卡；尚未执行', true);
+    }), scope.approval_mode === 'reviewer' && scope.state === 'active'
+      ? '已受理，待 reviewer；尚未批准或执行' : '已生成精确文件确认卡；尚未执行', true);
     if (result && contextRef.current.generation === startedIn && 'pending' in result && result.pending) {
       setSelectedActionId(result.pending.action_id);
       if (itemsRef.current === submittedItems) { setItems([]); setKey(newKey()); }
@@ -206,7 +235,7 @@ const ToolboxFilesPanel: React.FC<ToolboxFilesPanelProps> = ({ projectId, taskId
   const resolve = async (approved: boolean) => {
     if (!fullAction || fullAction.kind !== 'remote_file' || fullAction.state !== 'pending') return;
     if (approved && !canApprove) { setNotice('当前计算、尝试或范围已变化，请重新读取并建立文件计划。'); return; }
-    const confirmation = approved && linkedScope?.state === 'proposed'
+    const confirmation = approved && linkedScope?.state === 'proposed' && linkedScope.approval_mode !== 'reviewer'
       ? { scope_id: linkedScope.scope_id, version: linkedScope.version } : undefined;
     const startedIn = contextRef.current.generation;
     const result = await run(() => toolboxApi.resolveConsent(projectId, taskId, fullAction.card_id, approved, undefined, confirmation),
@@ -246,6 +275,7 @@ const ToolboxFilesPanel: React.FC<ToolboxFilesPanelProps> = ({ projectId, taskId
     && field(fullAction.binding, 'project_id') === projectId && field(fullAction.binding, 'task_id') === taskId
     && fullAction.binding.job_key === job.key && fullAction.binding.attempt_id === job.attempt_id
     && !!linkedScope && ['proposed', 'active'].includes(linkedScope.state)
+    && (linkedScope.approval_mode !== 'reviewer' || linkedScope.state === 'active')
     && linkedScope.version === fullAction.binding.scope_version
     && linkedScope.job_key === job.key && linkedScope.attempt_id === job.attempt_id
     && new Date(linkedScope.expires_at).getTime() > Date.now()
@@ -255,14 +285,14 @@ const ToolboxFilesPanel: React.FC<ToolboxFilesPanelProps> = ({ projectId, taskId
     && fullAction.binding.manifest.items.every((entry) => entry.op !== 'write_text' || typeof entry.text === 'string');
   const itemStatus = (id: string) => action?.receipt.items.find((item) => item.item_id === id)?.state
     ?? action?.receipt.item_outcomes?.[id]?.state ?? (action?.state === 'pending' ? '等待批准' : '尚无回执');
-  return <Card id="toolbox-files" title="远端文件准备与授权" extra={<Tag>人工逐次确认</Tag>}>
+  return <Card id="toolbox-files" title="远端文件准备与授权" extra={<Tag>{scope?.approval_mode === 'reviewer' ? '独立 reviewer · 文件操作' : '人工逐次确认'}</Tag>}>
     <Space direction="vertical" size="large" style={{ width: '100%' }}>
       <Alert type="info" showIcon message="文件准备完成不代表科学适用" description="从当前计算和尝试选择研究根与精确来源；目标已存在时失败，软链接可能被计算写回根外来源。" />
       {notice && <Alert type={/失败|错误|不可|勿|缺|变化|冲突/.test(notice) ? 'warning' : 'info'} showIcon message={notice} closable onClose={() => setNotice('')} />}
       <div>
         <Text strong>1. 当前计算与研究根</Text>
         <div style={{ marginTop: 8 }}><Select aria-label="文件授权计算" style={{ width: '100%', maxWidth: 480 }} value={jobKey || undefined}
-          onChange={(value) => { setJobKey(value); setScopeId(''); setItems([]); setSelectedActionId(null); }}
+          onChange={(value) => { setJobKey(value); setScopeId(''); setItems([]); setSelectedActionId(null); setApprovalMode('human'); }}
           options={jobs.map((entry) => ({ value: entry.key, label: `${entry.label || entry.key}${entry.attempt_id ? ` · 当前尝试 ${entry.attempt_id}` : ' · 缺少当前尝试身份'}` }))}
           placeholder="选择一个计算" /></div>
         {jobKey && !job?.attempt_id && <Text type="danger">此计算缺少当前尝试身份，无法建立文件范围。</Text>}
@@ -277,8 +307,15 @@ const ToolboxFilesPanel: React.FC<ToolboxFilesPanelProps> = ({ projectId, taskId
           </List.Item>} />
       </div>
       <div>
-        <Text strong>2. 提出人工文件范围</Text>
+        <Text strong>2. 提出文件范围</Text>
         <Space direction="vertical" style={{ width: '100%', marginTop: 8 }}>
+          <Select aria-label="文件审批方式" value={approvalMode} onChange={setApprovalMode} style={{ width: '100%', maxWidth: 400 }}
+            options={[{ value: 'human', label: '人工审批' }, { value: 'reviewer', label: '独立 reviewer（仅文件操作）' }]} />
+          {approvalMode === 'reviewer' && <>
+            <Alert type="info" showIcon message="reviewer 仅核对机械文件操作的路径、操作、范围和预算"
+              description="模型不接收文件正文，不审阅正文或科学正确性。科学适用性仍需人工判断；科学文件、脚本、链接和需科学判断的操作交回人工。建范围后还须核对服务器确认的完整范围并单独启用。" />
+            <Text type="secondary">配置状态：{reviewerStatusText}</Text>
+          </>}
           <Select aria-label="范围研究根" mode="multiple" value={scopeRootIds} onChange={setScopeRootIds} options={rootOptions} placeholder="选择一个或多个已登记研究根" style={{ width: '100%', maxWidth: 600 }} />
           <Input aria-label="根内目标前缀" value={prefix} onChange={(event) => setPrefix(event.target.value)} placeholder="如 relax/static；留空表示所选研究根内" />
           <Select aria-label="允许的文件操作" mode="multiple" value={scopeOps} onChange={setScopeOps} options={operations} style={{ width: '100%' }} />
@@ -288,10 +325,38 @@ const ToolboxFilesPanel: React.FC<ToolboxFilesPanelProps> = ({ projectId, taskId
             <label>有效期 <Input aria-label="文件范围有效期" type="datetime-local" value={expiresAt} onChange={(event) => setExpiresAt(event.target.value)} /></label></Space>
           <Button disabled={busy || !job?.attempt_id || !scopeRootIds.length} onClick={() => void createScope()}>创建文件范围</Button>
           <Select aria-label="文件范围" value={scopeId || undefined} onChange={(value) => { setScopeId(value); setItems([]); }}
-            options={availableScopes.map((item) => ({ value: item.scope_id, label: `${item.state === 'proposed' ? '待首次确认' : '已激活'} · ${item.allowed_operations.map(opLabel).join('、')} · 到期 ${item.expires_at}` }))}
+            options={availableScopes.map((item) => ({ value: item.scope_id, label: `${item.state === 'proposed' ? '待首次确认' : '已激活'} · ${item.approval_mode === 'reviewer' ? 'reviewer' : '人工'} · ${item.allowed_operations.map(opLabel).join('、')} · 到期 ${item.expires_at}` }))}
             placeholder="选择已建立的当前计算范围（刷新后可恢复）" style={{ width: '100%' }} />
-          {scope && <Space wrap><Tag>计算：{job?.label || jobKey}</Tag><Tag>操作上限：{scope.max_operations}</Tag><Tag>字节预算：{scope.max_total_bytes}</Tag><Tag>状态：{scope.state}</Tag>
-            <Button danger disabled={busy} onClick={() => void revoke(scope)}>撤销文件范围</Button></Space>}
+          {scope && <>
+            {scope.approval_mode === 'reviewer' && <Alert type="info" showIcon message="此范围的 reviewer 仅核对机械路径、操作、范围和预算"
+              description="模型不接收或审阅文件正文，也不证明科学正确性；科学文件、脚本、链接及需科学判断的操作交回人工。" />}
+            {scope.approval_mode === 'reviewer' && approvalMode !== 'reviewer' && <Text type="secondary">配置状态：{reviewerStatusText}</Text>}
+            <Descriptions size="small" column={1} bordered title="服务器冻结的文件范围">
+              <Descriptions.Item label="范围编号">{scope.scope_id}</Descriptions.Item>
+              <Descriptions.Item label="模式与状态">{scope.approval_mode === 'reviewer' ? '独立 reviewer' : '人工审批'} · {stateLabel(scope.state)} · 版本 {scope.version}</Descriptions.Item>
+              <Descriptions.Item label="计算与尝试">{scope.job_key} · {scope.attempt_id}</Descriptions.Item>
+              <Descriptions.Item label="连接身份">{field(scope.endpoint, 'host') || '未提供'}:{field(scope.endpoint, 'port') || '未提供'} · 用户 {field(scope.endpoint, 'username') || '未提供'}
+                <br />主机密钥 {field(scope.endpoint?.host_key, 'algorithm') || '未提供'} · SHA-256 {field(scope.endpoint?.host_key, 'sha256') || '未提供'} · 校验 {field(scope.endpoint?.host_key, 'verification') || '未提供'}
+                <br />端点摘要 {scope.endpoint_digest || '未提供'}</Descriptions.Item>
+              <Descriptions.Item label="研究根与目标前缀">{scope.root_bindings.map((binding) => {
+                const root = roots.find((entry) => entry.root_id === binding.root_id && entry.version === binding.version);
+                return `${root?.requested_path ?? binding.root_id} → ${root?.canonical_path ?? '当前根不可用'}（版本 ${binding.version}；设备 ${field(root?.identity, 'device') || '未知'}；inode ${field(root?.identity, 'inode') || '未知'}；目标 ${binding.destination_prefixes.map((part) => part || '该根内全部').join('、')}）`;
+              }).join('；')}</Descriptions.Item>
+              <Descriptions.Item label="精确来源与解析位置">{scope.source_bindings.length ? scope.source_bindings.map((binding, index) =>
+                <details key={`${binding.requested_path}-${index}`}>
+                  <summary>{binding.requested_path} → {binding.canonical_path}</summary>
+                  <Text>类型 {binding.type || '未提供'} · 类别 {binding.content_class || '未提供'} · 大小 {binding.size ?? '未提供'} · 修改时间(ns) {binding.mtime_ns ?? '未提供'}</Text><br />
+                  <Text>SHA-256 {binding.sha256 || '未提供'} · 设备 {field(binding.identity, 'device') || '未提供'} · inode {field(binding.identity, 'inode') || '未提供'}</Text>
+                </details>) : '无外部来源'}</Descriptions.Item>
+              <Descriptions.Item label="允许操作">{scope.allowed_operations.map(opLabel).join('、')}</Descriptions.Item>
+              <Descriptions.Item label="来源与提交策略">{scope.source_policy || 'exact_sources'} · 提交上限 {scope.submit_limit ?? 0}</Descriptions.Item>
+              <Descriptions.Item label="上限与有效期">{scope.max_operations} 项 · {scope.max_total_bytes} 字节 · 到期 {scope.expires_at}</Descriptions.Item>
+            </Descriptions>
+            {scope.approval_mode === 'reviewer' && scope.state === 'proposed' && <Button type="primary" disabled={busy || !job?.attempt_id}
+              onClick={() => void activate(scope)}>确认以上范围并启用 reviewer</Button>}
+            {scope.approval_mode === 'reviewer' && scope.state === 'active' && <Text type="secondary">仅新建计划会自动进入 reviewer；既有待确认卡须在完整卡中逐卡请求审查。</Text>}
+            <Button danger disabled={busy} onClick={() => void revoke(scope)}>撤销文件范围</Button>
+          </>}
         </Space>
       </div>
       <div>
@@ -317,7 +382,7 @@ const ToolboxFilesPanel: React.FC<ToolboxFilesPanelProps> = ({ projectId, taskId
         <List size="small" dataSource={actionRows} locale={{ emptyText: '暂无文件动作' }} renderItem={(row) =>
           <List.Item actions={[<Button key="view" size="small" onClick={() => setSelectedActionId(row.action_id)}>查看完整卡与回执</Button>]}>
             <List.Item.Meta title={<Space wrap><Tag title={row.state}>{stateLabel(row.state)}</Tag><Text>{jobs.find((entry) => entry.key === row.binding?.job_key)?.label || row.binding?.job_key || '文件动作'}</Text></Space>}
-              description={`尝试 ${row.binding?.attempt_id || '—'} · ${row.binding?.manifest?.items?.length ?? 0} 项 · ${stateLabel(row.receipt?.phase)}`} />
+              description={`尝试 ${row.binding?.attempt_id || '—'} · ${row.binding?.manifest?.items?.length ?? 0} 项 · ${stateLabel(row.receipt?.phase)}${row.review ? ` · ${reviewLabels[row.review.state] ?? row.review.state}` : ''}`} />
           </List.Item>} />
         {(cursor === undefined || cursor) && <Button disabled={busy} onClick={() => void loadHistory()}>查看更多历史动作</Button>}
         {selectedActionId && <Card size="small" title="完整文件确认卡与回执" style={{ marginTop: 12 }}>
@@ -326,6 +391,7 @@ const ToolboxFilesPanel: React.FC<ToolboxFilesPanelProps> = ({ projectId, taskId
           {action && <Space direction="vertical" style={{ width: '100%' }}>
             <Descriptions size="small" column={1} bordered>
               <Descriptions.Item label="状态"><Tag title={action.state}>{stateLabel(action.state)}</Tag> · {stateLabel(action.receipt?.phase)}</Descriptions.Item>
+              {action.review && <Descriptions.Item label="独立审查">{reviewLabels[action.review.state] ?? action.review.state}{action.review.reason ? ` · ${action.review.reason}` : ''}{action.review.decided_by ? ` · 决议来源：${action.review.decided_by === 'human' ? '人工' : 'reviewer'}` : ''}</Descriptions.Item>}
               <Descriptions.Item label="计算与尝试">{action.binding.job_key} · {action.binding.attempt_id}</Descriptions.Item>
               <Descriptions.Item label="研究根">{cardRoots.map((root) => `${root.requested_path} → ${root.canonical_path}`).join('；') || '读取完整卡后显示'}</Descriptions.Item>
               <Descriptions.Item label="SSH 端点">{field(fullAction?.binding.manifest.endpoint, 'host')}:{field(fullAction?.binding.manifest.endpoint, 'port')} · {field(fullAction?.binding.manifest.endpoint, 'username')}</Descriptions.Item>
@@ -355,12 +421,18 @@ const ToolboxFilesPanel: React.FC<ToolboxFilesPanelProps> = ({ projectId, taskId
             {(action.receipt.leftovers?.length ?? 0) > 0 && <Alert type="warning" message={`远端遗留需人工核对：${action.receipt.leftovers?.join('；')}`} />}
             <Paragraph>已完成：{action.receipt.spent?.operations ?? 0} 项；结果未知保留：{action.receipt.held_unknown?.operations ?? 0} 项；已证明未执行：{action.receipt.released?.operations ?? 0} 项。</Paragraph>
             {action.receipt.cancel_requested_at && <Alert type="warning" message="已请求撤销；在途发布仍可能生效，请以逐项回执为准" />}
+            {linkedScope?.approval_mode === 'reviewer' && action.state === 'pending' && !action.review && <Alert type="info" showIcon message={linkedScope.state === 'active' ? '此卡尚未请求 reviewer 审查' : 'reviewer 范围尚未激活'}
+              description={linkedScope.state === 'active' ? '旧待确认卡须明确请求审查；受理本身不代表批准或执行。' : '请先核对并单独激活服务器冻结的范围；本卡不会被批量审查。'} />}
+            {action.review?.state === 'needs_human' && action.state === 'pending' && <Alert type="warning" showIcon message="需要人工审阅" description={action.review.reason || 'reviewer 未能完成审查，请查看完整卡后人工决定。'} />}
             <Text type="secondary">文件完成仅表示准备结果，科学适用性尚未判断。</Text>
+            {action.state === 'pending' && fullAction && linkedScope?.approval_mode === 'reviewer' && linkedScope.state === 'active' && !action.review &&
+              <Button disabled={busy || !canApprove || !fullAction.binding_hash} onClick={() => void requestReview()}>请求 reviewer 审查</Button>}
             {action.state === 'pending' && fullAction && <Space>
               <Button type="primary" disabled={busy || !canApprove} onClick={() => void resolve(true)}>批准文件计划</Button>
               <Button danger disabled={busy} onClick={() => void resolve(false)}>拒绝文件计划</Button>
             </Space>}
-            {action.state === 'pending' && fullAction && !canApprove && <Text type="warning">当前计算、尝试、范围或卡期限已变化；请核对后重新建立计划。</Text>}
+            {action.state === 'pending' && fullAction && !canApprove && <Text type="warning">{linkedScope?.approval_mode === 'reviewer' && linkedScope.state === 'proposed'
+              ? 'reviewer 范围须先单独激活；这张卡不会因此自动进入审查。' : '当前计算、尝试、范围或卡期限已变化；请核对后重新建立计划。'}</Text>}
             {action.state === 'unknown' && fullAction?.action_id === selectedActionId && <Button disabled={busy} onClick={() => void reconcile()}>核对未知结果</Button>}
             <Button size="small" onClick={() => void selectedActionQuery.refetch()}>刷新完整回执</Button>
           </Space>}

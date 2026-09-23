@@ -512,3 +512,13 @@ export function useToolboxFileAction(projectId: string, taskId: string, actionId
     retry: false,
   });
 }
+
+export function useToolboxReviewerStatus(enabled: boolean) {
+  return useQuery({
+    queryKey: ['toolboxReviewerStatus'],
+    queryFn: () => toolboxApi.getReviewerStatus(),
+    enabled,
+    retry: false,
+    staleTime: 30_000,
+  });
+}
