@@ -26,6 +26,21 @@ from ..consent import spawn_submit_card as _spawn_submit_card
 from .protocol import INTENT_MARK, TOOL_MARK, has_unclosed_marker, parse_turn
 from .tools import _CONSENT_PENDING, ToolExecutor, tool_schema_text
 
+
+def _stream_card(card):
+    if card.get('kind') != 'remote_file':
+        return card
+    binding = card.get('binding') or {}
+    return {
+        'kind': 'remote_file',
+        'card_id': card.get('card_id'),
+        'action_id': card.get('action_id'),
+        'state': card.get('state'),
+        'summary': card.get('summary'),
+        'binding': {k: binding.get(k) for k in ('job_key', 'attempt_id', 'scope_id', 'scope_version')},
+        'review_hint': '请前往同一任务的 Toolbox 完整审阅文件卡',
+    }
+
 logger = logging.getLogger("ai_mode.agent.runner")
 __test__ = False
 
@@ -698,7 +713,7 @@ def run_agent_stream(store, project_id, task_id, content, *,
                 card_id = note[len(_CONSENT_PENDING):]
                 card = _get_consent_card(store, project_id, task_id, card_id)
                 if card:
-                    yield {"type": "card", "card": card}
+                    yield {"type": "card", "card": _stream_card(card)}
                 if not auto_resume:
                     yield {"type": "done", "answer": _join_answer(parts)}
                     return
@@ -791,7 +806,7 @@ def run_agent_stream(store, project_id, task_id, content, *,
                     card = _get_consent_card(store, project_id, task_id,
                                              card_id)
                     if card:
-                        yield {"type": "card", "card": card}
+                        yield {"type": "card", "card": _stream_card(card)}
                     if not auto_resume:
                         yield {"type": "done", "answer": _join_answer(parts)}
                         return

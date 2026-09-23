@@ -117,6 +117,73 @@ export interface ToolboxConsentCard {
   options?: string[];
   args?: Record<string, unknown>;
   binding?: Record<string, unknown>;
+  receipt?: ToolboxFileReceipt;
+}
+
+export type ToolboxFileOperation = 'copy' | 'symlink' | 'write_text' | 'mkdir';
+export interface ToolboxFileRoot {
+  root_id: string;
+  version: number;
+  requested_path: string;
+  canonical_path: string;
+  endpoint_digest: string;
+  identity?: Record<string, unknown>;
+}
+export interface ToolboxFileScope {
+  scope_id: string;
+  version: number;
+  kind: 'file';
+  state: 'proposed' | 'active' | 'revoked' | 'expired';
+  job_key: string;
+  attempt_id: string;
+  root_bindings: { root_id: string; version: number; destination_prefixes: string[] }[];
+  allowed_operations: ToolboxFileOperation[];
+  source_bindings: { requested_path: string; canonical_path: string; size?: number; content_class?: string }[];
+  max_operations: number;
+  max_total_bytes: number;
+  expires_at: string;
+  reason?: string;
+}
+export interface ToolboxFileItemInput {
+  item_id: string;
+  op: ToolboxFileOperation;
+  destination: { root_id: string; relative_path: string };
+  source?: { absolute_path: string };
+  text?: string;
+  on_conflict: 'fail';
+}
+export interface ToolboxFileManifestItem {
+  item_id: string;
+  op: ToolboxFileOperation;
+  destination: Record<string, unknown>;
+  source?: Record<string, unknown> | null;
+  text?: string | null;
+  text_sha256?: string;
+  bytes: number;
+  content_class?: string;
+  on_conflict: 'fail';
+}
+export interface ToolboxFileReceipt {
+  phase: string;
+  items: { item_id: string; state?: string; [key: string]: unknown }[];
+  item_outcomes?: Record<string, { state: string; evidence?: string }>;
+  spent?: { operations: number; bytes: number };
+  held_unknown?: { operations: number; bytes: number };
+  released?: { operations: number; bytes: number };
+  leftovers?: string[];
+  error?: ToolboxErrorBody | null;
+  cancel_requested_at?: string;
+}
+export interface ToolboxFileAction extends ToolboxConsentCard {
+  kind: 'remote_file';
+  binding: Record<string, unknown> & {
+    scope_id: string;
+    scope_version: number;
+    job_key: string;
+    attempt_id: string;
+    manifest: { endpoint: Record<string, unknown>; roots: ToolboxFileRoot[]; items: ToolboxFileManifestItem[]; manifest_digest: string };
+  };
+  receipt: ToolboxFileReceipt;
 }
 
 export interface ToolboxTaskDetail {
@@ -125,6 +192,10 @@ export interface ToolboxTaskDetail {
   task: ToolboxTask;
   flow: ToolboxFlow;
   consents: ToolboxConsentCard[];
+  file_roots?: ToolboxFileRoot[];
+  file_roots_version?: number;
+  file_scopes?: ToolboxFileScope[];
+  file_actions?: ToolboxFileAction[];
   events: ToolboxExecutionEvent[];
   monitor: ToolboxMonitorState;
   backend_mode: ToolboxExecutionMode | string;

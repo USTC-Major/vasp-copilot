@@ -207,7 +207,11 @@ const ToolboxTaskStatus: React.FC<Props> = ({
                 </Space>
               ) : null;
             })()}
-            <Space>
+            {card.kind === 'remote_file' ? (
+              <Link to={`/toolbox/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(taskId)}?fileAction=${encodeURIComponent(card.action_id || card.card_id)}#toolbox-files`}>
+                审阅完整文件计划与授权范围
+              </Link>
+            ) : <Space>
               <Button
                 type="primary"
                 size="small"
@@ -221,7 +225,7 @@ const ToolboxTaskStatus: React.FC<Props> = ({
                 disabled={!!resolvingId}
                 onClick={() => void resolveCard(card, false)}
               >拒绝</Button>
-            </Space>
+            </Space>}
           </Space>
         </Card>
       ))}

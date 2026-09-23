@@ -3,6 +3,7 @@ import { Alert, Button, Card, Checkbox, Col, Divider, Empty, Input, InputNumber,
 import { ArrowLeftOutlined, CloudUploadOutlined, FileSearchOutlined, FolderOpenOutlined, PlusOutlined, SafetyCertificateOutlined, SendOutlined } from '@ant-design/icons';
 import { Link, useParams } from 'react-router-dom';
 import ToolboxTaskStatus from '../components/toolbox/ToolboxTaskStatus';
+import ToolboxFilesPanel from '../components/toolbox/ToolboxFilesPanel';
 import AiDirectoryPicker from '../components/ai/AiDirectoryPicker';
 import { toolboxApi } from '../api/client';
 import { useToolboxRunTool, useToolboxTaskDetail } from '../hooks/useApi';
@@ -239,6 +240,8 @@ const ToolboxTaskPage: React.FC = () => {
         onStopMonitor={stopMonitor}
         stopPending={runToolMutation.isPending}
       />
+
+      <ToolboxFilesPanel projectId={projectId} taskId={taskId} />
 
       {lastResult && <Alert type="info" showIcon message="最近一次工具回执" description={lastResult} closable onClose={() => setLastResult('')} />}
 
