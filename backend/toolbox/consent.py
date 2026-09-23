@@ -261,6 +261,9 @@ def claim_action(store, project_id: str, task_id: str,
         inflight = [other for key, other in cons[_ACTIONS_KEY].items()
                     if key != action_id and other.get("state") == "executing"]
         if inflight:
+            files = getattr(store, 'file_actions', None)
+            if files and (project_id,task_id) in files.active:
+                return None  # A live owner worker is not an interrupted action.
             for other in inflight:
                 other["state"] = "unknown"
                 other["finished_at"] = _iso()

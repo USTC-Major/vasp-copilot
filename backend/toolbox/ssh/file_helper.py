@@ -212,7 +212,8 @@ def provenance_class(info, provenance, endpoint_digest):
     require(isinstance(provenance, dict) and provenance.get("origin") in {"external_source", "managed_output"},
             "CONTENT_READ_DENIED", "Trusted owner provenance resolution is required")
     if provenance["origin"] == "external_source":
-        require(set(provenance) == {"origin"}, "CONTENT_READ_DENIED", "External classification cannot override protected labels")
+        require(set(provenance) <= {"origin", "expected_evidence"}, "CONTENT_READ_DENIED", "External classification cannot override protected labels")
+        check_observation(info, provenance.get("expected_evidence"), endpoint_digest)
         return info["content_class"]
     require(provenance.get("content_class") in CLASSES and provenance.get("receipt_id")
             and provenance.get("manifest_digest") and provenance.get("endpoint_digest") == endpoint_digest
@@ -221,7 +222,15 @@ def provenance_class(info, provenance, endpoint_digest):
     return strict_class(info["content_class"], provenance["content_class"])
 
 
-def inspect(path, view="stat", *, provenance=None, endpoint_digest="", limit=200, cursor=None):
+def check_observation(info, expected, endpoint_digest):
+    if expected is None:
+        return
+    require(isinstance(expected, dict) and expected.get("endpoint_digest") == endpoint_digest
+            and all(info.get(k) == expected.get(k) for k in ("requested_path", "canonical_path", "resolution_chain"))
+            and identity_matches(info, expected, stable=True), "SOURCE_CHANGED", "Owner observation changed before content access")
+
+
+def inspect(path, view="stat", *, provenance=None, endpoint_digest="", limit=200, cursor=None, expected_evidence=None):
     canonical_path, links = resolve_source(path)
     if view == "list":
         integer(limit, 1, 500)
@@ -272,6 +281,7 @@ def inspect(path, view="stat", *, provenance=None, endpoint_digest="", limit=200
                 "verification_level": "metadata", "sha256": None}
     fd, info = open_source(path)
     try:
+        check_observation(info, expected_evidence, endpoint_digest)
         label = provenance_class(info, provenance, endpoint_digest)
         require(label not in {"potcar", "large_vasp", "credential", "opaque"}, "CONTENT_READ_DENIED", "This content class cannot be previewed")
         name = posixpath.basename(canonical_path)
@@ -488,6 +498,7 @@ class FileTransaction:
         self.root_fds, self.receipt_fds, self.created_dirs = {}, {}, {}
         self.index, self.total_bytes, self.current = 0, 0, None
         self.stopped, self.receipts = False, []
+        self.infrastructure = []
         try:
             # Reserve the remote action namespace before any data preparation.
             # An existing namespace is never resumed as a write operation.
@@ -498,6 +509,7 @@ class FileTransaction:
                 directory = names(manifest["action_id"])["action_directory"]
                 try:
                     private_directory(directory, fd)
+                    self.infrastructure.append(posixpath.join(root['canonical_path'],directory))
                 except FileExistsError:
                     raise FileError("ACTION_ALREADY_EXISTS", "Action evidence already exists; use read-only reconciliation")
                 receipt_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
@@ -507,9 +519,11 @@ class FileTransaction:
                     "action_id": manifest["action_id"], "endpoint_digest": manifest["endpoint"]["endpoint_digest"],
                     "root_id": key, "root_identity": root["identity"]})
                 os.fsync(fd)
-        except BaseException:
+        except BaseException as exc:
+            error=map_error(exc,'begin')
+            error.leftovers.extend(self.infrastructure)
             self.close()
-            raise
+            raise error
 
     def checkpoint(self):
         require(not self.stopped and self.clock() < self.deadline, "SCOPE_EXPIRED", "File session expired or stopped")
@@ -524,6 +538,10 @@ class FileTransaction:
             exact_mode(fd, 0o600)
             write_all(fd, data)
             os.fsync(fd)
+        except BaseException as exc:
+            error=map_error(exc,'receipt')
+            error.leftovers.append(posixpath.join(self.roots[root_id]['canonical_path'],names(self.manifest['action_id'])['action_directory'],name))
+            raise error
         finally:
             os.close(fd)
         os.fsync(self.receipt_fds[root_id])
@@ -818,11 +836,14 @@ def read_json_at(parent, name):
         os.close(fd)
 
 
-def reconcile(manifest):
+def reconcile(manifest, item_id=None):
     validated_manifest(manifest)
+    require(item_id is None or any(i["item_id"] == item_id for i in manifest["items"]))
     roots = {root["root_id"]: root for root in manifest["roots"]}
     results = []
     for item in manifest["items"]:
+        if item_id is not None and item["item_id"] != item_id:
+            continue
         root = roots[item["destination"]["root_id"]]
         parent = receipt_fd = target_fd = None
         try:
@@ -834,13 +855,26 @@ def reconcile(manifest):
                 os.close(root_fd)
             header = read_json_at(receipt_fd, "manifest.json")
             require(header.get("manifest_digest") == manifest["manifest_digest"] and header.get("action_id") == manifest["action_id"]
-                    and header.get("endpoint_digest") == manifest["endpoint"]["endpoint_digest"], "ACTION_UNKNOWN", "Receipt header mismatch")
+                    and header.get("endpoint_digest") == manifest["endpoint"]["endpoint_digest"]
+                    and header.get('root_id') == root['root_id'] and header.get('root_identity') == root['identity'], "ACTION_UNKNOWN", "Receipt header mismatch")
             record = read_json_at(receipt_fd, item["names"]["committed_name"])
             require(record.get("manifest_digest") == manifest["manifest_digest"] and record.get("item_id") == item["item_id"]
                     and record.get("state") == "committed" and record.get("content_class") == item["content_class"],
                     "ACTION_UNKNOWN", "Committed receipt mismatch")
+            require(record.get('action_id')==manifest['action_id'] and record.get('published') is True
+                    and record.get('bytes_processed')==item['bytes'] and record.get('source_evidence')==item['source']
+                    and record.get('remote_receipt_id')==item['names']['action_directory']+'/'+item['names']['committed_name'],
+                    'ACTION_UNKNOWN','Committed receipt does not match approved item')
+            expected_level=('remote_sha256_with_metadata_stability' if item['op'] in {'copy','write_text'} else
+                            'directory_identity' if item['op']=='mkdir' else 'link_target_and_metadata')
+            require(record.get('verification_level')==expected_level,'ACTION_UNKNOWN','Receipt verification level mismatch')
             target = posixpath.join(root["canonical_path"], item["destination"]["relative_path"])
             require((record.get("target_evidence") or {}).get("canonical_path") == target, "ACTION_UNKNOWN", "Receipt target mismatch")
+            require(record['target_evidence'].get('endpoint_digest')==manifest['endpoint']['endpoint_digest']
+                    and identity_matches(record['target_evidence'],record.get('temporary_evidence') or {}),
+                    'ACTION_UNKNOWN','Receipt identity mismatch')
+            if item['mode'] is not None:
+                require(record['target_evidence'].get('mode')==item['mode'],'ACTION_UNKNOWN','Receipt mode mismatch')
             parent, _ = open_directory(posixpath.dirname(target))
             name = posixpath.basename(target)
             actual = metadata(os.stat(name, dir_fd=parent, follow_symlinks=False))
@@ -855,6 +889,8 @@ def reconcile(manifest):
             verify_root(root)
             results.append({"item_id": item["item_id"], "state": "confirmed", "remote_receipt_id": record["remote_receipt_id"],
                             "content_class": record["content_class"], "sha256": record["sha256"]})
+            if item_id is not None:
+                results[-1]["receipt"] = record
         except Exception as exc:
             results.append({"item_id": item["item_id"], "state": "unknown", "error": map_error(exc, "reconcile").payload()})
         finally:
@@ -904,14 +940,15 @@ def main():
                     require(set(request) == {"op"})
                     _reply(probe())
                 elif op == "inspect" and transaction is None:
-                    require(set(request) <= {"op", "path", "view", "provenance", "endpoint_digest", "limit", "cursor"})
+                    require(set(request) <= {"op", "path", "view", "provenance", "endpoint_digest", "limit", "cursor", "expected_evidence"})
                     _reply(inspect(request["path"], request.get("view", "stat"), provenance=request.get("provenance"),
-                                   endpoint_digest=request.get("endpoint_digest", ""), limit=request.get("limit", 200), cursor=request.get("cursor")))
+                                   endpoint_digest=request.get("endpoint_digest", ""), limit=request.get("limit", 200), cursor=request.get("cursor"), expected_evidence=request.get("expected_evidence")))
                 elif op == "source" and transaction is None:
-                    require(set(request) == {"op", "path", "provenance", "endpoint_digest"})
+                    require(set(request) in ({"op", "path", "provenance", "endpoint_digest"}, {"op", "path", "provenance", "endpoint_digest", "expected_evidence"}))
                     fd, info = open_source(request["path"])
                     os.close(fd)
                     info["endpoint_digest"] = request["endpoint_digest"]
+                    check_observation(info, request.get("expected_evidence"), request["endpoint_digest"])
                     info["content_class"] = provenance_class(info, request["provenance"], request["endpoint_digest"])
                     _reply(info)
                 elif op == "root" and transaction is None:
@@ -935,8 +972,8 @@ def main():
                     _reply(transaction.abort())
                     break
                 elif op == "reconcile" and transaction is None:
-                    require(set(request) == {"op", "manifest"})
-                    _reply(reconcile(request["manifest"]))
+                    require(set(request) <= {"op", "manifest", "item_id"})
+                    _reply(reconcile(request["manifest"], request.get("item_id")))
                 else:
                     raise FileError("PROTOCOL_ERROR", "Unsupported or out-of-order operation")
             except EOFError:

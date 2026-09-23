@@ -659,7 +659,15 @@ class ToolExecutor:
             elif operation == "copy_inputs":
                 result = self._execute_copy_action(binding)
             elif operation == "hpc_upload":
-                result = self._execute_upload_action(binding)
+                files = getattr(self.store, 'file_actions', None)
+                if files:
+                    ready = self._hpc_ready()
+                    if ready[2]:
+                        raise ValueError(ready[2])
+                    with files.legacy_upload(self.project_id,self.task_id,binding,hpc=ready[0],cfg=self.cfg) as before_write:
+                        result = self._execute_upload_action(binding, ready=ready, before_write=before_write)
+                else:
+                    result = self._execute_upload_action(binding)
             elif operation == "kpoints_write":
                 result = self._execute_deterministic_text_action(binding)
             elif operation == "mp_poscar_write":
@@ -686,8 +694,10 @@ class ToolExecutor:
                 raise ValueError(f"unsupported consent operation: {operation}")
         except Exception as exc:  # noqa: BLE001
             result = f"操作失败且未重试：{type(exc).__name__}（{exc}）"
+            saved = get_card(self.store,self.project_id,self.task_id,action_id) or {}
+            state = 'unknown' if operation == 'hpc_upload' and saved.get('file_dispatch_at') else 'failed'
             finish_action(self.store, self.project_id, self.task_id,
-                          action_id, state="failed", result=result)
+                          action_id, state=state, result=result)
             return result
         finish_action(self.store, self.project_id, self.task_id,
                       action_id, state="executed", result=result)
@@ -759,8 +769,8 @@ class ToolExecutor:
         return (f"已原子写入 `{binding['relative_path']}`（SHA-256 "
                 f"{binding['proposal_sha256'][:12]}…）")
 
-    def _execute_upload_action(self, binding: dict) -> str:
-        hpc, root, err = self._hpc_ready()
+    def _execute_upload_action(self, binding: dict, *, ready=None, before_write=None) -> str:
+        hpc, root, err = ready if ready is not None else self._hpc_ready()
         if err:
             raise ValueError(err)
         if root != binding.get("remote_root"):
@@ -778,6 +788,13 @@ class ToolExecutor:
         rel = str(binding["remote_relative_path"])
         remote_path = f"{root.rstrip('/')}/{rel}"
         parent_rel = posixpath.dirname(rel)
+        atomic_write = getattr(hpc, "atomic_write_file", None)
+        if atomic_write is None:
+            raise ValueError("HPC adapter does not support verified atomic upload")
+        # Pure local validation is complete; keep these exact bytes, persist
+        # possible dispatch, then enter the first remote mutation once.
+        if before_write:
+            before_write()
         if parent_rel:
             current = root.rstrip("/")
             for segment in parent_rel.split("/"):
@@ -787,9 +804,6 @@ class ToolExecutor:
                 except Exception:
                     if getattr(hpc, "stat", lambda _p: None)(current) is None:
                         raise
-        atomic_write = getattr(hpc, "atomic_write_file", None)
-        if atomic_write is None:
-            raise ValueError("HPC adapter does not support verified atomic upload")
         written = atomic_write(remote_path, data,
                                expected_sha256=binding["source_sha256"])
         if (written != binding["source_size"]
@@ -905,6 +919,9 @@ class ToolExecutor:
             "remote_root": root, "remote_relative_path": dest_rel,
             "execution_mode": self._execution_mode(),
         }
+        files = getattr(self.store, 'file_actions', None)
+        if files:
+            binding['file_identity'] = files.legacy_identity(root,dest_rel)
         payload = card_payload(
             tool="hpc_upload", args={"artifact_id": artifact_id,
                                       "job_key": job_key},
@@ -1012,6 +1029,15 @@ class ToolExecutor:
         if policy_error:
             return ToolFailure('TOOL_POLICY_OR_PRECONDITION', policy_error)
         target = f"{root.rstrip('/')}/{rel}"
+        files = getattr(self.store, 'file_actions', None)
+        if files and files.has_audit():
+            from .file_actions import file_error
+            try:
+                value=files.inspect(self.project_id,self.task_id,{'path':target,'view':'text'})
+                return f"--- 超算文件 {rel} ---\n{value.get('text','')}"
+            except Exception as exc:
+                error=file_error(exc)
+                return ToolFailure(error.code,str(error))
         try:
             stat = getattr(hpc, "stat", lambda _path: None)(target) or {}
             if int(stat.get("size") or 0) > _HPC_READ_CAP:
