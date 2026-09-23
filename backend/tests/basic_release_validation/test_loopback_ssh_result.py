@@ -118,9 +118,21 @@ class _Loopback:
                         break
                 if channel is not None:
                     channel.settimeout(5)
+                    served_helper = False
                     if server.exec_ready.wait(5):
                         self._run_helper(channel)
+                        served_helper = True
                     channel.close()
+                    if served_helper:
+                        # The client still checks the verified endpoint after
+                        # receiving the final helper frame. Keep SSH alive
+                        # until its manager closes the connection.
+                        deadline = time.monotonic() + 5
+                        while (transport.is_active() and not self.stop.is_set()
+                               and time.monotonic() < deadline):
+                            time.sleep(0.01)
+                        if transport.is_active() and not self.stop.is_set():
+                            self.errors.append("client did not close SSH transport")
             except (EOFError, OSError, paramiko.SSHException):
                 # A rejected client closes before authentication; this is expected.
                 pass
