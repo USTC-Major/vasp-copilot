@@ -37,24 +37,35 @@ jobs:
           } | tee "$evidence/environment.txt"
 
       - name: Install selected validation and transport dependencies
-        run: >-
-          python3 -m pip install --disable-pip-version-check
-          "pytest>=8.2,<9" "httpx>=0.27,<1"
-          "fastapi>=0.111,<1" "pydantic>=2.7,<3"
-          "python-multipart>=0.0.9,<1" "jinja2>=3.1,<4"
-          "PyYAML>=6,<7" "pymatgen>=2024.1,<2027"
-          "paramiko>=3.4,<5"
+        run: |
+          set -euo pipefail
+          venv="$RUNNER_TEMP/file-action-venv"
+          python3 -m venv "$venv"
+          "$venv/bin/python" -m pip install --disable-pip-version-check \
+            "pytest>=8.2,<9" "httpx>=0.27,<1" \
+            "fastapi>=0.111,<1" "pydantic>=2.7,<3" \
+            "python-multipart>=0.0.9,<1" "jinja2>=3.1,<4" \
+            "PyYAML>=6,<7" "pymatgen>=2024.1,<2027" \
+            "paramiko>=3.4,<5"
+          printf '%s\n' "$venv/bin" >> "$GITHUB_PATH"
 
       - name: Verify selected input, result, and SSH imports
         run: |
           set -euo pipefail
+          evidence="$RUNNER_TEMP/file-action-integration"
+          test "$(python3 -c 'import sys; print(sys.prefix)')" = "$RUNNER_TEMP/file-action-venv"
+          {
+            printf 'test_python=%s\n' "$(command -v python3)"
+            python3 -VV
+            python3 -c 'import sys; print("test_python_prefix=" + sys.prefix)'
+          } | tee -a "$evidence/environment.txt"
           export HOME="$RUNNER_TEMP/file-action-home"
           export VASP_AI_HOME="$HOME/vasp-ai"
           export DATA_DIR="$HOME/app-data"
           export ENABLE_AI_MODE=false ENABLE_LLM=false
           mkdir -p "$HOME" "$VASP_AI_HOME" "$DATA_DIR"
           unset OPENAI_API_KEY MP_API_KEY
-          python3 - <<'PY'
+          python3 - <<'PY' | tee -a "$evidence/environment.txt"
           import httpx
           import pytest
           import fastapi
@@ -93,6 +104,7 @@ jobs:
         run: |
           set -euo pipefail
           evidence="$RUNNER_TEMP/file-action-integration"
+          test "$(python3 -c 'import sys; print(sys.prefix)')" = "$RUNNER_TEMP/file-action-venv"
           export HOME="$RUNNER_TEMP/file-action-home"
           export VASP_AI_HOME="$HOME/vasp-ai"
           export DATA_DIR="$HOME/app-data"
