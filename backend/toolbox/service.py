@@ -212,6 +212,9 @@ class ExecutionService:
                     if approved:
                         self.executor(project_id, task_id).execute_action(card_id)
             card = consent.get_card(self.store, project_id, task_id, card_id)
+            if (self.files and card.get('kind') == 'hpc_upload'
+                    and card.get('state') in {'rejected', 'expired', 'failed', 'executed', 'unknown'}):
+                self.files.release_legacy_upload(card.get('binding'))
             ok = card['state'] in {'executed', 'rejected'}
             result = card.get('result') or ('已拒绝；未执行' if card['state'] == 'rejected' else card['state'])
             error = None if ok else {'code': 'CONSENT_' + card['state'].upper(),

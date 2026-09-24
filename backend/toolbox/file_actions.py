@@ -102,6 +102,8 @@ class FileActions:
         self.guard = threading.RLock()
         self.wake, self.stopping = threading.Event(), threading.Event()
         self.active, self.queue, self.threads, self.leases = {}, deque(), [], {}
+        self.legacy_sessions = {}
+        self.legacy_preparing = {}
         self.generation = 0
         self.closed = False
         self.owner_id = uuid.uuid4().hex
@@ -1444,6 +1446,122 @@ class FileActions:
                 "targets": evidence.targets(manifest),
             }
 
+    def prepare_legacy_upload(self, root_path, relative_path, *, hpc, cfg):
+        """Observe a proposal and retain its exact SSH transport until consent."""
+        with self.guard:
+            self._global_write()
+            check(len(self.legacy_sessions) + len(self.legacy_preparing) < 8,
+                  "FILE_ACTION_BUSY",
+                  "待确认上传会话已达上限，请先处理已有卡", 409)
+            check(not any(s["hpc"] is hpc for s in self.legacy_sessions.values()),
+                  "FILE_ACTION_BUSY", "此SSH连接已有待确认上传卡，请先处理该卡", 409)
+            check(id(hpc) not in self.legacy_preparing,
+                  "FILE_ACTION_BUSY", "此SSH连接已有正在生成的上传卡", 409)
+            self.legacy_preparing[id(hpc)] = hpc
+        try:
+            if not self.factory:
+                hpc.pin_current_transport()
+            identity = self.legacy_identity(
+                root_path, relative_path, files=self._legacy_files(hpc, cfg)
+            )
+            ticket = uuid.uuid4().hex
+            return identity, {"schema": "ssh-transport-v1",
+                              "owner_id": self.owner_id, "session_id": ticket}
+        except BaseException:
+            self.discard_legacy_candidate(hpc)
+            raise
+
+    def discard_legacy_candidate(self, hpc):
+        """Dispose an unregistered proposal without closing another card's SSH."""
+        with self.guard:
+            if self.legacy_preparing.get(id(hpc)) is hpc:
+                self.legacy_preparing.pop(id(hpc), None)
+            held = any(s["hpc"] is hpc for s in self.legacy_sessions.values())
+            if not held and hasattr(hpc, "close"):
+                hpc.close()
+
+    def register_legacy_upload(self, session, action_id, hpc, expires_at):
+        """Attach a fresh proposal to one persisted card, with a bounded TTL."""
+        expiry = dt.datetime.fromisoformat(expires_at)
+        remaining = (expiry - dt.datetime.now(dt.timezone.utc)).total_seconds()
+        with self.guard:
+            self._global_write()
+            check(session.get("owner_id") == self.owner_id
+                  and session.get("schema") == "ssh-transport-v1"
+                  and session.get("session_id") not in self.legacy_sessions
+                  and self.legacy_preparing.get(id(hpc)) is hpc
+                  and not any(s["hpc"] is hpc for s in self.legacy_sessions.values())
+                  and len(self.legacy_sessions) + len(self.legacy_preparing) <= 8
+                  and remaining > 0,
+                  "FILE_ACTION_BUSY", "上传会话已失效，请重新提案", 409)
+            ticket = session["session_id"]
+            delay = min(600.0, remaining)
+            timer = threading.Timer(delay, self._expire_legacy_upload, args=(ticket,))
+            timer.daemon = True
+            self.legacy_sessions[ticket] = {
+                "action_id": action_id, "hpc": hpc,
+                "deadline": time.monotonic() + delay,
+                "in_use": False, "expired": False, "timer": timer,
+            }
+            self.legacy_preparing.pop(id(hpc), None)
+            timer.start()
+
+    def _expire_legacy_upload(self, ticket):
+        with self.guard:
+            entry = self.legacy_sessions.get(ticket)
+            if entry is None:
+                return
+            entry["expired"] = True
+            if entry["in_use"]:
+                return
+            self.legacy_sessions.pop(ticket, None)
+        if hasattr(entry["hpc"], "close"):
+            entry["hpc"].close()
+
+    def release_legacy_upload(self, binding):
+        session = (binding or {}).get("upload_session") or {}
+        ticket = session.get("session_id")
+        with self.guard:
+            entry = self.legacy_sessions.get(ticket)
+            if entry is None or entry["in_use"]:
+                return
+            self.legacy_sessions.pop(ticket, None)
+            entry["timer"].cancel()
+        if hasattr(entry["hpc"], "close"):
+            entry["hpc"].close()
+
+    def _claim_legacy_session(self, binding):
+        marker = binding.get("upload_session") or {}
+        check(marker.get("schema") == "ssh-transport-v1"
+              and marker.get("owner_id") == self.owner_id
+              and isinstance(marker.get("session_id"), str),
+              "ROOT_CHANGED", "上传卡不属于当前SSH会话；请重新提案", 409)
+        with self.guard:
+            entry = self.legacy_sessions.get(marker["session_id"])
+            check(entry is not None and entry["action_id"] == binding.get("action_id")
+                  and not entry["expired"] and not entry["in_use"]
+                  and time.monotonic() < entry["deadline"],
+                  "ROOT_CHANGED", "上传绑定的SSH会话已失效；请重新提案", 409)
+            entry["in_use"] = True
+            return entry
+
+    def legacy_session_active(self, binding):
+        marker = (binding or {}).get("upload_session") or {}
+        if marker.get("schema") != "ssh-transport-v1" or marker.get("owner_id") != self.owner_id:
+            return False
+        with self.guard:
+            entry = self.legacy_sessions.get(marker.get("session_id"))
+            if (entry is None or entry["action_id"] != binding.get("action_id")
+                    or entry["expired"] or time.monotonic() >= entry["deadline"]):
+                return False
+        if self.factory:
+            return True
+        try:
+            entry["hpc"].connect()  # a pinned manager cannot reconnect
+            return True
+        except Exception:
+            return False
+
     def _legacy_files(self, hpc, cfg):
         # Observe the very manager that will write, not a second connection
         # created from possibly newer settings. Fake adapters are explicit too.
@@ -1466,79 +1584,113 @@ class FileActions:
         return files
 
     @contextmanager
-    def legacy_upload(self, project, task, binding, *, hpc, cfg):
+    def legacy_upload(self, project, task, binding, *, cfg):
         identity = binding.get("file_identity")
         check(identity, "ENDPOINT_CHANGED", "旧上传缺少可信主机身份，请重新提案", 409)
-        files = self._legacy_files(hpc, cfg)
-        actual = self.legacy_identity(
-            binding["remote_root"], binding["remote_relative_path"], files=files
-        )
-        check(
-            actual["endpoint"] == identity["endpoint"]
-            and actual["root"]["canonical_path"] == identity["root"]["canonical_path"]
-            and h.identity_matches(
-                actual["root"]["identity"], identity["root"]["identity"]
+        entry = self._claim_legacy_session(binding)
+        hpc = entry["hpc"]
+        lease_id = None
+        try:
+            files = self._legacy_files(hpc, cfg)
+            actual = self.legacy_identity(
+                binding["remote_root"], binding["remote_relative_path"], files=files
             )
-            and actual["targets"] == identity["targets"],
-            "ROOT_CHANGED",
-            "上传批准后目标或主机身份变化",
-            409,
-        )
-        # Compare target snapshot too; the old upload is explicitly a replace.
-        check(
-            actual["destination"]["target_exists"]
-            == identity["destination"]["target_exists"],
-            "SOURCE_CHANGED",
-            "上传目标在批准后变化",
-            409,
-        )
-        lease_id = uuid.uuid4().hex
-        with consent.task_lock(project, task), self.guard:
-            self._global_write()
-            held = list(
-                evidence.occupied(
-                    self.snapshot(),
-                    actual["endpoint"],
-                    protect_finished=True,
-                    exclude=binding["action_id"],
-                )
-            )
-            for lease in self.leases.values():
-                check(
-                    not lease.get("global"),
-                    "FILE_ACTION_BUSY",
-                    "旧目录操作正在执行",
-                    409,
-                )
-                if evidence.namespace(lease["endpoint"]) == evidence.namespace(
-                    actual["endpoint"]
-                ):
-                    held += lease["targets"]
-            check(
-                not any(
-                    evidence.overlap(a, b) for a in actual["targets"] for b in held
-                ),
-                "DESTINATION_CONFLICT",
-                "旧上传与文件动作或已登记产物冲突，请使用新文件计划",
-                409,
-            )
-            self.leases[lease_id] = actual
 
-        def before_write():
+            def same_chain(left, right):
+                return (len(left) == len(right)
+                        and all(a.get("path") == b.get("path")
+                                and a.get("target") == b.get("target")
+                                and h.identity_matches(a, b)
+                                for a, b in zip(left, right)))
+
+            old_root, new_root = identity["root"], actual["root"]
+            old_dest, new_dest = identity["destination"], actual["destination"]
+            check(
+                actual["endpoint"] == identity["endpoint"]
+                and new_root["requested_path"] == old_root["requested_path"]
+                and new_root["canonical_path"] == old_root["canonical_path"]
+                and h.identity_matches(new_root["identity"], old_root["identity"])
+                and same_chain(new_root["ancestors"], old_root["ancestors"])
+                and same_chain(new_root["resolution_chain"], old_root["resolution_chain"])
+                and same_chain(new_dest["parent_chain"], old_dest["parent_chain"])
+                and new_dest["missing_components"] == old_dest["missing_components"]
+                and actual["targets"] == identity["targets"],
+                "ROOT_CHANGED", "上传批准后目标或主机身份变化", 409,
+            )
+            check(new_dest["target_exists"] == old_dest["target_exists"],
+                  "SOURCE_CHANGED", "上传目标在批准后变化", 409)
+            lease_id = uuid.uuid4().hex
             with consent.task_lock(project, task), self.guard:
                 self._global_write()
-                self._update_action(
-                    project,
-                    task,
-                    binding["action_id"],
-                    lambda a: a.update(file_dispatch_at=now()),
-                )
+                held = list(evidence.occupied(
+                    self.snapshot(), actual["endpoint"], protect_finished=True,
+                    exclude=binding["action_id"]))
+                for lease in self.leases.values():
+                    check(not lease.get("global"), "FILE_ACTION_BUSY",
+                          "旧目录操作正在执行", 409)
+                    if evidence.namespace(lease["endpoint"]) == evidence.namespace(actual["endpoint"]):
+                        held += lease["targets"]
+                for current in actual["targets"]:
+                    for reserved in held:
+                        check(not evidence.overlap(current, reserved),
+                              "DESTINATION_CONFLICT",
+                              "旧上传与文件动作或已登记产物冲突，请使用新文件计划", 409)
+                        # An alias in another mount namespace can have another
+                        # st_dev.  Do not infer disjointness from unequal IDs.
+                        left = {a[0] for a in current.get("anchors", [])}
+                        right = {a[0] for a in reserved.get("anchors", [])}
+                        check(left and right and left == right,
+                              "DESTINATION_CONFLICT",
+                              "不同设备命名空间的历史目标无法证明不冲突", 409)
+                self.leases[lease_id] = actual
 
-        try:
-            yield before_write
+            def before_write():
+                check(not entry["expired"] and time.monotonic() < entry["deadline"],
+                      "ROOT_CHANGED", "上传会话或确认已过期；请重新提案", 409)
+                if not self.factory:
+                    hpc.connect()  # pinned manager: must not reconnect
+                with consent.task_lock(project, task), self.guard:
+                    self._global_write()
+                    self._update_action(
+                        project, task, binding["action_id"],
+                        lambda a: a.update(file_dispatch_at=now()),
+                    )
+
+            def verify_after():
+                observed = self.legacy_identity(
+                    binding["remote_root"], binding["remote_relative_path"],
+                    files=files)
+                root, destination = observed["root"], observed["destination"]
+                target = destination["target_exists"]
+                previous_chain = new_dest["parent_chain"]
+                current_chain = destination["parent_chain"]
+                created = current_chain[len(previous_chain):]
+                previous_path = (previous_chain[-1]["path"] if previous_chain
+                                 else new_root["canonical_path"])
+                expected_created = []
+                for segment in new_dest["missing_components"]:
+                    previous_path = posixpath.join(previous_path, segment)
+                    expected_created.append(previous_path)
+                check(observed["endpoint"] == actual["endpoint"]
+                      and root["canonical_path"] == new_root["canonical_path"]
+                      and h.identity_matches(root["identity"], new_root["identity"])
+                      and same_chain(root["ancestors"], new_root["ancestors"])
+                      and same_chain(root["resolution_chain"], new_root["resolution_chain"])
+                      and len(current_chain) == len(previous_chain) + len(expected_created)
+                      and same_chain(current_chain[:len(previous_chain)], previous_chain)
+                      and [entry["path"] for entry in created] == expected_created
+                      and all(entry["type"] == "directory" for entry in created)
+                      and target is not None and target["type"] == "file"
+                      and target["size"] == binding["source_size"],
+                      "ROOT_CHANGED", "上传后目标或目录身份不一致，须人工核查", 409)
+
+            yield before_write, hpc, verify_after
         finally:
             with self.guard:
-                self.leases.pop(lease_id, None)
+                if lease_id is not None:
+                    self.leases.pop(lease_id, None)
+                entry["in_use"] = False
+            self.release_legacy_upload(binding)
 
     @contextmanager
     def legacy_mkdir(self, root_path, name, *, hpc, cfg):
@@ -1663,6 +1815,16 @@ class FileActions:
             "文件worker未退出；保留owner锁，防止第二owner接管",
             409,
         )
+        deadline = time.monotonic() + 30
+        while True:
+            with self.guard:
+                busy_upload = (any(s["in_use"] for s in self.legacy_sessions.values())
+                               or bool(self.legacy_preparing))
+            if not busy_upload:
+                break
+            check(time.monotonic() < deadline, "FILE_ACTION_BUSY",
+                  "上传仍在执行；保留owner锁，防止第二owner接管", 409)
+            time.sleep(0.05)
         # A worker that had already popped an item may have requeued it while
         # shutdown drained the first snapshot. All threads have now stopped.
         with self.guard:
@@ -1683,3 +1845,9 @@ class FileActions:
         # A request still awaiting remote observation can return, but cannot save.
         with self.guard:
             self.closed = True
+            sessions = list(self.legacy_sessions.values())
+            self.legacy_sessions.clear()
+        for session in sessions:
+            session["timer"].cancel()
+            if hasattr(session["hpc"], "close"):
+                session["hpc"].close()

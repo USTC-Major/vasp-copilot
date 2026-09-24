@@ -288,12 +288,15 @@ def test_changed_local_upload_input_fails_before_dispatch_marker_or_remote_write
     remote_calls=[]
     world.mkdir=lambda path:remote_calls.append(('mkdir',path))
     world.atomic_write_file=lambda path,data,**kwargs:remote_calls.append(('write',path))
+    identity, session = svc.files.prepare_legacy_upload(
+        '/research', 'j/INCAR', hpc=world, cfg=svc.settings_loader())
     binding=dict(operation='hpc_upload',execution_mode='Fake',project_id=project,task_id=task,job_key='j',
         artifact_id='input',source_relative_path='INCAR',source_size=8,source_sha256=hashlib.sha256(b'approved').hexdigest(),
         local_root=str(workspace.resolve()),remote_root='/research',remote_relative_path='j/INCAR',
-        file_identity=svc.files.legacy_identity('/research','j/INCAR'))
+        file_identity=identity,upload_session=session)
     card=consent.card_payload(tool='hpc_upload',args={},risk='medium',reason='fixture',batch_key='fixture',kind='hpc_upload',summary='fixture',binding=binding)
     consent.save_card(svc.store,project,task,svc.store.get_task(project,task)['flow'],card)
+    svc.files.register_legacy_upload(session, card['action_id'], world, card['expires_at'])
     consent.resolve_card(svc.store,project,task,card['action_id'],approved=True)
     source.write_bytes(b'changed-after-approval')
     executor=ToolExecutor(store=svc.store,project_id=project,task_id=task,cfg=svc.settings_loader(),orch=SimpleNamespace(hpc=world,execution_mode='Fake'))

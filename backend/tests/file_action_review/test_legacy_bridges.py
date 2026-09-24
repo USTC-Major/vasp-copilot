@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
 
 from backend.toolbox.contracts import ToolboxError
@@ -40,14 +42,18 @@ def test_known_legacy_upload_unknown_blocks_overlapping_mkdir(file_api):
 
 def test_active_legacy_upload_lease_blocks_ancestor_and_child_mkdir(file_api):
     owner = file_api.app.state.toolbox.files
-    identity = owner.legacy_identity("/review/root", "job/result.txt")
+    identity, session = owner.prepare_legacy_upload(
+        "/review/root", "job/result.txt", hpc=file_api.state.hpc, cfg=None)
     action = _store_upload(file_api, "legacy-live", "executing", identity)
+    action["binding"]["upload_session"] = session
+    owner.register_legacy_upload(
+        session, action["action_id"], file_api.state.hpc,
+        (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat())
 
     with owner.legacy_upload(
         file_api.project_id,
         file_api.task_id,
         action["binding"],
-        hpc=file_api.state.hpc,
         cfg=None,
     ):
         for root, name in [

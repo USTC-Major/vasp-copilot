@@ -5,6 +5,7 @@ import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { HttpResponse, http } from 'msw';
 import { routes } from '../router';
 import { server } from '../mocks/server';
+import { createQueryClient } from '../queryClient';
 import AiDirectoryPicker from '../components/ai/AiDirectoryPicker';
 
 const TOOLBOX = '/api/v1/toolbox';
@@ -28,9 +29,11 @@ const detail = (phase = 'planning') => ({
   backend_mode: 'Fake',
 });
 
-const renderRoute = (path: string) => {
+const renderRoute = (path: string, productionDefaults = false) => {
   const router = createMemoryRouter(routes, { initialEntries: [path] });
-  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+  const queryClient = productionDefaults
+    ? createQueryClient()
+    : new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   render(<QueryClientProvider client={queryClient}><RouterProvider router={router} /></QueryClientProvider>);
   return { router, queryClient };
 };
@@ -62,16 +65,21 @@ describe('Toolbox 无 AI 手动流程', () => {
   });
 
   it('提交授权失败时明确失败并重新读取，不显示提交成功', async () => {
+    let posts = 0;
     server.use(
       http.get(`${TOOLBOX}/projects/:projectId/tasks/:taskId/detail`, () => HttpResponse.json(detail('await_submit'))),
-      http.post(`${TOOLBOX}/projects/:projectId/tasks/:taskId/tools`, () => HttpResponse.json({ mode: 'toolbox', error: { code: 'CONSENT_REQUIRED', message: '提交授权不存在或已失效', retryable: false } }, { status: 409 })),
+      http.post(`${TOOLBOX}/projects/:projectId/tasks/:taskId/tools`, () => {
+        posts += 1;
+        return HttpResponse.json({ mode: 'toolbox', ok: false, error: { code: 'CONSENT_REQUIRED', message: '提交授权不存在或已失效', retryable: true } });
+      }),
     );
     const user = userEvent.setup();
-    renderRoute('/toolbox/projects/project-one/tasks/task-two');
+    renderRoute('/toolbox/projects/project-one/tasks/task-two', true);
     await screen.findByRole('heading', { name: '第二个精确任务' });
     await user.click(screen.getByRole('button', { name: /请求提交确认/ }));
     expect(await screen.findAllByText('提交授权不存在或已失效')).not.toHaveLength(0);
     expect(screen.queryByText('提交成功')).not.toBeInTheDocument();
+    expect(posts).toBe(1);
   });
 
   it('闲置页面每五秒读取 detail 并显示后来状态', async () => {

@@ -5,6 +5,7 @@ import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { HttpResponse, http } from 'msw';
 import { routes } from '../../router';
 import { server } from '../../mocks/server';
+import { createQueryClient } from '../../queryClient';
 import type { ToolboxFileReceipt } from '../../types/toolbox';
 
 const TOOLBOX = '/api/v1/toolbox';
@@ -50,14 +51,38 @@ const detail = (taskId = 'task-one', state = 'pending') => ({
   file_actions: [fileCard(state, false, taskId)], events: [], monitor: { state: 'idle', interval_seconds: 60, remote_cancelled: false }, backend_mode: 'Fake',
 });
 
-const renderTask = (path = '/toolbox/projects/project/tasks/task-one') => {
+const renderTask = (path = '/toolbox/projects/project/tasks/task-one', productionDefaults = false) => {
   const router = createMemoryRouter(routes, { initialEntries: [path] });
-  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+  const queryClient = productionDefaults
+    ? createQueryClient()
+    : new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   render(<QueryClientProvider client={queryClient}><RouterProvider router={router} /></QueryClientProvider>);
   return { router, queryClient };
 };
 
 describe('独立文件卡审阅', () => {
+  it('提交确认响应丢失时提示核对，且生产默认重试不重发确认', async () => {
+    const task = detail();
+    task.consents.push({
+      card_id: 'submit-card', action_id: 'submit-card', kind: 'submit', summary: '提交确认',
+      state: 'pending', reason: '逐次提交', binding: { job_key: 'a', attempt_id: 'attempt-a' },
+    } as typeof task.consents[number]);
+    let posts = 0;
+    server.use(
+      http.get(`${TOOLBOX}/projects/:projectId/tasks/:taskId/detail`, () => HttpResponse.json(task)),
+      http.post(`${TOOLBOX}/projects/:projectId/tasks/:taskId/consents/:cardId`, () => {
+        posts += 1;
+        return HttpResponse.error();
+      }),
+    );
+    const user = userEvent.setup();
+    renderTask('/toolbox/projects/project/tasks/task-one', true);
+    await screen.findByRole('button', { name: /确认本次操作/ });
+    await user.click(screen.getByRole('button', { name: /确认本次操作/ }));
+    expect(await screen.findByText(/正在重新读取任务状态，请勿重复确认/)).toBeInTheDocument();
+    expect(posts).toBe(1);
+  });
+
   it('共享状态中的旧提交卡保留原确认请求，文件卡只给完整审阅导航', async () => {
     const task = detail();
     task.consents.push({

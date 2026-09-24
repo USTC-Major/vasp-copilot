@@ -475,6 +475,7 @@ export function useToolboxTaskDetail(projectId: string | null, taskId: string | 
 export function useToolboxProjectCreate() {
   return useMutation({
     mutationFn: (body: { name: string; description?: string }) => toolboxApi.createProject(body),
+    retry: false,
   });
 }
 
@@ -484,6 +485,7 @@ export function useToolboxTaskCreate() {
       projectId: string;
       body: { title?: string; goal?: string; local_workspace?: string; hpc_workspace?: string };
     }) => toolboxApi.createTask(projectId, body),
+    retry: false,
   });
 }
 
@@ -492,6 +494,7 @@ export function useToolboxRunTool() {
     mutationFn: ({ projectId, taskId, name, args }: {
       projectId: string; taskId: string; name: string; args?: Record<string, unknown>;
     }) => toolboxApi.runTool(projectId, taskId, name, args),
+    retry: false,
   });
 }
 
@@ -501,6 +504,7 @@ export function useToolboxResolveConsent() {
       projectId: string; taskId: string; cardId: string; approved: boolean; note?: string;
       scopeConfirmation?: { scope_id: string; version: number };
     }) => toolboxApi.resolveConsent(projectId, taskId, cardId, approved, note, scopeConfirmation),
+    retry: false,
   });
 }
 

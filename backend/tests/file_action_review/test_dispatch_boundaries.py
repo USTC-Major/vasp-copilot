@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 import threading
 
 import pytest
@@ -92,19 +94,24 @@ def test_production_dispatch_rechecks_bound_configuration(file_api):
 
 def test_legacy_upload_rejects_observer_different_from_writer(file_api):
     owner = file_api.app.state.toolbox.files
-    identity = owner.legacy_identity("/review/root", "job/result.txt")
+    identity, session = owner.prepare_legacy_upload(
+        "/review/root", "job/result.txt", hpc=file_api.state.hpc, cfg=None)
     binding = {
         "action_id": "wrong-writer",
         "file_identity": identity,
         "remote_root": "/review/root",
         "remote_relative_path": "job/result.txt",
     }
+    binding["upload_session"] = session
+    owner.register_legacy_upload(
+        binding["upload_session"], binding["action_id"], file_api.state.hpc,
+        (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat())
+    owner.legacy_sessions[session["session_id"]]["hpc"] = object()
     with pytest.raises(ToolboxError) as caught:
         with owner.legacy_upload(
             file_api.project_id,
             file_api.task_id,
             binding,
-            hpc=object(),
             cfg=None,
         ):
             raise AssertionError("different actual writer must not receive a lease")

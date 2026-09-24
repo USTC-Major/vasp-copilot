@@ -188,3 +188,56 @@ def test_complete_manual_fake_submission_monitor_and_report(api):
     assert "## 概览" in completed["flow"]["report"]
     assert completed["flow"]["jobs"][0]["slurm_id"] == 7301
     assert api.hpc.submit_count == 1
+
+
+def test_upload_rejects_remote_workspace_change_before_any_write(api):
+    project, task = create_project_task(api)
+    project_id, task_id = project["id"], task["id"]
+    _plan_one_job(api, project_id, task_id)
+    state = call_tool(api, project_id, task_id, "get_state")
+    artifact_id = next(key for key, value in state["flow"]["artifacts"].items()
+                       if value["name"] == "INCAR")
+    card = call_tool(api, project_id, task_id, "hpc_upload", {
+        "artifact_id": artifact_id, "job_key": "relax",
+    })["pending"]
+    assert "当前SSH连接" in card["reason"]
+    flow = api.app.state.toolbox.store.get_task(project_id, task_id)["flow"]
+    flow["hpc_dir"] = "/review/changed"
+    api.app.state.toolbox.store.update_task(project_id, task_id, flow=flow,
+                                            hpc_workspace="/review/changed")
+    result = resolve_card(api, project_id, task_id, card["card_id"], True)
+    assert result["card"]["state"] == "failed"
+    assert api.hpc.write_calls == []
+    assert not api.app.state.toolbox.files.legacy_sessions
+
+
+def test_upload_postwrite_identity_failure_is_unknown_and_never_replayed(api, monkeypatch):
+    from .conftest import FakeRemoteFiles
+    original = FakeRemoteFiles._read
+    observations = 0
+
+    def changed_after_write(self, request, *, expected_endpoint=None):
+        nonlocal observations
+        result = original(self, request, expected_endpoint=expected_endpoint)
+        observations += 1
+        if observations >= 3:
+            result["target_exists"] = None
+        return result
+
+    monkeypatch.setattr(FakeRemoteFiles, "_read", changed_after_write)
+    project, task = create_project_task(api)
+    project_id, task_id = project["id"], task["id"]
+    _plan_one_job(api, project_id, task_id)
+    state = call_tool(api, project_id, task_id, "get_state")
+    artifact_id = next(key for key, value in state["flow"]["artifacts"].items()
+                       if value["name"] == "INCAR")
+    card = call_tool(api, project_id, task_id, "hpc_upload", {
+        "artifact_id": artifact_id, "job_key": "relax",
+    })["pending"]
+    first = resolve_card(api, project_id, task_id, card["card_id"], True)
+    assert first["card"]["state"] == "unknown"
+    assert first["card"].get("file_dispatch_at")
+    assert len(api.hpc.write_calls) == 1
+    replay = resolve_card(api, project_id, task_id, card["card_id"], True)
+    assert replay["card"]["state"] == "unknown"
+    assert len(api.hpc.write_calls) == 1

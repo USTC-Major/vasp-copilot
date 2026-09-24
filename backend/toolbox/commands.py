@@ -679,11 +679,14 @@ class ToolExecutor:
             elif operation == "hpc_upload":
                 files = getattr(self.store, 'file_actions', None)
                 if files:
-                    ready = self._hpc_ready()
-                    if ready[2]:
-                        raise ValueError(ready[2])
-                    with files.legacy_upload(self.project_id,self.task_id,binding,hpc=ready[0],cfg=self.cfg) as before_write:
-                        result = self._execute_upload_action(binding, ready=ready, before_write=before_write)
+                    current_root = self._hpc_root()
+                    if current_root != binding.get("remote_root"):
+                        raise ValueError("remote workspace changed after confirmation")
+                    with files.legacy_upload(self.project_id, self.task_id,
+                                             binding, cfg=self.cfg) as (before_write, hpc, verify_after):
+                        result = self._execute_upload_action(
+                            binding, ready=(hpc, current_root, ""),
+                            before_write=before_write, verify_after=verify_after)
                 else:
                     result = self._execute_upload_action(binding)
             elif operation == "kpoints_write":
@@ -787,7 +790,8 @@ class ToolExecutor:
         return (f"已原子写入 `{binding['relative_path']}`（SHA-256 "
                 f"{binding['proposal_sha256'][:12]}…）")
 
-    def _execute_upload_action(self, binding: dict, *, ready=None, before_write=None) -> str:
+    def _execute_upload_action(self, binding: dict, *, ready=None, before_write=None,
+                               verify_after=None) -> str:
         hpc, root, err = ready if ready is not None else self._hpc_ready()
         if err:
             raise ValueError(err)
@@ -827,6 +831,8 @@ class ToolExecutor:
         if (written != binding["source_size"]
                 or hpc.sha256_file(remote_path) != binding["source_sha256"]):
             raise ValueError("remote upload verification failed")
+        if verify_after:
+            verify_after()
         flow = self._load_flow()
         uploaded = dict(flow.get("uploaded_artifacts") or {})
         uploaded[binding["artifact_id"]] = {
@@ -926,7 +932,6 @@ class ToolExecutor:
         if size > _HPC_UPLOAD_CAP:
             return (f"文件过大（{size} B > 上限 {_HPC_UPLOAD_CAP} B），"
                     "拒绝上传；请压缩或拆分后再试。")
-        del hpc
         binding = {
             "operation": "hpc_upload",
             "project_id": self.project_id, "task_id": self.task_id,
@@ -939,19 +944,42 @@ class ToolExecutor:
         }
         files = getattr(self.store, 'file_actions', None)
         if files:
-            binding['file_identity'] = files.legacy_identity(root,dest_rel)
-        payload = card_payload(
-            tool="hpc_upload", args={"artifact_id": artifact_id,
-                                      "job_key": job_key},
-            risk="medium", reason="上传确认仅绑定当前文件哈希和远端目标路径。",
-            batch_key=f"upload|{artifact_id}|{root}|{dest_rel}",
-            kind="hpc_upload",
-            summary=(f"上传已登记输入 `{artifact['name']}`（{size} B，"
-                     f"SHA-256 {artifact['sha256']}）到 `{root}/{dest_rel}`"),
-            binding=binding,
-        )
-        saved = save_card(self.store, self.project_id, self.task_id,
-                          self._load_flow(), payload)
+            identity, session = files.prepare_legacy_upload(
+                root, dest_rel, hpc=hpc, cfg=self.cfg)
+            binding['file_identity'] = identity
+            binding['upload_session'] = session
+        registered = False
+        try:
+            payload = card_payload(
+                tool="hpc_upload", args={"artifact_id": artifact_id,
+                                          "job_key": job_key},
+                risk="medium", reason=("上传确认绑定当前文件哈希、远端目标及当前SSH连接；"
+                                       "断线、到期或服务重启后须重新提案。"),
+                batch_key=f"upload|{artifact_id}|{root}|{dest_rel}",
+                kind="hpc_upload",
+                summary=(f"上传已登记输入 `{artifact['name']}`（{size} B，"
+                         f"SHA-256 {artifact['sha256']}）到 `{root}/{dest_rel}`"),
+                binding=binding,
+            )
+            if files:
+                files.register_legacy_upload(
+                    session, payload["action_id"], hpc, payload["expires_at"])
+                registered = True
+            saved = save_card(self.store, self.project_id, self.task_id,
+                              self._load_flow(), payload)
+            if files and saved["action_id"] != payload["action_id"]:
+                files.release_legacy_upload(payload["binding"])
+                if not files.legacy_session_active(saved.get("binding") or {}):
+                    return ToolFailure(
+                        "UPLOAD_SESSION_EXPIRED",
+                        "[UPLOAD_SESSION_EXPIRED] 旧上传卡的SSH会话已失效；请拒绝旧卡后重新提案，未执行远端写入")
+        except BaseException:
+            if files:
+                if registered:
+                    files.release_legacy_upload(payload["binding"])
+                else:
+                    files.discard_legacy_candidate(hpc)
+            raise
         raise PendingConsentError(saved)
 
     # ---------------- 永久禁用的提交脚本写入兼容入口 ----------------

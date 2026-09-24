@@ -109,6 +109,11 @@ class SSHManager:
         self._active: dict | None = None
         self._client = None
         self._sftp = None
+        # A consent card may bind one physical SSH transport.  Once pinned,
+        # loss of that transport must fail closed instead of reconnecting to
+        # another login node with a different filesystem device namespace.
+        self._pinned_client = None
+        self._pinned_transport = None
 
     # ---------------- 账号（一次一个） ----------------
 
@@ -162,6 +167,13 @@ class SSHManager:
         active = self._active
         if active is None:
             raise SSHUnavailableError("未配置 SSH 账号：请先在设置页添加账号")
+        if self._pinned_transport is not None:
+            if (self._client is self._pinned_client
+                    and self._client is not None
+                    and self._client.get_transport() is self._pinned_transport
+                    and self._check_alive(self._client)):
+                return self._client
+            raise SSHConnectError("上传绑定的 SSH 会话已失效；请重新提案")
         if self._client is not None:
             if self._check_alive(self._client):
                 return self._client
@@ -215,6 +227,17 @@ class SSHManager:
             pass
         self._client = client
         return client
+
+    def pin_current_transport(self) -> None:
+        """For one consent action, prohibit automatic SSH reconnection."""
+        client = self.connect()
+        transport = client.get_transport()
+        if transport is None or not transport.is_active():
+            raise SSHConnectError("上传绑定的 SSH 会话已失效；请重新提案")
+        if self._pinned_transport is not None and transport is not self._pinned_transport:
+            raise SSHConnectError("上传绑定的 SSH 会话已变化；请重新提案")
+        self._pinned_client = client
+        self._pinned_transport = transport
 
     def _cleanup_client(self, client) -> None:
         try:
