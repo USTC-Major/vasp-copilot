@@ -1,6 +1,7 @@
 // 全局设置页 — secrets are write-only: status + replace/clear, never reveal.
 import React, { useEffect, useState } from "react";
-import { Card, Typography, Space, Button, Input, Col, Row, Spin, Collapse, Switch, Select, message } from "antd";
+import { Card, Typography, Space, Button, Input, Col, Row, Spin, Collapse, Switch, Select, message, Alert } from "antd";
+import { Link } from "react-router-dom";
 import { LinkOutlined, SafetyCertificateOutlined, RocketOutlined } from "@ant-design/icons";
 import ErrorAlert from "../components/common/ErrorAlert";
 import SecretInput from "../components/ai/SecretInput";
@@ -122,9 +123,14 @@ const AiSettingsPage: React.FC = () => {
     }
   };
 
-  if (settingsQuery.isLoading) return <Spin style={{ display: "block", margin: "80px auto" }} />;
-  if (settingsQuery.error) {
-    return <ErrorAlert error={settingsQuery.error} onRetry={settingsQuery.refetch} title="设置加载失败" />;
+  if (settingsQuery.isLoading || secretQuery.isLoading) return <Spin style={{ display: "block", margin: "80px auto" }} />;
+  if (settingsQuery.error || secretQuery.error || !settings || !rawSecrets) {
+    return <Space direction="vertical" style={{ width: "100%" }}>
+      <Alert type="info" showIcon message="智能模式是可选服务，当前无法读取智能设置" description={<>智能服务未启动或暂时不可达时，仍可前往 <Link to="/toolbox/settings">Toolbox 执行设置</Link> 使用基础计算功能。恢复智能服务后可手动重试读取。</>} />
+      {settingsQuery.error && <ErrorAlert error={settingsQuery.error} title="智能设置读取失败" />}
+      {secretQuery.error && <ErrorAlert error={secretQuery.error} title="凭据状态读取失败" />}
+      <Button onClick={() => { void settingsQuery.refetch(); void secretQuery.refetch(); }}>重试读取设置</Button>
+    </Space>;
   }
 
   const section = (title: string, icon: React.ReactNode, children: React.ReactNode) => (

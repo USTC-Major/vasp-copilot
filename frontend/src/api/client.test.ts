@@ -1,6 +1,34 @@
-import { aiApi } from './client';
+import { aiApi, ApiError } from './client';
 
 const encoder = new TextEncoder();
+
+describe('aiApi unavailable responses', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('classifies a non-JSON 502 as unavailable for a read', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('<html>Bad Gateway</html>', { status: 502 }));
+    await expect(aiApi.getSettings()).rejects.toMatchObject({
+      code: 'AI_UNAVAILABLE', status: 502, retryable: true,
+    } satisfies Partial<ApiError>);
+  });
+
+  it('classifies a connection failure without making a write retryable', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('Failed to fetch'));
+    await expect(aiApi.saveSettings({ max_jobs: 2 })).rejects.toMatchObject({
+      code: 'AI_UNAVAILABLE', status: 0, retryable: false,
+    } satisfies Partial<ApiError>);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves an explicit disabled-service retryable false on a 503 read', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      error: { code: 'AI_MODE_DISABLED', message: '智能模式未启用', retryable: false },
+    }), { status: 503, headers: { 'Content-Type': 'application/json' } }));
+    await expect(aiApi.getSettings()).rejects.toMatchObject({
+      code: 'AI_MODE_DISABLED', status: 503, retryable: false,
+    } satisfies Partial<ApiError>);
+  });
+});
 
 function responseFromChunks(chunks: string[]): { response: Response; stream: ReadableStream<Uint8Array> } {
   const stream = new ReadableStream<Uint8Array>({

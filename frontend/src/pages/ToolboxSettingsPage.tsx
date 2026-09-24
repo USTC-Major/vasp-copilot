@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Alert, Button, Card, Col, Form, Input, InputNumber, Row, Select, Space, Typography, message } from 'antd';
+import { Alert, Button, Card, Col, Form, Input, InputNumber, Row, Select, Space, Spin, Typography, message } from 'antd';
 import { useQuery } from '@tanstack/react-query';
 import { toolboxApi } from '../api/client';
 
@@ -42,6 +42,7 @@ const ToolboxSettingsPage: React.FC = () => {
   }, [form, settingsQuery.data]);
 
   const save = async (values: SettingsForm) => {
+    if (!settingsQuery.data?.settings || settingsQuery.isError) return;
     setSaving(true);
     try {
       await toolboxApi.saveSettings({ ...values });
@@ -55,6 +56,7 @@ const ToolboxSettingsPage: React.FC = () => {
   };
 
   const testSsh = async () => {
+    if (!settingsQuery.data?.settings || settingsQuery.isError) return;
     setTesting(true);
     try {
       const response = await toolboxApi.testSsh();
@@ -67,6 +69,7 @@ const ToolboxSettingsPage: React.FC = () => {
   };
 
   const saveSecret = async (kind: 'ssh' | 'mp', value: string) => {
+    if (!settingsQuery.data?.settings || settingsQuery.isError) return;
     try {
       await toolboxApi.setSecret(kind, value);
       message.success(value ? '凭据已安全保存，不会回显' : '凭据已清除');
@@ -78,10 +81,18 @@ const ToolboxSettingsPage: React.FC = () => {
     }
   };
 
+  if (settingsQuery.isPending) return <Spin aria-label="Toolbox 设置加载中" style={{ display: 'block', margin: '80px auto' }} />;
+  if (settingsQuery.isError || !settingsQuery.data?.settings) {
+    return <Space direction="vertical" size="large" style={{ width: '100%' }}>
+      <Title level={2}>Toolbox 执行设置</Title>
+      <Alert type="error" showIcon message="无法读取 Toolbox 设置" description="设置尚未读取成功，请检查 Toolbox 服务后重试。" />
+      <Button onClick={() => void settingsQuery.refetch()} loading={settingsQuery.isFetching}>重试读取设置</Button>
+    </Space>;
+  }
+
   return (
     <Space direction="vertical" size="large" style={{ width: '100%' }}>
       <div><Title level={2} style={{ marginBottom: 4 }}>Toolbox 执行设置</Title><Paragraph type="secondary">这些设置不依赖模型或智能模式。SSH 测试只检查连接，不提交作业。</Paragraph></div>
-      {settingsQuery.isError && <Alert type="error" showIcon message="无法读取 Toolbox 设置" description="请确认 8000 服务已启动。" />}
       <Form form={form} layout="vertical" onFinish={(values) => void save(values)}>
         <Row gutter={[18, 18]}>
           <Col xs={24} lg={10}>

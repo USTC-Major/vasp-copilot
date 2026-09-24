@@ -9,7 +9,7 @@ export function createQueryClient() {
         refetchOnWindowFocus: false,
       },
       mutations: {
-        retry: 1,
+        retry: false,
       },
     },
   });

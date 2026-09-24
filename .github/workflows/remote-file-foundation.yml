@@ -123,6 +123,8 @@ jobs:
             backend/tests/test_input_validation_unit.py \
             backend/tests/test_nl_plan_api.py \
             backend/tests/test_toolbox_results.py \
+            backend/tests/test_bootstrap.py \
+            backend/tests/test_chat_api.py \
             backend/tests/be_a/test_kpoints.py \
             backend/tests/be_a/test_pipeline_contract.py \
             backend/tests/be_a/test_golden.py \
@@ -144,6 +146,23 @@ jobs:
             | tee "$evidence/critical-gamma-default-tests.txt"
           python3 backend/tests/gamma_default_review/artifact_evidence.py \
             --output "$evidence/gamma-artifacts.json"
+          python3 - "$evidence/pytest.xml" <<'PY' | tee "$evidence/critical-bootstrap-tests.txt"
+          import sys
+          import xml.etree.ElementTree as ET
+
+          required = {
+              "test_bootstrap_reflects_effective_backend_configuration",
+              "test_bootstrap_does_not_advertise_mock_only_hpc_when_config_default_is_true",
+          }
+          cases = [case for case in ET.parse(sys.argv[1]).iter("testcase")
+                   if case.get("classname", "").endswith(".test_bootstrap")]
+          observed = [case.get("name") for case in cases]
+          bad = [case.get("name") for case in cases
+                 if any(child.tag.rsplit("}", 1)[-1] in {"skipped", "failure", "error"}
+                        for child in case)]
+          assert set(observed) == required and len(observed) == len(required) and not bad, (observed, bad)
+          print(f"{len(required)} bootstrap tests executed without skip/failure")
+          PY
 
       - name: Keep small diagnostic evidence for one day
         if: always()
@@ -151,6 +170,100 @@ jobs:
         with:
           name: file-action-integration-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/file-action-integration/
+          retention-days: 1
+          compression-level: 9
+          if-no-files-found: error
+
+  frontend:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Record exact frontend environment
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/frontend-integration"
+          mkdir -p "$evidence"
+          actual_head="$(git rev-parse HEAD)"
+          test "$actual_head" = "$EXPECTED_HEAD"
+          {
+            printf 'expected_head=%s\n' "$EXPECTED_HEAD"
+            printf 'actual_head=%s\n' "$actual_head"
+            printf 'runner_os=%s\n' "$RUNNER_OS"
+          } | tee "$evidence/environment.txt"
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24'
+
+      - name: Install locked frontend dependencies
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/frontend-integration"
+          { node --version; npm --version; } | tee -a "$evidence/environment.txt"
+          npm ci --no-audit --no-fund 2>&1 | tee "$evidence/npm-ci.log"
+
+      - name: Run all frontend tests and require recovery cases
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/frontend-integration"
+          npm test -- --reporter=junit --outputFile="$evidence/vitest.xml" 2>&1 | tee "$evidence/vitest.log"
+          python3 - "$evidence/vitest.xml" <<'PY' | tee "$evidence/critical-frontend-tests.txt"
+          import sys
+          import xml.etree.ElementTree as ET
+
+          required = {
+              ("src/api/client.test.ts", "aiApi unavailable responses > classifies a non-JSON 502 as unavailable for a read"),
+              ("src/api/client.test.ts", "aiApi unavailable responses > classifies a connection failure without making a write retryable"),
+              ("src/api/client.test.ts", "aiApi unavailable responses > preserves an explicit disabled-service retryable false on a 503 read"),
+              ("src/pages/AiProjectsPage.test.tsx", "shows project failure without asserting an empty project list and retries only projects"),
+              ("src/pages/AiProjectsPage.test.tsx", "shows queue failure independently and retries only the queue"),
+              ("src/pages/AiSettingsPage.test.tsx", "does not show an editable form when credential status fails, and guides to Toolbox"),
+              ("src/pages/ToolboxSettingsPage.test.tsx", "keeps settings and credential actions unavailable until a failed read recovers"),
+              ("src/pages/HomePage.test.tsx", "HomePage recent history > hides the Fake HPC entry when backend bootstrap disables it"),
+              ("src/pages/HomePage.test.tsx", "HomePage recent history > keeps the Fake HPC demo entry when the MSW bootstrap advertises it"),
+              ("src/hooks/useApi.toolboxRetry.test.tsx", "Toolbox writes with production QueryClient defaults > does not replay project creation after a server error"),
+              ("src/hooks/useApi.toolboxRetry.test.tsx", "Toolbox writes with production QueryClient defaults > does not replay task creation after the connection drops"),
+              ("src/hooks/useApi.toolboxRetry.test.tsx", "Toolbox writes with production QueryClient defaults > does not replay a tool request when the response is lost after receipt"),
+              ("src/hooks/useApi.toolboxRetry.test.tsx", "Toolbox writes with production QueryClient defaults > does not replay consent on a business error response"),
+              ("src/hooks/useApi.toolboxRetry.test.tsx", "AI writes with production QueryClient defaults > does not replay settings or secret writes on unavailable responses"),
+          }
+          cases = list(ET.parse(sys.argv[1]).iter("testcase"))
+          observed = {}
+          for case in cases:
+              key = (case.get("classname"), case.get("name"))
+              observed.setdefault(key, []).append(case)
+          missing = sorted(required - observed.keys())
+          bad = [key for key in required if key in observed and
+                 (len(observed[key]) != 1 or any(
+                     child.tag.rsplit("}", 1)[-1] in {"skipped", "failure", "error"}
+                     for child in observed[key][0]))]
+          assert not missing and not bad, (missing, bad)
+          print(f"{len(required)} critical frontend tests executed without skip/failure")
+          PY
+
+      - name: Build and lint frontend
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/frontend-integration"
+          npm run build 2>&1 | tee "$evidence/build.log"
+          npm run lint 2>&1 | tee "$evidence/lint.log"
+
+      - name: Keep small frontend diagnostic evidence for one day
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: frontend-integration-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/frontend-integration/
           retention-days: 1
           compression-level: 9
           if-no-files-found: error

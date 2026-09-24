@@ -9,7 +9,7 @@ import {
   HomeOutlined, BuildOutlined, BugOutlined, RobotOutlined,
   CloudUploadOutlined, SettingOutlined, ToolOutlined,
 } from '@ant-design/icons';
-import { isFeatureEnabled } from './config/featureFlags';
+import { useFeatureFlags } from './hooks/useApi';
 import LlmSettingsModal from './components/settings/LlmSettingsModal';
 import ChatPanel from './components/chat/ChatPanel';
 
@@ -19,7 +19,7 @@ const { Text } = Typography;
 const App: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const fakeHpcEnabled = isFeatureEnabled('ENABLE_FAKE_HPC');
+  const fakeHpcEnabled = useFeatureFlags().data?.ENABLE_FAKE_HPC === true;
   const [settingsOpen, setSettingsOpen] = useState(false);
 
 

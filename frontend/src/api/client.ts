@@ -506,12 +506,18 @@ interface AiError { code?: string; message?: string; retryable?: boolean; field_
 async function aiRequest<T>(endpoint: string, options: RequestOptions = {}): Promise<T> {
   const { method = "GET", body, headers = {}, signal } = options;
   const fetchHeaders: Record<string, string> = { ...headers, ...(body ? { "Content-Type": "application/json" } : {}) };
-  const response = await fetch(`${AI_BASE}${endpoint}`, {
-    method,
-    headers: fetchHeaders,
-    body: body ? JSON.stringify(body) : undefined,
-    signal,
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${AI_BASE}${endpoint}`, {
+      method,
+      headers: fetchHeaders,
+      body: body ? JSON.stringify(body) : undefined,
+      signal,
+    });
+  } catch (cause) {
+    if (signal?.aborted) throw cause;
+    throw new ApiError("AI_UNAVAILABLE", "智能模式服务暂时无法连接；Toolbox 可独立使用。", method === "GET", 0);
+  }
   let data: { error?: AiError } = {};
   try {
     data = (await response.json()) as { error?: AiError };
@@ -520,10 +526,11 @@ async function aiRequest<T>(endpoint: string, options: RequestOptions = {}): Pro
   }
   if (!response.ok || data.error) {
     const err = data.error || {};
+    const unavailable = response.status === 502 || response.status === 503 || response.status === 504;
     throw new ApiError(
-      err.code || "UNKNOWN",
-      err.message || "智能模式请求失败",
-      !!err.retryable,
+      err.code || (unavailable ? "AI_UNAVAILABLE" : `HTTP_${response.status}`),
+      err.message || (unavailable ? "智能模式服务暂时不可用；Toolbox 可独立使用。" : `智能模式请求失败（HTTP ${response.status}）`),
+      method === "GET" && (typeof err.retryable === "boolean" ? err.retryable : unavailable),
       response.status,
       err.field_errors || []
     );

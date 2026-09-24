@@ -33,6 +33,19 @@ describe('HomePage recent history', () => {
     server.use(http.get('/api/v1/toolbox/recent-history', () => HttpResponse.json({ mode: 'toolbox', items: [] })));
   });
 
+  it('hides the Fake HPC entry when backend bootstrap disables it', async () => {
+    server.use(http.get('/api/v1/bootstrap', () => HttpResponse.json({ ENABLE_FAKE_HPC: false })));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    renderHome(client);
+    await waitFor(() => expect(client.getQueryData(['featureFlags'])).toMatchObject({ ENABLE_FAKE_HPC: false }));
+    expect(screen.queryByText('远程部署（离线演示）')).not.toBeInTheDocument();
+  });
+
+  it('keeps the Fake HPC demo entry when the MSW bootstrap advertises it', async () => {
+    renderHome();
+    expect(await screen.findByText('远程部署（离线演示）')).toBeInTheDocument();
+  });
+
   it('sorts, deduplicates, limits, and builds truthful routes', () => {
     const records: HistoryRecord[] = [
       { id: 'same', kind: 'workflow', title: 'old', status: 'planned', updated_at: '2026-01-01T00:00:00Z' },
@@ -58,7 +71,7 @@ describe('HomePage recent history', () => {
     })));
     renderHome();
     expect(screen.queryByText('运行环境以具体智能任务的 Real / Fake / None 标识为准')).not.toBeInTheDocument();
-    expect(screen.getByText('远程部署（离线演示）')).toBeInTheDocument();
+    expect(await screen.findByText('远程部署（离线演示）')).toBeInTheDocument();
     expect(screen.queryByText(/模拟环境 - Fake HPC 模式/)).not.toBeInTheDocument();
     expect(await screen.findByText('真实后端任务')).toBeInTheDocument();
     expect(screen.getByText('Real')).toBeInTheDocument();
