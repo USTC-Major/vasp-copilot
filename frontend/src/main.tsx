@@ -5,10 +5,11 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { RouterProvider } from 'react-router-dom';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClientProvider } from '@tanstack/react-query';
 import { ConfigProvider } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
 import { router } from './router';
+import { createQueryClient } from './queryClient';
 import './index.css';
 
 // MSW — 开发环境启用 Mock Service Worker
@@ -28,18 +29,7 @@ async function enableMocking() {
   return Promise.resolve();
 }
 
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      retry: 2,
-      staleTime: 30 * 1000,
-      refetchOnWindowFocus: false,
-    },
-    mutations: {
-      retry: 1,
-    },
-  },
-});
+const queryClient = createQueryClient();
 
 // Apple 风格主题（改动前后版本均已备份，可通过 design_backup 回退）
 const appleTheme = {

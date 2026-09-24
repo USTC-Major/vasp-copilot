@@ -116,6 +116,7 @@ jobs:
             backend/tests/remote_file_review \
             backend/tests/file_action_integration \
             backend/tests/file_action_review \
+            backend/tests/toolbox_review/test_public_manual_flow.py \
             backend/tests/reviewer \
             backend/tests/reviewer_review \
             backend/tests/basic_release_validation \
