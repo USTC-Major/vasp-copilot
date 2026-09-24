@@ -216,7 +216,7 @@ jobs:
         run: |
           set -euo pipefail
           evidence="$RUNNER_TEMP/frontend-integration"
-          npm test -- --reporter=junit --outputFile="$evidence/vitest.xml" 2>&1 | tee "$evidence/vitest.log"
+          npm test -- --maxWorkers=2 --reporter=junit --outputFile="$evidence/vitest.xml" 2>&1 | tee "$evidence/vitest.log"
           python3 - "$evidence/vitest.xml" <<'PY' | tee "$evidence/critical-frontend-tests.txt"
           import sys
           import xml.etree.ElementTree as ET
