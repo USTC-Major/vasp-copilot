@@ -8,22 +8,19 @@ import {
   diagnosisApi, recipesApi, hpcApi, llmApi, chatApi, materialsApi, aiApi, toolboxApi,
 } from '../api/client';
 import type { LlmConfigUpdate, ChatMessageItem } from '../api/client';
-import { getFeatureFlags } from '../config/featureFlags';
+import type { FeatureFlags } from '../types/generated-api';
 
 // ---- Feature Flags ----
 export function useFeatureFlags() {
   return useQuery({
     queryKey: ['featureFlags'],
     queryFn: async () => {
-      try {
-        const resp = await fetch('/api/v1/bootstrap');
-        const flags = await resp.json();
-        return flags;
-      } catch {
-        return getFeatureFlags();
-      }
+      const resp = await fetch('/api/v1/bootstrap');
+      if (!resp.ok) throw new Error(`功能配置读取失败（HTTP ${resp.status}）`);
+      return await resp.json() as FeatureFlags;
     },
     staleTime: 60 * 1000,
+    retry: false,
   });
 }
 

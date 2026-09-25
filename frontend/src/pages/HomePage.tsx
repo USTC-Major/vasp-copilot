@@ -10,7 +10,7 @@ import {
   RobotOutlined, ToolOutlined, BuildOutlined, BugOutlined, CloudUploadOutlined,
   ArrowRightOutlined, ExperimentOutlined, SettingOutlined,
 } from '@ant-design/icons';
-import { isFeatureEnabled } from '../config/featureFlags';
+import { useFeatureFlags } from '../hooks/useApi';
 import { aiApi, diagnosisApi, toolboxApi, workflowsApi } from '../api/client';
 import type { HistoryKind } from '../types/history';
 import { historyRecordPath, mergeRecentRecords } from '../utils/history';
@@ -38,7 +38,7 @@ const formatTime = (value: string): string => {
 
 const HomePage: React.FC = () => {
   const navigate = useNavigate();
-  const fakeHpcEnabled = isFeatureEnabled('ENABLE_FAKE_HPC');
+  const fakeHpcEnabled = useFeatureFlags().data?.ENABLE_FAKE_HPC === true;
   const aiHistory = useQuery({
     queryKey: ['recent-history', 'ai'],
     queryFn: () => aiApi.recentHistory(HISTORY_LIMIT),

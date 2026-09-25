@@ -6,6 +6,7 @@ import { server } from '../mocks/server';
 import { createQueryClient } from '../queryClient';
 import {
   useToolboxProjectCreate, useToolboxTaskCreate, useToolboxRunTool, useToolboxResolveConsent,
+  useAiSettingsSave, useAiSecretUpdate,
 } from './useApi';
 
 const BASE = '/api/v1/toolbox';
@@ -15,7 +16,7 @@ function renderWithProductionDefaults<T>(hook: () => T) {
   const wrapper = ({ children }: { children: ReactNode }) =>
     <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
   const rendered = renderHook(hook, { wrapper });
-  expect(queryClient.getDefaultOptions().mutations?.retry).toBe(1);
+  expect(queryClient.getDefaultOptions().mutations?.retry).toBe(false);
   return { ...rendered, queryClient };
 }
 
@@ -75,5 +76,30 @@ describe('Toolbox writes with production QueryClient defaults', () => {
       await expect(result.current.mutateAsync({ projectId: 'project', taskId: 'task', cardId: 'card', approved: true })).rejects.toThrow('确认失败');
     });
     expect(posts).toBe(1);
+  });
+});
+
+describe('AI writes with production QueryClient defaults', () => {
+  it('does not replay settings or secret writes on unavailable responses', async () => {
+    let settingsPuts = 0;
+    let secretPuts = 0;
+    server.use(
+      http.put('/ai/v1/settings', () => {
+        settingsPuts += 1;
+        return HttpResponse.text('Bad Gateway', { status: 502 });
+      }),
+      http.put('/ai/v1/settings/secrets/llm', () => {
+        secretPuts += 1;
+        return HttpResponse.error();
+      }),
+    );
+    const { result: settings } = renderWithProductionDefaults(useAiSettingsSave);
+    const { result: secrets } = renderWithProductionDefaults(useAiSecretUpdate);
+    await act(async () => {
+      await expect(settings.current.mutateAsync({ max_jobs: 2 })).rejects.toThrow();
+      await expect(secrets.current.mutateAsync({ kind: 'llm', action: 'clear' })).rejects.toThrow();
+    });
+    expect(settingsPuts).toBe(1);
+    expect(secretPuts).toBe(1);
   });
 });

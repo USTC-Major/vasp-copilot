@@ -5,7 +5,7 @@
 
 import React, { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Card, Typography, Button, Space, Tag, Input, Modal, List, Empty, Popconfirm, message, Segmented } from 'antd';
+import { Card, Typography, Button, Space, Tag, Input, Modal, List, Empty, Popconfirm, message, Segmented, Spin } from 'antd';
 import {
   PlusOutlined, RobotOutlined, ArrowRightOutlined, DeleteOutlined,
   FieldTimeOutlined, FolderOpenOutlined,
@@ -54,7 +54,6 @@ const AiProjectsPage: React.FC = () => {
 
   const queue = queueQuery.data?.waiting ?? [];
   const queued = queueQuery.data?.count ?? queue.length;
-  const error = projectsQuery.error || queueQuery.error;
 
   const createProject = async () => {
     if (!name.trim()) {
@@ -94,10 +93,10 @@ const AiProjectsPage: React.FC = () => {
         </div>
       </div>
 
-      {error && <ErrorAlert error={error} onRetry={projectsQuery.refetch} title="项目加载失败" />}
+      {projectsQuery.error && <Space direction="vertical"><ErrorAlert error={projectsQuery.error} title="项目加载失败" /><Button onClick={() => void projectsQuery.refetch()}>重试项目</Button></Space>}
 
       {/* 排序切换（创建时间 / 修改时间） */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, gap: 12 }}>
+      {!projectsQuery.isLoading && !projectsQuery.isError && <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, gap: 12 }}>
         <Text type="secondary">排序：</Text>
         <Segmented
           value={sortMode}
@@ -108,9 +107,9 @@ const AiProjectsPage: React.FC = () => {
           ]}
         />
         <Text type="secondary">共 {projects.length} 个项目</Text>
-      </div>
+      </div>}
 
-      {projects.length === 0 && !projectsQuery.isLoading ? (
+      {projectsQuery.isLoading ? <Spin aria-label="项目加载中" /> : projectsQuery.isError ? null : projects.length === 0 ? (
         <Card><Empty description="暂无项目 — 点击下方「＋ 新建项目」开始" /></Card>
       ) : (
         <List
@@ -156,7 +155,7 @@ const AiProjectsPage: React.FC = () => {
       )}
 
       {/* 列表最上方「＋」新建入口（已确认） */}
-      <Card
+      {!projectsQuery.isLoading && !projectsQuery.isError && <Card
         hoverable
         onClick={() => setCreateOpen(true)}
         styles={{ body: { padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 12 } }}
@@ -164,7 +163,7 @@ const AiProjectsPage: React.FC = () => {
       >
         <Button type="primary" shape="circle" icon={<PlusOutlined />} />
         <Text strong>新建项目</Text>
-      </Card>
+      </Card>}
 
       {/* 等待空位队列：条件满足后重新预检与确认，不自动补提。 */}
       <Card
@@ -177,7 +176,9 @@ const AiProjectsPage: React.FC = () => {
           </Space>
         }
       >
-        {queue.length === 0 ? (
+        {queueQuery.isLoading ? <Spin aria-label="队列加载中" /> : queueQuery.isError ? (
+          <Space direction="vertical"><ErrorAlert error={queueQuery.error} title="等待队列加载失败" /><Button onClick={() => void queueQuery.refetch()}>重试队列</Button></Space>
+        ) : queue.length === 0 ? (
           <Empty description="当前无排队作业 — 前置完成或有空位后仍会重新预检并确认提交" />
         ) : (
           <List

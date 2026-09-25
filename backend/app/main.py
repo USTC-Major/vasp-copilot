@@ -106,6 +106,23 @@ app.include_router(toolbox_router, prefix="/api/v1")
 app.add_exception_handler(ToolboxError, toolbox_error_handler)
 
 
+@app.get("/api/v1/bootstrap")
+def bootstrap() -> dict:
+    """Expose the effective backend configuration to existing frontend gates."""
+    flags = settings.feature_flags
+    return {
+        "ENABLE_LLM": flags.llm_enabled,
+        "ENABLE_HPC_BRIDGE": False,
+        # Fake HPC endpoints exist only in the frontend MSW demo, not this API.
+        "ENABLE_FAKE_HPC": False,
+        "ENABLE_POTCAR_ASSEMBLY": flags.potcar_concat,
+        "ENABLE_BAND_WORKFLOW": flags.band_feature,
+        "MAX_UPLOAD_SIZE_MB": settings.max_upload_bytes // (1024 * 1024),
+        "MAX_TEXT_PREVIEW_BYTES": settings.max_preview_bytes,
+        "MAX_OUTCAR_PREVIEW_LINES": settings.outcar_preview_lines,
+    }
+
+
 def _envelope(request: Request, code: str, message: str,
               retryable: bool, details=None) -> dict:
     rid = request.headers.get("X-Request-ID") or "req_" + uuid.uuid4().hex[:8]
