@@ -1,13 +1,13 @@
-# Windows 源码安装与基础使用（0.3.0 发布准备，尚未发布）
+# VASP-Copilot Windows 源码安装与基础使用（0.3.0）
 
-以下命令面向新解压的源码目录、PowerShell 和本机浏览器。推荐本轮最终包验收环境的 Python 3.12.7、Node.js 24.19.0 与 npm，并需安装依赖所需网络；其他版本未在本轮干净安装中验证。使用普通用户权限即可。0.3.0 尚未正式发布；仅将实际验收过的 Windows 源码 + ParaCloud/NICHE + Si2 单步 static 作为真实计算证据。
+以下命令面向新解压的源码目录、PowerShell 和本机浏览器。推荐本轮最终包验收环境的 Python 3.12.7、Node.js 24.19.0 与 npm，并需安装依赖所需网络；其他版本未在本轮干净安装中验证。使用普通用户权限即可。0.3.0 已正式发布；仅将实际验收过的 Windows 源码 + ParaCloud/NICHE + Si2 单步 static 作为真实计算证据。
 
 ## 1. 干净安装
 
 在**源码根目录**打开 PowerShell；请将首行路径替换为实际解压目录。`python -m venv` 创建隔离环境，随后从本包依赖清单安装；`npm ci` 从锁文件安装前端依赖。无需使用旧 `setup_env.ps1`。
 
 ```powershell
-$sourceRoot = 'C:\path\to\VASP-Doctor-0.3.0'
+$sourceRoot = 'C:\path\to\VASP-Copilot-0.3.0'
 Set-Location $sourceRoot
 python --version
 node --version
@@ -24,8 +24,9 @@ npm ci
 用新的本地目录存储诊断与 Toolbox 数据；不要把原先 8000 服务的数据根用于并行候选验收。`DATA_DIR` 控制诊断数据，`VASP_AI_HOME` 控制 Toolbox 执行设置和任务库。示例数据根可改成任意本机绝对路径。
 
 ```powershell
-$sourceRoot = 'C:\path\to\VASP-Doctor-0.3.0'
+$sourceRoot = 'C:\path\to\VASP-Copilot-0.3.0'
 $dataRoot = Join-Path $env:LOCALAPPDATA 'VASP-Doctor\0.3.0-local'
+# 已安装用户可保留原数据目录；目录名不影响产品名称。
 New-Item -ItemType Directory -Force -Path $dataRoot | Out-Null
 $env:DATA_DIR = Join-Path $dataRoot 'doctor'
 $env:VASP_AI_HOME = Join-Path $dataRoot 'toolbox'
@@ -45,7 +46,7 @@ Set-Location (Join-Path $sourceRoot 'backend')
 ## 3. 启动前端（窗口 B）
 
 ```powershell
-$sourceRoot = 'C:\path\to\VASP-Doctor-0.3.0'
+$sourceRoot = 'C:\path\to\VASP-Copilot-0.3.0'
 Set-Location (Join-Path $sourceRoot 'frontend')
 npm run dev -- --host 127.0.0.1
 ```
@@ -78,7 +79,7 @@ export default {
 然后在窗口 B 运行：
 
 ```powershell
-$sourceRoot = 'C:\path\to\VASP-Doctor-0.3.0'
+$sourceRoot = 'C:\path\to\VASP-Copilot-0.3.0'
 Set-Location (Join-Path $sourceRoot 'frontend')
 npm run dev -- --config vite.local.config.ts --host 127.0.0.1
 ```
