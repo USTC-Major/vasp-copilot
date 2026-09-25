@@ -1,6 +1,6 @@
-# VASP-Doctor 前端
+# VASP-Copilot 前端
 
-本目录保留早期 Vite 模板说明。0.3.0-rc.1 候选版的 Windows 干净源码安装、
+本目录保留早期 Vite 模板说明。0.3.0 的 Windows 干净源码安装、
 Toolbox 两服务启动与并行端口配置，请先看仓库根目录的
 [Windows 源码安装与基础使用](../Windows源码安装与基础使用.md) 和
 [README](../README.md)。
