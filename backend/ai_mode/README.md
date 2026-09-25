@@ -1,16 +1,19 @@
-# 智能模式（AI Mode）v0.2.5
+# 智能模式（AI Mode）0.3.0-rc.2 候选版
 
-AI Mode 是独立于工具箱主后端（`backend/app`）的自然语言任务规划与 HPC
-执行服务，默认监听 `127.0.0.1:8500`。它可以让 LLM 提出计算计划和受限的
-输入参数，但所有文件副作用与调度提交都由确定性代码校验和授权。
+AI Mode 是可选自然语言客户端，默认监听 `127.0.0.1:8500`，由
+`ENABLE_AI_MODE=true` 显式启用。基础计算不需要启动它：8000 Toolbox
+独立持有任务执行、授权、SSH、监控和确定性报告；8500 经 `TOOLBOX_URL`
+调用 8000，不自行拥有第二套执行状态。LLM 可提出计划与受限输入建议，
+文件副作用及调度提交须经 Toolbox 的确定性检查和逐次授权。当前真实模型
+闭环和判断质量尚未验收；已有 Windows 源码 + ParaCloud/NICHE + Si2
+单步 static 的真实证据来自 AI 关闭的 Toolbox 手工路径。
 
 ## 目录与启动
 
 - `agent/`：意图、受限工具和多轮决策循环；
 - `authorize/`、`consent.py`：策略判定与一次性授权状态机；
 - `incar_draft.py`、`tools/draft.py`：结构化 INCAR、输入/脚本指纹与预检；
-- `orchestrator.py`：作业依赖、预检、提交和监控；
-- `ssh/`：严格 known_hosts 的 SSH/SFTP 适配器；
+- `orchestrator.py`、`ssh/`：历史兼容模块；当前执行归 8000 Toolbox；
 - `settings/`、`config.py`：设置、密钥状态和环境变量；
 - `server.py`：FastAPI 入口。
 
@@ -26,7 +29,13 @@ python -m uvicorn ai_mode.server:app --host 127.0.0.1 --port 8500
 ```
 
 `ENABLE_AI_MODE=true` 时服务可用；为 `false` 时服务仍能启动，但业务端点
-返回禁用响应。工具箱主后端不会导入本包。
+返回禁用响应。Toolbox 基础版请使用仓库根目录的
+[Windows 源码安装与基础使用](../../Windows源码安装与基础使用.md)，只启动
+8000 和前端。旧 `start_services.ps1` 会尝试启动 AI，是开发便利方式。
+
+下文标明 v0.2.x 的案例与条目按其历史时点保留，不应当作本候选版的
+真实模型验收或当前执行所有权说明。独立 reviewer 保持默认关闭，真实模型
+提供方与远端环境尚未验证。
 
 ## 安全模型（延续 v0.2.1，补充连接身份绑定）
 

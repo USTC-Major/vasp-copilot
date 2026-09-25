@@ -1,13 +1,53 @@
 # 更新日志
 
-本文件记录 VASP-Copilot 面向用户的重要变化。开发中的变更先写入
-`[Unreleased]`；正式发布时再归入对应版本。具体代码级修改可查阅 Git
-提交历史。
+本文件记录 VASP-Doctor 面向用户的重要变化。`0.3.0-rc.2` 是当前候选交付版本，
+尚未创建 tag 或正式 Release；下方 `0.2.x` 等条目为各版本历史记录。
+具体代码级修改可查阅 Git 提交历史。
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
 ## [Unreleased]
+
+候选版之后暂无记录。
+
+## 0.3.0-rc.2 - 2026-09-25（候选交付，未正式发布）
+
+### Fixed
+
+- 更新 Vitest 开发依赖至 4.1.11，并将 PostCSS 间接依赖 nanoid 锁定至 3.3.18。
+
+
+## 0.3.0-rc.1 - 2026-09-25（候选交付，未正式发布）
+
+### Added
+
+- Toolbox 已具备独立的人工基础计算流程：输入登记、严格 SSH 与站点配置、
+  逐次授权的文件操作和调度提交、自动监控、确定性报告，以及 OUTCAR、
+  OSZICAR、CONTCAR 三种必要结果的单文件下载（每文件最多 32 MiB）。
+- 从结构生成输入 ZIP 到 Toolbox 工作区的手工交接与硬预检；默认自动规则网格
+  为 Γ 中心，仍需用户判断具体体系的科学适用性。
+- Windows 干净源码安装、AI 关闭时两服务启动、独立数据目录与端口覆盖说明。
+
+### Changed
+
+- 解耦及 A—E 限定能力已进入主线：8000 Toolbox 持有执行、授权、SSH、监控
+  与报告；8500 AI 模式是可选客户端。reviewer 默认关闭，真实模型闭环未验收。
+- 前端错误状态与重试入口已收口；AI 服务不可用时，Toolbox 基础功能仍可使用。
+- 本候选只声明 Windows 源码 + ParaCloud/NICHE + Si2 单步 static 的真实闭环证据；
+  Docker 构建和合成 smoke 不代表真实集群验证，也不扩大至其他科学工作流。
+
+### Limitations
+
+- POTCAR 与站点脚本由用户自行提供并审阅；不内置、不下载、不拼接 POTCAR，
+  不借助 VASPKIT 代拼。大文件 WAVECAR/CHGCAR 不自动下载。
+- 结果文件的当前目录哈希只证明传输字节一致，不能单独证明文件来源或科学收敛。
+  AI 真实模型质量、其他站点和计算类型仍需分别验收。
+
+## 候选版前的开发记录（历史时点）
+
+以下条目原记录于 `[Unreleased]`，现保留用于追溯；其“后续迁移”表述不代表
+解耦仍在进行，也不覆盖上方候选版的当前状态。
 
 ### Removed
 
@@ -317,7 +357,6 @@
 - 建立 Recipe Pack 驱动的 INCAR、KPOINTS、POSCAR 与提交脚本生成流程。
 - 建立 FastAPI 后端、React 前端、自动化测试、Docker 配置和演示用例。
 
-[Unreleased]: https://github.com/USTC-Major/vasp-copilot/compare/v0.2.5...HEAD
 [0.2.5]: https://github.com/USTC-Major/vasp-copilot/compare/v0.2.4...v0.2.5
 [0.2.4]: https://github.com/USTC-Major/vasp-copilot/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/USTC-Major/vasp-copilot/compare/v0.2.2...v0.2.3
