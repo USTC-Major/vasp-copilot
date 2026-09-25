@@ -17,7 +17,7 @@ if (_repo_root / "backend" / "app").is_dir() and str(_repo_root) not in sys.path
 
 from .gate import is_ai_mode_enabled as is_enabled
 
-__version__ = "0.3.0-rc.2"
+__version__ = "0.3.0"
 VERSION = __version__
 
 __all__ = ["is_enabled", "VERSION"]
