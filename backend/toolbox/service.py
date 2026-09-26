@@ -92,7 +92,10 @@ class ExecutionService:
         flow = {**raw, 'execution_mode': raw.get('execution_mode', 'None'),
                 'phase': raw.get('phase', ''), 'goal': raw.get('goal') or task.get('goal', ''),
                 'strategy': plan.get('strategy', ''), 'jobs': plan.get('jobs', []),
-                'local_dir': raw.get('local_dir', ''), 'hpc_dir': raw.get('hpc_dir', ''),
+                # hpc_dir 回退到任务里选定的超算工作区：规划前它就是实际生效的远端根，
+                # 页面与 AI 都不该显示成"未设置"。
+                'local_dir': raw.get('local_dir', ''),
+                'hpc_dir': raw.get('hpc_dir') or task.get('hpc_workspace') or '',
                 'waiting': raw.get('waiting', []), 'report': raw.get('report', ''),
                 'precheck': raw.get('precheck') or {'ok': False, 'issues': []},
                 'draft': raw.get('draft', []), 'artifacts': raw.get('artifacts', {})}

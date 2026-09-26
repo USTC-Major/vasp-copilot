@@ -479,7 +479,9 @@ class ToolExecutor:
             f"- 目标 goal：{flow.get('goal') or self._task().get('goal') or '（未填写）'}\n"
             f"- 规划 strategy：{plan.get('strategy') or '（未规划）'}\n{job_lines}\n"
             f"- 本地计算目录：{flow.get('local_dir') or self.local_dir()}\n"
-            f"- 超算目录 hpc_dir：{flow.get('hpc_dir') or '（未设置）'}\n"
+            # 汇报「实际生效」的远端根：规划前 flow.hpc_dir 还是空的，但任务里选定的
+            # 超算工作区已经生效（上传/查看都用它）；只读 flow 会让 AI 误报"未设置"。
+            f"- 超算目录 hpc_dir：{self._hpc_root(flow) or '（未设置）'}\n"
             f"- 提交前检查：{pre_text}\n"
             f"- 提交草稿：{draft_names}\n"
             f"- 已上传超算：{'是' if flow.get('uploaded') else '否'}\n"
