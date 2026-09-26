@@ -23,6 +23,37 @@ import type { AiMessage as AiMsg, AiTask, AiConsentCard } from '../types/ai';
 const { Content } = Layout;
 const { Text, Title } = Typography;
 
+// 可批量处理的卡片：只限“机械文件准备”。科学输入（INCAR/KPOINTS/结构导入）、
+// 脚本认领、提交与重试一律逐项确认，不做批量。
+const BATCHABLE_KINDS = new Set(['copy_inputs', 'hpc_upload']);
+
+const CARD_LABELS: Record<string, string> = {
+  workspace: '操作授权',        // 旧版/演示后端使用的泛化类型
+  submit: '提交确认',
+  copy_inputs: '输入复制',
+  hpc_upload: '文件上传',
+  incar_write: 'INCAR 参数写入',
+  kpoints_write: 'KPOINTS 生成',
+  mp_poscar_write: '结构导入',
+  script_attestation: '提交脚本认领',
+  retry_job: '失败重试',
+  remote_file: '远端文件计划',
+};
+
+const cardLabel = (kind: string) => CARD_LABELS[kind] ?? kind;
+
+/** 折叠时只显示第一行指纹（文件名/目标/SHA 前几位都在里面）。 */
+const cardFingerprint = (summary: string) => {
+  const first = (summary || '').split('\n').map((line) => line.trim()).find(Boolean) ?? '（无摘要）';
+  return first.length > 96 ? `${first.slice(0, 96)}…` : first;
+};
+
+/** 折叠时也显示一句理由，避免用户看不到“为什么需要确认”。 */
+const reasonBrief = (reason: string) => {
+  const text = (reason || '').trim();
+  return text.length > 90 ? `${text.slice(0, 90)}…` : text;
+};
+
 interface LiveMsg {
   role: 'user' | 'assistant';
   content: string;
@@ -34,6 +65,57 @@ interface StreamIssue {
   kind: 'generation' | 'connection';
   message: string;
 }
+
+/** 单张待批卡：默认只显示指纹，完整预览按需展开并限高滚动。 */
+const PendingCardRow: React.FC<{
+  card: AiConsentCard;
+  resolving: boolean;
+  onResolve: (card: AiConsentCard, approved: boolean) => void;
+  toolboxLink?: string;
+}> = ({ card, resolving, onResolve, toolboxLink }) => {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ borderTop: '1px dashed rgba(0,0,0,0.10)', paddingTop: 8, marginTop: 8 }}>
+      <Space style={{ width: '100%', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+        <div style={{ paddingRight: 8 }}>
+          <div style={{ fontSize: 13 }}>{cardFingerprint(card.summary)}</div>
+          {reasonBrief(card.reason) && (
+            <div style={{ fontSize: 12, color: '#8c6d1f', marginTop: 2 }}>{reasonBrief(card.reason)}</div>
+          )}
+        </div>
+        <Button size="small" type="link" onClick={() => setOpen((v) => !v)}>
+          {open ? '收起' : '展开完整预览'}
+        </Button>
+      </Space>
+      {open && (
+        <div style={{ maxHeight: 240, overflowY: 'auto', background: '#fafafa', borderRadius: 6, padding: '8px 10px', marginTop: 6 }}>
+          <div style={{ whiteSpace: 'pre-wrap', fontSize: 12 }}>{card.summary}</div>
+          <div style={{ fontSize: 12, color: '#8c6d1f', marginTop: 8, whiteSpace: 'pre-wrap' }}>{card.reason}</div>
+        </div>
+      )}
+      {card.kind === 'remote_file' ? (
+        <Link to={toolboxLink ?? '#'} style={{ fontSize: 13 }}>审阅完整文件计划与授权范围</Link>
+      ) : (
+        <Space style={{ marginTop: 8 }}>
+          {(card.options && card.options.length
+            ? card.options.filter((opt) => opt !== '同意本批' && opt !== 'allow_batch')
+            : ['同意本次', '拒绝']).map((opt) => (
+            <Button
+              key={opt}
+              size="small"
+              type={opt === '拒绝' ? 'default' : 'primary'}
+              danger={opt === '拒绝'}
+              loading={resolving}
+              onClick={() => onResolve(card, opt !== '拒绝')}
+            >
+              {opt}
+            </Button>
+          ))}
+        </Space>
+      )}
+    </div>
+  );
+};
 
 const AiProjectPage: React.FC = () => {
   const { projectId = '' } = useParams();
@@ -76,6 +158,7 @@ const AiProjectPage: React.FC = () => {
   const [streamIssue, setStreamIssue] = useState<StreamIssue | null>(null);
   const [pendingCards, setPendingCards] = useState<AiConsentCard[]>([]);
   const [resolvingCardId, setResolvingCardId] = useState<string | null>(null);
+  const [batchBusy, setBatchBusy] = useState(false);
   const threadRef = useRef<HTMLDivElement>(null);
   const selectedTaskIdRef = useRef<string | null>(selectedTaskId);
   const streamSequenceRef = useRef(0);
@@ -267,6 +350,51 @@ const AiProjectPage: React.FC = () => {
     }
   };
 
+  /** 批量处理同类卡片：一次点击，但逐张提交、各自留决议记录。 */
+  const handleResolveCards = async (cards: AiConsentCard[], approved: boolean) => {
+    const taskId = selectedTask?.id;
+    if (!taskId || resolvingCardId || batchBusy || cards.length === 0) return;
+    const confirmed = await new Promise<boolean>((resolve) => {
+      Modal.confirm({
+        title: approved ? `批准本批 ${cards.length} 项` : `拒绝本批 ${cards.length} 项`,
+        content: (
+          <div style={{ maxHeight: 220, overflowY: 'auto' }}>
+            <div style={{ marginBottom: 6 }}>将逐项处理以下操作（每项仍单独记录决议）：</div>
+            <div style={{ whiteSpace: 'pre-wrap', fontSize: 12 }}>
+              {cards.map((card) => `· ${cardFingerprint(card.summary)}`).join('\n')}
+            </div>
+          </div>
+        ),
+        okText: approved ? '全部批准' : '全部拒绝',
+        cancelText: '取消',
+        onOk: () => resolve(true),
+        onCancel: () => resolve(false),
+      });
+    });
+    if (!confirmed) return;
+    setBatchBusy(true);
+    let done = 0;
+    const failed: string[] = [];
+    for (const card of cards) {
+      try {
+        await aiApi.resolveConsent(projectId, taskId, card.card_id, approved);
+        done += 1;
+        setPendingCards((prev) => prev.filter((c) => c.card_id !== card.card_id));
+      } catch (err) {
+        failed.push(`${cardFingerprint(card.summary)}：${err instanceof Error ? err.message : '处理失败'}`);
+      }
+    }
+    setBatchBusy(false);
+    if (failed.length) {
+      message.warning(`本批完成 ${done} 项，${failed.length} 项未成功：\n${failed.join('\n')}`);
+    } else {
+      message.success(approved ? `本批已批准 ${done} 项（每项单独留决议记录）` : `本批已拒绝 ${done} 项`);
+    }
+    await messagesQuery.refetch();
+    void tasksQuery.refetch();
+    void taskContextQuery.refetch();
+  };
+
   const send = async () => {
     const content = input.trim();
     if (!content || !selectedTask || conversationBusy) return;
@@ -437,37 +565,50 @@ const AiProjectPage: React.FC = () => {
 
             {pendingCards.length > 0 && (
               <div style={{ marginBottom: 10 }}>
-                {pendingCards.map((card) => (
-                  <div key={card.card_id} style={{ border: '1px solid #f0c36d', background: '#fffbe6', borderRadius: 10, padding: '12px 14px', marginBottom: 8 }}>
-                    <Space style={{ marginBottom: 6, width: '100%', justifyContent: 'space-between' }}>
-                      <Space size={8}>
-                        <Tag color="gold">{card.kind === 'submit' ? '提交确认' : '操作授权'}</Tag>
-                        <Text strong style={{ whiteSpace: 'pre-wrap' }}>{card.summary}</Text>
+                {(() => {
+                  // 同类卡（仅限机械文件准备）折成一组，可一次批准/拒绝；科学输入、
+                  // 脚本认领、提交与重试保持逐项确认。
+                  const groups: { key: string; label: string; cards: AiConsentCard[]; batchable: boolean }[] = [];
+                  for (const card of pendingCards) {
+                    const batchable = BATCHABLE_KINDS.has(card.kind);
+                    const group = batchable ? groups.find((g) => g.key === card.kind) : undefined;
+                    if (group) group.cards.push(card);
+                    else groups.push({ key: batchable ? card.kind : card.card_id, label: cardLabel(card.kind), cards: [card], batchable });
+                  }
+                  return groups.map((group) => (
+                    <div key={group.key} style={{ border: '1px solid #f0c36d', background: '#fffbe6', borderRadius: 10, padding: '10px 14px', marginBottom: 8 }}>
+                      <Space style={{ width: '100%', justifyContent: 'space-between' }}>
+                        <Space size={8}>
+                          <Tag color="gold">{group.label}</Tag>
+                          <Text type="secondary" style={{ fontSize: 12 }}>
+                            {group.cards.length} 项待批准{group.batchable ? '（可批量）' : '（逐项确认）'}
+                          </Text>
+                        </Space>
+                        {group.batchable && group.cards.length > 1 && (
+                          <Space>
+                            <Button size="small" type="primary" loading={batchBusy}
+                                    onClick={() => void handleResolveCards(group.cards, true)}>
+                              全部批准本批（{group.cards.length} 项）
+                            </Button>
+                            <Button size="small" danger loading={batchBusy}
+                                    onClick={() => void handleResolveCards(group.cards, false)}>
+                              全部拒绝
+                            </Button>
+                          </Space>
+                        )}
                       </Space>
-                    </Space>
-                    <div style={{ fontSize: 13, color: '#8c6d1f', marginBottom: 10, whiteSpace: 'pre-wrap' }}>{card.reason}</div>
-                    {card.kind === 'remote_file' ? (
-                      <Link to={`/toolbox/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(selectedTaskId || '')}?fileAction=${encodeURIComponent(card.card_id)}#toolbox-files`}>
-                        审阅完整文件计划与授权范围
-                      </Link>
-                    ) : <Space>
-                      {(card.options && card.options.length
-                        ? card.options.filter((opt) => opt !== '同意本批' && opt !== 'allow_batch')
-                        : ['同意本次', '拒绝']).map((opt) => (
-                        <Button
-                          key={opt}
-                          size="small"
-                          type={opt === '拒绝' ? 'default' : 'primary'}
-                          danger={opt === '拒绝'}
-                          loading={resolvingCardId === card.card_id}
-                          onClick={() => void handleResolveCard(card, opt !== '拒绝')}
-                        >
-                          {opt}
-                        </Button>
+                      {group.cards.map((card) => (
+                        <PendingCardRow
+                          key={card.card_id}
+                          card={card}
+                          resolving={resolvingCardId === card.card_id || batchBusy}
+                          onResolve={(target, approved) => void handleResolveCard(target, approved)}
+                          toolboxLink={`/toolbox/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(selectedTaskId || '')}?fileAction=${encodeURIComponent(card.card_id)}#toolbox-files`}
+                        />
                       ))}
-                    </Space>}
-                  </div>
-                ))}
+                    </div>
+                  ));
+                })()}
               </div>
             )}
             {streamIssue && (

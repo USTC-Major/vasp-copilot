@@ -253,7 +253,9 @@ export interface AiConsentCard {
   reason: string;
   options: string[];
   batch_key: string;
-  kind: 'workspace' | 'submit' | 'remote_file';
+  /** 卡片类型：submit / copy_inputs / hpc_upload / incar_write / kpoints_write /
+   *  mp_poscar_write / script_attestation / retry_job / remote_file 等。 */
+  kind: string;
   summary: string;
 }
 

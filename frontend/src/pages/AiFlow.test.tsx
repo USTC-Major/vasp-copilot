@@ -373,4 +373,71 @@ describe('AI 前端整合（M12）', () => {
     await userEvent.type(input, '1234567890');
     expect(await screen.findByText(/超过 5 字上限/)).toBeInTheDocument();
   });
+
+  const pendingCard = (over: Record<string, unknown>) => ({
+    card_id: 'card-x', tool: 'hpc_upload', args: {}, risk: 'medium',
+    reason: '上传前需你确认本次精确内容。', options: ['同意本次', '拒绝'],
+    batch_key: 'batch-x', kind: 'hpc_upload', summary: '上传已登记输入 `INCAR`',
+    ...over,
+  });
+
+  it('同类文件上传卡合并为一组，可一次批准本批', async () => {
+    const approved: string[] = [];
+    server.use(
+      http.get('/ai/v1/projects/:projectId/tasks/:taskId/messages', () => HttpResponse.json({
+        messages: [], generation: { running: false },
+        pending_actions: [
+          pendingCard({ card_id: 'up-1', summary: '上传已登记输入 `INCAR`（31 B）到 `/hpc/relax/INCAR`' }),
+          pendingCard({ card_id: 'up-2', summary: '上传已登记输入 `POSCAR`（62 B）到 `/hpc/relax/POSCAR`' }),
+        ],
+      })),
+      http.post('/ai/v1/projects/:projectId/tasks/:taskId/messages/consent', async ({ request }) => {
+        const body = await request.json() as { card_id: string; approved: boolean };
+        approved.push(body.card_id);
+        return HttpResponse.json({ mode: 'ai', ok: true, kind: 'hpc_upload', approved: body.approved, result: '' });
+      }),
+    );
+    const user = userEvent.setup();
+    renderPath('/ai/projects/prj_001');
+    expect(await screen.findByText('文件上传')).toBeInTheDocument();
+    expect(screen.getByText('2 项待批准（可批量）')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /全部批准本批（2 项）/ }));
+    await user.click(await screen.findByRole('button', { name: '全部批准' }));
+    await waitFor(() => expect(approved).toEqual(['up-1', 'up-2']));
+  });
+
+  it('科学输入卡不参与批量，只逐项确认', async () => {
+    server.use(
+      http.get('/ai/v1/projects/:projectId/tasks/:taskId/messages', () => HttpResponse.json({
+        messages: [], generation: { running: false },
+        pending_actions: [pendingCard({
+          card_id: 'incar-1', tool: 'propose_incar', kind: 'incar_write', batch_key: 'incar|relax',
+          summary: '写入 `relax/INCAR`；参数：ENCUT\nSHA-256：abcdef\n\n- ENCUT = 520\n+ ENCUT = 600',
+        })],
+      })),
+    );
+    renderPath('/ai/projects/prj_001');
+    expect(await screen.findByText('INCAR 参数写入')).toBeInTheDocument();
+    expect(screen.getByText('1 项待批准（逐项确认）')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /全部批准本批/ })).not.toBeInTheDocument();
+  });
+
+  it('卡片默认只显示指纹，完整预览按需展开', async () => {
+    server.use(
+      http.get('/ai/v1/projects/:projectId/tasks/:taskId/messages', () => HttpResponse.json({
+        messages: [], generation: { running: false },
+        pending_actions: [pendingCard({
+          card_id: 'mp-1', tool: 'mp_import_poscar', kind: 'mp_poscar_write',
+          summary: 'Materials Project mp-aaaaaaft / Si / 2 原子\n写入：`relax/POSCAR`\n```\nSi\n1.0\n0.0 2.7 2.7\n```',
+        })],
+      })),
+    );
+    const user = userEvent.setup();
+    renderPath('/ai/projects/prj_001');
+    expect(await screen.findByText(/Materials Project mp-aaaaaaft \/ Si \/ 2 原子/)).toBeInTheDocument();
+    expect(screen.queryByText(/0.0 2.7 2.7/)).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '展开完整预览' }));
+    expect(await screen.findByText(/0.0 2.7 2.7/)).toBeInTheDocument();
+  });
 });
