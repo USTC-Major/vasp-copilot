@@ -1131,7 +1131,8 @@ def test_executor_hpc_upload_direct_without_card(ctx, tmp_path):
     ex = ToolExecutor(store=ctx.store, project_id=ctx.pid, task_id=tk["id"],
                       cfg=ctx.cfg, orch=SimpleNamespace(hpc=hpc))
     out = ex.handle("hpc_upload", {"source": "extra.bin"})
-    assert "AI_ARTIFACT_REQUIRED" in out
+    # 键名不对/缺 artifact_id 现在返回可自查的参数错误（原为误导性的 AI_ARTIFACT_REQUIRED）
+    assert "INVALID_TOOL_ARGUMENT" in out
     assert not hpc.written
     assert not hpc.mkdir_calls
     flow = (ctx.store.get_task(ctx.pid, tk["id"]) or {}).get("flow") or {}
@@ -1196,17 +1197,17 @@ def test_executor_hpc_upload_rejects_unsafe_and_missing(ctx, tmp_path):
     ex = ToolExecutor(store=ctx.store, project_id=ctx.pid, task_id=tk["id"],
                       cfg=ctx.cfg, orch=SimpleNamespace(hpc=hpc))
     out_esc = ex.handle("hpc_upload", {"source": "../escape.txt"})
-    assert "AI_ARTIFACT_REQUIRED" in out_esc
-    assert "AI_ARTIFACT_REQUIRED" in ex.handle(
+    assert "INVALID_TOOL_ARGUMENT" in out_esc
+    assert "INVALID_TOOL_ARGUMENT" in ex.handle(
         "hpc_upload", {"source": "a.txt", "dest": "/abs/dest"})
-    assert "AI_ARTIFACT_REQUIRED" in ex.handle("hpc_upload", {})
-    assert "AI_ARTIFACT_REQUIRED" in ex.handle(
+    assert "INVALID_TOOL_ARGUMENT" in ex.handle("hpc_upload", {})
+    assert "INVALID_TOOL_ARGUMENT" in ex.handle(
         "hpc_upload", {"source": "missing.txt"})
     assert hpc.written == {}
     # 未连超算：如实说明
     ex2 = ToolExecutor(store=ctx.store, project_id=ctx.pid, task_id=tk["id"],
                        cfg=ctx.cfg, orch=SimpleNamespace(hpc=None))
-    assert "AI_ARTIFACT_REQUIRED" in ex2.handle(
+    assert "INVALID_TOOL_ARGUMENT" in ex2.handle(
         "hpc_upload", {"source": "INCAR"})
 
 
@@ -1466,3 +1467,46 @@ def test_copy_inputs_rejects_off_plan_dir(ctx):
                                     "job_key": "static"})
     assert "不是任何已规划作业的目录" in out
     assert not (ex.local_dir() / "static").exists()
+
+
+# --- 参数诊断回归：模型传错键名时，回执必须说清「收到了什么、应该传什么」 ---
+
+def test_hpc_upload_rejects_wrong_argument_name_with_hint(ctx):
+    """用户实测的失败形态：把路径当参数传（path=...），此前只回一句误导性的
+    「上传只接受已登记的 artifact_id」，看不出真正原因是键名不对。"""
+    ex = ToolExecutor(store=ctx.store, project_id=ctx.pid, task_id=ctx.tid,
+                      cfg=ctx.cfg)
+    out = ex.handle("hpc_upload", {"path": "relax/POSCAR", "job_key": "relax"})
+    assert "INVALID_TOOL_ARGUMENT" in out
+    assert "path" in out                      # 回显收到的键名
+    assert "artifact_id" in out               # 指明正确参数
+    assert "AI_ARTIFACT_REQUIRED" not in out  # 不再复用误导性错误码
+
+
+def test_hpc_upload_missing_artifact_id_echoes_received_keys(ctx):
+    ex = ToolExecutor(store=ctx.store, project_id=ctx.pid, task_id=ctx.tid,
+                      cfg=ctx.cfg)
+    out = ex.handle("hpc_upload", {"job_key": "relax"})
+    assert "INVALID_TOOL_ARGUMENT" in out and "artifact_id" in out
+    assert "job_key" in out
+
+
+def test_copy_inputs_rejects_unknown_argument(ctx):
+    ex = ToolExecutor(store=ctx.store, project_id=ctx.pid, task_id=ctx.tid,
+                      cfg=ctx.cfg)
+    out = ex.handle("copy_inputs", {"files": ["relax/POSCAR"], "job_key": "relax"})
+    assert "INVALID_TOOL_ARGUMENT" in out and "artifact_ids" in out
+
+
+def test_action_failure_text_keeps_error_code():
+    """卡片执行失败必须保留错误码（此前只打印异常类名，丢掉可行动的原因）。"""
+    from backend.toolbox.commands import _action_failure_text
+
+    class Fake(Exception):
+        code = "SCOPE_EXPIRED"
+        message = "Owner file permission is expired"
+
+    exc = Fake("boom")
+    text = _action_failure_text(exc)
+    assert "SCOPE_EXPIRED" in text and "expired" in text
+    assert _action_failure_text(ValueError("plain")).startswith("操作失败且未重试：ValueError")

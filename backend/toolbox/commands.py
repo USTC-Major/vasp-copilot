@@ -52,6 +52,19 @@ __test__ = False
 #: handle() 捕获 PendingConsentError，返回 _CONSENT_PENDING+card_id；runner 据此 yield card 事件。
 _CONSENT_PENDING = "__CONSENT_PENDING__"
 
+
+def _action_failure_text(exc: BaseException) -> str:
+    """卡片执行失败的对外文案：保留错误码与原始信息，便于模型与用户处置。
+
+    此前只输出异常类名（例如「操作失败且未重试：RemoteFileError」），
+    把 SCOPE_EXPIRED、REMOTE_CAPABILITY_UNAVAILABLE 这类**可行动**的原因丢掉了。
+    """
+    code = str(getattr(exc, "code", "") or "")
+    detail = str(getattr(exc, "message", "") or exc)
+    if code:
+        return f"操作失败且未重试：[{code}] {detail}"
+    return f"操作失败且未重试：{type(exc).__name__}（{detail}）"
+
 #: flow.phase -> 任务展示状态（与 orchestrator 对齐）
 _PHASE_STATUS = {
     "running": "planned",
@@ -742,7 +755,9 @@ class ToolExecutor:
             else:
                 raise ValueError(f"unsupported consent operation: {operation}")
         except Exception as exc:  # noqa: BLE001
-            result = f"操作失败且未重试：{type(exc).__name__}（{exc}）"
+            # 保留错误码与原始信息：此前只打印异常类名（如 RemoteFileError），
+            # 把 SCOPE_EXPIRED / REMOTE_CAPABILITY_UNAVAILABLE 等可行动的原因丢掉了。
+            result = _action_failure_text(exc)
             saved = get_card(self.store,self.project_id,self.task_id,action_id) or {}
             state = 'unknown' if operation == 'hpc_upload' and saved.get('file_dispatch_at') else 'failed'
             finish_action(self.store, self.project_id, self.task_id,
@@ -926,10 +941,21 @@ class ToolExecutor:
     # ---------------- 本地 -> 超算受限上传（SFTP，非 scp） ----------------
     def tool_hpc_upload(self, args: dict) -> str:
         """Create one confirmation action for one registered artifact upload."""
+        unknown = set(args) - {"artifact_id", "job_key"}
+        if unknown:
+            return ToolFailure(
+                'INVALID_TOOL_ARGUMENT',
+                f"[INVALID_TOOL_ARGUMENT] 不认识的参数 {sorted(unknown)}；"
+                '正确形式是 {"artifact_id":"art_xxxxxxxx","job_key":"relax"}。'
+                "artifact_id 要用 get_state 登记后返回的 ID，不是文件路径。")
         artifact_id = str(args.get("artifact_id") or "").strip()
         if not artifact_id:
-            return ToolFailure('AI_ARTIFACT_REQUIRED', "[AI_ARTIFACT_REQUIRED] 上传只接受用户工作区登记的 artifact_id；"
-                    "未执行任何远程写入")
+            received = ", ".join(sorted(args)) or "无"
+            return ToolFailure(
+                'INVALID_TOOL_ARGUMENT',
+                f"[INVALID_TOOL_ARGUMENT] 缺少 artifact_id（本次收到参数：{received}）；"
+                "请先 get_state，再用 flow.artifacts 里形如 art_xxxxxxxx 的 ID，"
+                "不要传文件路径。未执行任何远程写入。")
         flow = self._load_flow()
         artifact = self._ensure_artifacts(flow).get(artifact_id)
         if not isinstance(artifact, dict):
@@ -940,7 +966,10 @@ class ToolExecutor:
             return ToolFailure('AI_ARTIFACT_NOT_REGISTERED', "[AI_ARTIFACT_NOT_REGISTERED] 登记项缺少安全相对路径")
         job_key = self._clean_job_subdir(args.get("job_key"))
         if job_key is None:
-            return ToolFailure('AI_ARTIFACT_REQUIRED', "[AI_ARTIFACT_REQUIRED] 非法 job_key")
+            return ToolFailure(
+                'INVALID_TOOL_ARGUMENT',
+                "[INVALID_TOOL_ARGUMENT] 非法 job_key（只允许规划内的相对路径，"
+                "如 relax 或 relax/static；不接受绝对路径、盘符或 ..）。")
         bad_dir = self._validate_job_dir(job_key)
         if bad_dir:
             return ToolFailure('TOOL_POLICY_OR_PRECONDITION', bad_dir)
@@ -1379,9 +1408,20 @@ class ToolExecutor:
         raise PendingConsentError(saved)
 
     def tool_copy_inputs(self, args: dict) -> str:
+        unknown = set(args) - {"artifact_ids", "job_key"}
+        if unknown:
+            return ToolFailure(
+                'INVALID_TOOL_ARGUMENT',
+                f"[INVALID_TOOL_ARGUMENT] 不认识的参数 {sorted(unknown)}；"
+                '正确形式是 {"artifact_ids":["art_xxxxxxxx"],"job_key":"relax"}。'
+                "artifact_ids 要用 get_state 登记后返回的 ID，不是文件路径。")
         artifact_ids = args.get("artifact_ids")
         if not isinstance(artifact_ids, list) or not artifact_ids:
-            return ToolFailure('AI_ARTIFACT_REQUIRED', "[AI_ARTIFACT_REQUIRED] 需要非空 artifact_ids 数组")
+            received = ", ".join(sorted(args)) or "无"
+            return ToolFailure(
+                'INVALID_TOOL_ARGUMENT',
+                f"[INVALID_TOOL_ARGUMENT] 需要非空 artifact_ids 数组"
+                f"（本次收到参数：{received}）；请先 get_state 再传 art_xxxxxxxx 形式的 ID。")
         source = self._task().get("local_workspace") or ""
         if not source:
             return ToolFailure('TOOL_PRECONDITION_FAILED', "任务未设置本地工作区，无法复制输入文件")
