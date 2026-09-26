@@ -57,7 +57,44 @@ def create_task(project_id: str, request: Request, payload: dict):
         if set(payload) - allowed or any(not isinstance(v, (str, type(None))) for v in payload.values()):
             raise ToolboxError('INVALID_TASK', '只接受任务标题、目标和工作区路径')
         task = svc.store.create_task(project_id, **payload)
+    grant_task_file_transfer(svc, project_id, task, payload)
     return envelope(task=task)
+
+
+def grant_task_file_transfer(svc, project_id: str, task: dict, payload: dict) -> None:
+    """「选定工作区＝授权」：把任务选定的超算目录登记为该任务的文件根，并记录任务级授权。
+
+    - 只覆盖本任务自己选定的那一个远端目录；操作限于复制/写文本/建目录，且有数量与
+      字节上限；不涉及脚本生成、软链到范围外与提交。
+    - best-effort：SSH 未配置、目录核对失败或文件层未启用时**静默跳过**，
+      绝不因为建立授权失败而影响建任务本身，也不改变原有的逐项确认流程。
+    - AI 仍然不能自己创建/激活范围；这里用的是用户在任务里选定工作区这一次显式动作。
+    """
+    if svc.files is None:
+        return
+    remote = str(payload.get('hpc_workspace') or '').strip()
+    if not remote:
+        return
+    try:
+        current = svc.store.get_task(project_id, task['id']) or {}
+        flow = dict(current.get('flow') or {})
+        if not flow.get('file_roots'):
+            svc.files.set_roots(project_id, task['id'], {
+                'expected_version': flow.get('file_roots_version', 0),
+                'roots': [{'path': remote}],
+            })
+        current = svc.store.get_task(project_id, task['id']) or {}
+        flow = dict(current.get('flow') or {})
+        flow['file_grant'] = {
+            'granted_by': 'task_workspace_choice',
+            'hpc_workspace': remote,
+            'operations': ['copy', 'write_text', 'mkdir'],
+            'max_operations': 32,
+            'active': True,
+        }
+        svc.store.update_task(project_id, task['id'], flow=flow)
+    except Exception:  # noqa: BLE001 - 授权建立失败不影响任务创建
+        return
 
 @router.patch('/projects/{project_id}/tasks/{task_id}')
 def update_task(project_id: str, task_id: str, request: Request, payload: dict):
