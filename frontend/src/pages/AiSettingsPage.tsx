@@ -1,11 +1,11 @@
 // 全局设置页 — secrets are write-only: status + replace/clear, never reveal.
-import React, { useEffect, useState } from "react";
-import { Card, Typography, Space, Button, Input, Col, Row, Spin, Collapse, Switch, Select, message, Alert } from "antd";
+import React, { useEffect, useRef, useState } from "react";
+import { Card, Typography, Space, Button, Input, Col, Row, Spin, Collapse, Switch, Select, message, Alert, Modal } from "antd";
 import { Link } from "react-router-dom";
 import { LinkOutlined, SafetyCertificateOutlined, RocketOutlined } from "@ant-design/icons";
 import ErrorAlert from "../components/common/ErrorAlert";
 import SecretInput from "../components/ai/SecretInput";
-import type { AiSecretState } from "../types/ai";
+import type { AiSecretState, AiSettingsOut } from "../types/ai";
 import { useAiSettings, useAiSettingsSave, useAiSettingsTest, useAiSecretStatus, useAiSecretUpdate } from "../hooks/useApi";
 
 const { Title, Text, Paragraph } = Typography;
@@ -36,6 +36,26 @@ interface Form {
   ssh_password: string;
 }
 
+/** 服务端设置 -> 表单值。密钥字段永远留空（写专用接口，不回显）。 */
+const toForm = (settings: AiSettingsOut): Form => ({
+  max_jobs: String(settings.max_jobs ?? 20),
+  poll_interval_seconds: String(settings.poll_interval_seconds ?? 60),
+  llm_base_url: settings.llm.base_url ?? "",
+  llm_model: settings.llm.model ?? "",
+  llm_provider: settings.llm.provider ?? "auto",
+  llm_enable_thinking: settings.llm.enable_thinking ?? false,
+  llm_api_key: "",
+  mp_api_key: "",
+  ssh_name: settings.ssh.name ?? "",
+  ssh_host: settings.ssh.host ?? "",
+  ssh_port: String(settings.ssh.port ?? 22),
+  ssh_username: settings.ssh.username ?? "",
+  ssh_known_hosts_path: settings.ssh.known_hosts_path ?? "",
+  ssh_identity_file: settings.ssh.identity_file ?? "",
+  scheduler_backend: settings.ssh.scheduler_backend ?? "slurm",
+  ssh_password: "",
+});
+
 const AiSettingsPage: React.FC = () => {
   const settingsQuery = useAiSettings(true);
   const secretQuery = useAiSecretStatus(true);
@@ -51,27 +71,14 @@ const AiSettingsPage: React.FC = () => {
     ssh: normalizeSecret(rawSecrets?.ssh),
   };
   const [form, setForm] = useState<Form>({} as Form);
+  // 页面加载时服务端给过的值；保存前与最新值比对，避免用旧表单覆盖他处的改动。
+  const loadedRef = useRef<Form | null>(null);
 
   useEffect(() => {
     if (settings) {
-      setForm({
-        max_jobs: String(settings.max_jobs ?? 20),
-        poll_interval_seconds: String(settings.poll_interval_seconds ?? 60),
-        llm_base_url: settings.llm.base_url ?? "",
-        llm_model: settings.llm.model ?? "",
-        llm_provider: settings.llm.provider ?? "auto",
-        llm_enable_thinking: settings.llm.enable_thinking ?? false,
-        llm_api_key: "",
-        mp_api_key: "",
-        ssh_name: settings.ssh.name ?? "",
-        ssh_host: settings.ssh.host ?? "",
-        ssh_port: String(settings.ssh.port ?? 22),
-        ssh_username: settings.ssh.username ?? "",
-        ssh_known_hosts_path: settings.ssh.known_hosts_path ?? "",
-        ssh_identity_file: settings.ssh.identity_file ?? "",
-        scheduler_backend: settings.ssh.scheduler_backend ?? "slurm",
-        ssh_password: "",
-      });
+      const next = toForm(settings);
+      setForm(next);
+      loadedRef.current = next;
     }
   }, [settings, settingsQuery.data]);
 
@@ -86,8 +93,44 @@ const AiSettingsPage: React.FC = () => {
   patchFields.llm_enable_thinking = form.llm_enable_thinking;
   patchFields.scheduler_backend = form.scheduler_backend;
 
+  const confirmOverwrite = (conflicts: string[]) =>
+    new Promise<boolean>((resolve) => {
+      Modal.confirm({
+        title: "后台配置已被修改",
+        content: `检测到这些字段在别处已更新：${conflicts.join("、")}。继续保存会用本页的值覆盖它。`,
+        okText: "仍然覆盖",
+        cancelText: "用后台值刷新",
+        onOk: () => resolve(true),
+        onCancel: () => resolve(false),
+      });
+    });
+
   const onSubmit = async () => {
     try {
+      // 保存前对齐一次服务端：页面加载后若他处改过配置，先确认再覆盖，
+      // 避免用旧表单把新的 SSH 用户名等设置写回去。
+      const latest = await settingsQuery.refetch();
+      const latestSettings = latest?.data?.settings;
+      if (latestSettings) {
+        const latestForm = toForm(latestSettings);
+        const snapshot = loadedRef.current;
+        const conflicts = (Object.keys(patchFields) as (keyof Form)[]).filter((key) => {
+          if (!snapshot) return false;
+          const serverMoved = String(latestForm[key]) !== String(snapshot[key]);
+          return serverMoved && String(form[key]) !== String(latestForm[key]);
+        });
+        loadedRef.current = latestForm;
+        if (conflicts.length && !(await confirmOverwrite(conflicts))) {
+          setForm({
+            ...latestForm,
+            llm_api_key: form.llm_api_key,
+            mp_api_key: form.mp_api_key,
+            ssh_password: form.ssh_password,
+          });
+          message.info("已改用后台最新配置，未覆盖");
+          return;
+        }
+      }
       await saveMutation.mutateAsync(patchFields);
       const replacements = [
         ["llm", form.llm_api_key], ["mp", form.mp_api_key], ["ssh", form.ssh_password],

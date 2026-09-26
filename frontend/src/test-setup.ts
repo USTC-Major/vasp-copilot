@@ -4,10 +4,15 @@
 /// <reference types="vitest/globals" />
 
 import * as jestDomMatchers from '@testing-library/jest-dom/matchers';
+import { configure } from '@testing-library/react';
 import { server } from './mocks/server';
 
 // 直接在运行器的全局 expect 上注册 jest-dom 匹配器。
 expect.extend(jestDomMatchers);
+
+// 全量运行（17 个文件并发）时，testing-library 默认 1s 的异步等待不够，
+// 会出现与代码无关的随机超时；统一放宽到 5s，让全量结果可复现。
+configure({ asyncUtilTimeout: 5000 });
 
 // 必须在模块顶层先启动 MSW，再包 fetch：
 // 否则相对路径请求会先到达 MSW 的 Node 拦截器（无法解析相对 URL）而失败。

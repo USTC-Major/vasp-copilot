@@ -1,7 +1,8 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
+import { Modal } from "antd";
 import AiSettingsPage from "./AiSettingsPage";
 
 const mocks = vi.hoisted(() => ({
@@ -24,6 +25,15 @@ vi.mock("../hooks/useApi", () => ({
   useAiSecretStatus: () => ({ data: mocks.secretError ? undefined : { secrets: { llm: false, mp: false, ssh: false } }, error: mocks.secretError, refetch: mocks.refetch }),
   useAiSecretUpdate: () => ({ mutateAsync: mocks.secret }),
 }));
+
+// antd 的静态 Modal 不在 Testing Library 的自动清理范围内：不显式销毁会残留到
+// 下一条用例，导致确认框重复、点到旧对话框的按钮。
+afterEach(() => {
+  Modal.destroyAll();
+  // 静态 Modal 的容器不在 umount 范围内，显式清掉避免残留到下一條用例。
+  document.querySelectorAll(".ant-modal-root, .ant-modal-wrap, .ant-modal-mask")
+    .forEach((node) => node.remove());
+});
 
 it('does not show an editable form when credential status fails, and guides to Toolbox', async () => {
   mocks.secretError = new Error('智能服务不可达');
@@ -69,4 +79,51 @@ it("默认标准Slurm，用户明确选择ParaCloud后保存调度协议", async
   await waitFor(() => expect(mocks.save).toHaveBeenCalledWith(expect.objectContaining({
     scheduler_backend: "paracloud",
   })));
+});
+
+// 保存前对齐服务端：他处改过的配置不能被页面里的旧值悄悄覆盖。
+it("后台配置已被改动时先提示冲突，选择刷新则不覆盖", async () => {
+  mocks.save.mockClear();
+  mocks.refetch.mockReset();
+  mocks.refetch.mockResolvedValue({
+    data: { settings: {
+      ...mocks.data.settings,
+      ssh: { ...mocks.data.settings.ssh, username: "demo-user@CLUSTER" },
+    } },
+  });
+  const user = userEvent.setup();
+  render(<MemoryRouter><AiSettingsPage /></MemoryRouter>);
+  await user.click(await screen.findByRole("button", { name: "保存设置" }));
+
+  expect(mocks.refetch).toHaveBeenCalledTimes(1);
+  // antd 的静态 Modal 在 jsdom 下会渲染出多份节点，这里取最后一份（最新创建）即可。
+  expect((await screen.findAllByText("后台配置已被修改")).length).toBeGreaterThan(0);
+  const refreshButtons = await screen.findAllByRole("button", { name: "用后台值刷新" });
+  refreshButtons.forEach((button) => fireEvent.click(button));
+
+  await waitFor(() => expect(mocks.save).not.toHaveBeenCalled());
+  // 页面改用后台最新值，旧用户名不会写回去
+  expect(await screen.findByDisplayValue("demo-user@CLUSTER")).toBeInTheDocument();
+  mocks.refetch.mockReset();
+});
+
+it("冲突时明确选择仍然覆盖，才按本页值保存", async () => {
+  mocks.save.mockClear();
+  mocks.refetch.mockReset();
+  mocks.refetch.mockResolvedValue({
+    data: { settings: {
+      ...mocks.data.settings,
+      llm: { ...mocks.data.settings.llm, model: "deepseek-flash" },
+    } },
+  });
+  const user = userEvent.setup();
+  render(<MemoryRouter><AiSettingsPage /></MemoryRouter>);
+  // 等表单真正装载完（含 SSH 用户名）再保存，确保走的是冲突分支
+  expect(await screen.findByDisplayValue("user")).toBeInTheDocument();
+  await user.click(await screen.findByRole("button", { name: "保存设置" }));
+
+  const confirmButtons = await screen.findAllByRole("button", { name: "仍然覆盖" });
+  confirmButtons.forEach((button) => fireEvent.click(button));
+  await waitFor(() => expect(mocks.save).toHaveBeenCalled());
+  mocks.refetch.mockReset();
 });
