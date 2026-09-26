@@ -90,8 +90,8 @@ def test_missing_key():
 def test_search_contract(monkeypatch):
     def query(key, params):
         assert params["_limit"] == 5 and params["formula"] == "BaTiO3"
-        return [{"material_id": "mp-1", "symmetry": {"number": 99}, "band_gap": 2.0},
-                {"material_id": "mp-2", "symmetry": {"number": 221}, "band_gap": float("nan")}]
+        return [{"material_id": "mp-aaaditqj", "symmetry": {"number": 99}, "band_gap": 2.0},
+                {"material_id": "mp-aaaditqk", "symmetry": {"number": 221}, "band_gap": float("nan")}]
     monkeypatch.setattr(materials, "_request", query)
     rows = materials.search("key", "BaTiO3")
     assert len(rows) == 2 and rows[0]["spacegroup_number"] == 99
@@ -280,3 +280,60 @@ def test_consent_endpoint_executes_restored_import_without_live_chat(
     assert again.status_code == 200
     assert again.json()["state"] == "executed"
     assert ctx.store.list_messages(ctx.pid, ctx.tid) == messages
+
+
+# --- MP 接口形式变更回归：material_id 已变为不透明串，_fields 偶发被忽略 ---
+
+def test_fetch_accepts_opaque_material_id(monkeypatch, doc):
+    """当前 MP API 返回 mp- 加 8 位小写字母的 ID，不能再按纯数字校验。"""
+    opaque = deepcopy(doc)
+    opaque["material_id"] = "mp-aaaditqj"
+    monkeypatch.setattr(materials, "_request", lambda *args: [opaque])
+    result = materials.fetch_poscar("private-test-key", "mp-aaaditqj")
+    assert result["material_id"] == "mp-aaaditqj"
+    assert "Materials Project mp-aaaditqj" in result["content"]
+    assert Poscar.from_str(result["content"]).structure is not None
+
+
+def test_search_keeps_opaque_material_id(monkeypatch):
+    monkeypatch.setattr(materials, "_request", lambda *args: [
+        {"material_id": "mp-aaaditqj", "symmetry": {"number": 227},
+         "band_gap": 1.1, "energy_above_hull": 0.0}])
+    rows = materials.search("key", "Si", 1)
+    assert rows[0]["material_id"] == "mp-aaaditqj"
+    assert rows[0]["spacegroup_number"] == 227
+
+
+def test_stale_material_id_is_reported_explicitly(monkeypatch, doc):
+    """旧数字 ID 取不到条目时 MP 会回别的材料；必须给出可操作的错误码。"""
+    moved = deepcopy(doc)
+    moved["material_id"] = "mp-aaaaaaft"
+    monkeypatch.setattr(materials, "_request", lambda *args: [moved])
+    with pytest.raises(materials.MaterialsError, match="MP_ID_STALE"):
+        materials.fetch_poscar("key", "mp-149")
+
+
+def test_dropped_fields_are_retried_once(monkeypatch, doc):
+    """MP 偶发忽略 _fields 只回 material_id；重试一次后应正常返回结构。"""
+    calls = []
+
+    def flaky(key, params):
+        calls.append(params)
+        return [{"material_id": "mp-149"}] if len(calls) == 1 else [doc]
+
+    monkeypatch.setattr(materials, "_request", flaky)
+    result = materials.fetch_poscar("key", "mp-149")
+    assert len(calls) == 2
+    assert result["material_id"] == "mp-149"
+
+
+def test_fields_unavailable_fails_closed(monkeypatch):
+    monkeypatch.setattr(materials, "_request", lambda *args: [{"material_id": "mp-149"}])
+    with pytest.raises(materials.MaterialsError, match="MP_FIELDS_UNAVAILABLE"):
+        materials.fetch_poscar("key", "mp-149")
+
+
+def test_prompt_no_longer_advertises_stale_numeric_id():
+    text = tool_schema_text()
+    assert "mp_import_poscar" in text
+    assert '"material_id":"mp-149"' not in text
