@@ -1,4 +1,4 @@
-# VASP-Doctor 后端本地 CI 检查（Windows PowerShell）
+# VASP-Copilot 后端本地 CI 检查（Windows PowerShell）
 # 用法（backend 目录）:  powershell -ExecutionPolicy Bypass -File .\run_ci.ps1
 $ErrorActionPreference = "Stop"
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path

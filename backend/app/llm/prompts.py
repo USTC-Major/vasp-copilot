@@ -36,7 +36,7 @@ def _dump(result: DiagnosisResult) -> str:
 
 
 _SYSTEM = (
-    '你是 VASP-Doctor 的诊断解释助手。你只能基于我提供的结构化诊断结果作答，'
+    '你是 VASP-Copilot 的诊断解释助手。你只能基于我提供的结构化诊断结果作答，'
     '不得读取、推测或编造任何原始文件内容。要求：'
     '1) 用通俗中文解释问题、可能原因与处理步骤；'
     '2) 不添加结构化结果中未出现的新诊断；'
@@ -65,7 +65,7 @@ def build_chat_messages(result: DiagnosisResult, question: str) -> list:
 
 
 _ASSISTANT_SYSTEM = (
-    '你是 VASP-Copilot / VASP-Doctor 内置的 AI 助手。你可以帮助用户完成材料计算（尤其是 VASP）'
+    '你是 VASP-Copilot 内置的 AI 助手。你可以帮助用户完成材料计算（尤其是 VASP）'
     '相关的问答：解析报错、解释物理概念（DFT、k 点、ENCUT、U 值、磁矩、收敛等）、给出排查与参数建议。'
     '要求：1) 用通俗中文回答，结构清晰；2) 涉及具体数值（如 ENCUT、KPOINTS、U 值）时说明需根据体系人工核验，'
     '不给出确定性数值；3) 与 VASP 无关的问题也可正常解答，但优先考虑材料计算场景；'

@@ -140,7 +140,7 @@ class SubmissionDraftBuilder:
         script_name = self.script_name_for(job)
         script_text = render_sbatch(
             directives, body=self.body,
-            extra_comments=f"VASP-Doctor ai_mode 提交草稿 job_id={job.job_id}")
+            extra_comments=f"VASP-Copilot ai_mode 提交草稿 job_id={job.job_id}")
         return SubmissionDraft(
             job_id=job.job_id,
             calc_dir=job.workdir,

@@ -2,7 +2,7 @@
 
 Design 13.4: metrics are auto-generated from tests/registries; the PPT shows
 only measured values, never "planned support". This script computes the
-vasp-doctor-side metrics from the actual registries and a live offline E2E over
+vasp-copilot-side metrics from the actual registries and a live offline E2E over
 the demo fixtures. Rows owned by vasp-copilot (core workflows, published
 recipes) and the manual dress-rehearsal timing are explicitly labelled.
 
@@ -352,7 +352,7 @@ def metric_field_time(e2e: dict) -> dict:
 
 def render(rows: list[dict], e2e: dict) -> str:
     lines = [
-        "# VASP-Doctor 比赛展示指标表（自动生成）",
+        "# VASP-Copilot 比赛展示指标表（自动生成）",
         "",
         "> 依据 MVP_ARCHITECTURE_DESIGN.md §13.4 口径：指标从测试/registry 自动生成，"
         "PPT 只展示实测值，不填“预计支持”。",

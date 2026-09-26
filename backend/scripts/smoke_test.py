@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""VASP-Doctor 端到端冒烟脚本。
+"""VASP-Copilot 端到端冒烟脚本。
 
 在 backend 目录下运行（需可 import app）：
     python scripts/smoke_test.py
