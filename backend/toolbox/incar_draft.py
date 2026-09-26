@@ -12,8 +12,15 @@ from typing import Any
 
 from backend.app.generators.serializer import IncarParser, IncarSerializer
 from backend.app.parsers.incar import KNOWN_TAGS
+from backend.app.recipes.errors import IncarRoundtripMismatch  # re-export for callers
 
 _TAG_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,63}$")
+_INT_RE = re.compile(r"^[+-]?\d+$")
+_FLOAT_RE = re.compile(r"^[+-]?(?:\d+\.\d*|\.\d+|\d+)(?:[eE][+-]?\d+)?$")
+#: 逻辑值允许写成字符串（模型常直接给 ".FALSE." 或 "T"）；统一转成 bool，
+#: 否则序列化后重解析会得到 bool，与字符串比较不一致、导致写入被自检拦下。
+_BOOL_LITERALS = {".TRUE.": True, ".FALSE.": False, "TRUE": True, "FALSE": False,
+                  "T": True, "F": False}
 _MAX_ENTRIES = 256
 _MAX_VALUE_ITEMS = 4096
 _MAX_TEXT_BYTES = 1_000_000
@@ -36,6 +43,15 @@ def _normalize_value(tag: str, value: object) -> bool | int | float | str:
             raise ValueError(f"{tag} 的文本值包含换行、分号或注释分隔符")
         if any(ord(ch) < 32 or ord(ch) == 127 for ch in value):
             raise ValueError(f"{tag} 的文本值包含控制字符")
+        token = value.strip()
+        if token.upper() in _BOOL_LITERALS:
+            return _BOOL_LITERALS[token.upper()]
+        if _INT_RE.fullmatch(token):
+            return int(token)
+        if _FLOAT_RE.fullmatch(token):
+            parsed = float(token)
+            if math.isfinite(parsed):
+                return parsed
     return value
 
 

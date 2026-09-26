@@ -6,6 +6,20 @@ from backend.app.generators.serializer import IncarParser, IncarSerializer
 from backend.app.recipes.errors import IncarRoundtripMismatch
 
 
+@pytest.mark.parametrize("parameters", [
+    {"LREAL": ".FALSE."},            # 逻辑值写成字符串（模型常这么给）
+    {"LREAL": "T"},
+    {"MAGMOM": [0.6]},               # 单元素数组：VASP 与标量等价
+    {"LDAUU": [4.0]},
+    {"ENCUT": "520"},                # 数值写成字符串
+    {"EDIFF": "1e-6"},
+])
+def test_equivalent_text_and_single_element_values_round_trip(parameters):
+    """这些写法与规范形式语义等价，不得判为 round-trip 不一致。"""
+    text = IncarSerializer().serialize(parameters, verify=True)
+    assert text.endswith("\n")
+
+
 class TestFormats:
     def test_bool_format(self):
         text = IncarSerializer().serialize({"LCHARG": True, "LWAVE": False})

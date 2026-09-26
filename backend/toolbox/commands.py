@@ -32,7 +32,7 @@ from .consent import (PendingConsentError, card_payload, claim_action,
 from .config import AiModeConfig, execution_mode, load_settings
 from .exec.errors import ExecutionPolicyViolation
 from .exec.policy import check_path_in_bounds
-from .incar_draft import (IncarUnknownTagError, build_incar_action,
+from .incar_draft import (IncarRoundtripMismatch, IncarUnknownTagError, build_incar_action,
                            commit_incar_action)
 from .input_checks import bounded_fingerprint, read_bound_input, validate_input_set
 from backend.input_validation import InputValidationError
@@ -1234,6 +1234,19 @@ class ToolExecutor:
             binding["execution_mode"] = self._execution_mode()
         except IncarUnknownTagError as exc:
             return ToolFailure('AI_INCAR_UNKNOWN_TAG', f"[AI_INCAR_UNKNOWN_TAG] {exc}")
+        except IncarRoundtripMismatch as exc:
+            # 明确暴露是哪个参数写不进去，模型与用户才能据此处理；
+            # 此前该异常（继承 BeAError，不是 ValueError）会直接穿透，回执里看不到原因。
+            diffs = ((getattr(exc, "details", None) or {}).get("diffs") or [])[:6]
+            detail = "；".join(
+                f"{item.get('parameter')}: 原值 {item.get('original')} ≠ 回读 "
+                f"{item.get('reparsed')}" for item in diffs if isinstance(item, dict)
+            ) or str(exc)
+            return ToolFailure(
+                'AI_INCAR_DRAFT_INVALID',
+                f"[AI_INCAR_DRAFT_INVALID] INCAR 写入前自检未通过：{detail}。"
+                "请改用受支持的取值（例如逻辑值 .TRUE./.FALSE.、数值用数字），"
+                "或先由用户手工放置该 INCAR 再纳管。")
         except (OSError, UnicodeError, ValueError, OverflowError) as exc:
             return ToolFailure('AI_INCAR_DRAFT_INVALID', f"[AI_INCAR_DRAFT_INVALID] {exc}")
         tags = ", ".join(item["tag"] for item in binding["entries"])

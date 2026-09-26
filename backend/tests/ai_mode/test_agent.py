@@ -253,6 +253,42 @@ def test_incar_confirmation_is_single_use_and_atomic(ctx):
     assert again["conflict"] is True
 
 
+def test_propose_incar_normalizes_text_logical_and_single_element_values(ctx):
+    """LREAL=".FALSE."、ENCUT="520"、MAGMOM=[0.6] 这类写法必须被归一化，不再自检失败。"""
+    ex = ToolExecutor(store=ctx.store, project_id=ctx.pid, task_id=ctx.tid,
+                      cfg=ctx.cfg)
+    pending = ex.handle("propose_incar", {"entries": [
+        {"tag": "ENCUT", "value": "520"},
+        {"tag": "LREAL", "value": ".FALSE."},
+        {"tag": "MAGMOM", "value": [0.6]},
+    ]})
+    assert pending.startswith(_CONSENT_PENDING), pending
+    action_id = pending[len(_CONSENT_PENDING):]
+    card = get_card(ctx.store, ctx.pid, ctx.tid, action_id)
+    values = {item["tag"]: item["value"] for item in card["binding"]["entries"]}
+    assert values["ENCUT"] == 520
+    assert values["LREAL"] is False
+    assert values["MAGMOM"] == [0.6]
+
+
+def test_propose_incar_surfaces_roundtrip_diff_instead_of_crashing(ctx, monkeypatch):
+    """round-trip 自检失败要返回带参数名的结构化错误，不能异常穿透让模型只能猜。"""
+    import backend.toolbox.incar_draft as incar_draft
+
+    def boom(_entries):
+        raise incar_draft.IncarRoundtripMismatch(
+            "INCAR round-trip mismatch after serialization",
+            details={"diffs": [{"parameter": "SIGMA", "original": "0.05",
+                                "reparsed": "None"}]})
+
+    monkeypatch.setattr(incar_draft, "serialize_entries", boom)
+    ex = ToolExecutor(store=ctx.store, project_id=ctx.pid, task_id=ctx.tid,
+                      cfg=ctx.cfg)
+    result = ex.handle("propose_incar", {"entries": [{"tag": "SIGMA", "value": 0.05}]})
+    assert "AI_INCAR_DRAFT_INVALID" in result
+    assert "SIGMA" in result
+
+
 def test_interrupted_action_blocks_a_second_execution(ctx):
     ex = ToolExecutor(store=ctx.store, project_id=ctx.pid, task_id=ctx.tid,
                       cfg=ctx.cfg)
