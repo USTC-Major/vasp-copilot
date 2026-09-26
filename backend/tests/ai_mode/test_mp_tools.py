@@ -337,3 +337,47 @@ def test_prompt_no_longer_advertises_stale_numeric_id():
     text = tool_schema_text()
     assert "mp_import_poscar" in text
     assert '"material_id":"mp-149"' not in text
+
+
+# --- 搜索排序回归：默认顺序会把亚稳相排在基态相之前（实测 Si 的基态不在前 10 条） ---
+
+def test_search_sorts_by_stability(monkeypatch):
+    seen = {}
+
+    def query(key, params):
+        seen.update(params)
+        return [{"material_id": "mp-aaaaaaft", "symmetry": {"number": 227},
+                 "energy_above_hull": 0.0, "band_gap": 1.1}]
+
+    monkeypatch.setattr(materials, "_request", query)
+    rows = materials.search("key", "Si", 5)
+    assert seen["_sort_fields"] == "energy_above_hull"
+    assert seen["formula"] == "Si"
+    assert rows[0]["spacegroup_number"] == 227
+    assert rows[0]["energy_above_hull"] == 0.0
+
+
+def test_search_falls_back_when_sort_unsupported(monkeypatch):
+    """排序参数不被支持时降级为默认顺序，而不是整体失败。"""
+    calls = []
+
+    def query(key, params):
+        calls.append(params)
+        if "_sort_fields" in params:
+            raise materials.MaterialsError("[MP_HTTP_ERROR] MP 返回 HTTP 400，未导入结构")
+        return [{"material_id": "mp-aaaditqj", "symmetry": {"number": 69},
+                 "energy_above_hull": 0.66, "band_gap": 0.0}]
+
+    monkeypatch.setattr(materials, "_request", query)
+    rows = materials.search("key", "Si", 5)
+    assert len(calls) == 2 and "_sort_fields" not in calls[1]
+    assert rows[0]["material_id"] == "mp-aaaditqj"
+
+
+def test_search_does_not_swallow_auth_failure(monkeypatch):
+    def query(key, params):
+        raise materials.MaterialsError("[MP_AUTH_FAILED] MP API key 被拒绝，请在智能设置中检查")
+
+    monkeypatch.setattr(materials, "_request", query)
+    with pytest.raises(materials.MaterialsError, match="MP_AUTH_FAILED"):
+        materials.search("key", "Si", 5)

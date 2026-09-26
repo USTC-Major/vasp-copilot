@@ -4,7 +4,7 @@ def _all_tools_text() -> str:
         "- get_state：查看当前计算流程状态（phase/规划/作业/precheck/草稿）。args: {}\n"
         "- ws_list：列出任务本地工作区文件（只读快照，有界）。args: {}\n"
         "- ws_read：读取本地工作区某个文件全文（只读、有界）。args: {\"path\":\"相对路径\"}\n"
-        "- mp_search：按化学式只读搜索 Materials Project，返回材料 ID、空间群号和能量信息。返回的 material_id 就是当前 API 的有效形式，导入时必须原样使用；不要凭记忆编造或沿用旧数字 ID。后端使用智能设置里的 MP key，不向你暴露密钥。args: {\"formula\":\"BaTiO3\",\"limit\":5}\n"
+        "- mp_search：按化学式只读搜索 Materials Project，返回材料 ID、空间群号和能量信息；结果按热力学稳定性升序（energy_above_hull 从小到大），第一条通常是基态相。返回的 material_id 就是当前 API 的有效形式，导入时必须原样使用；不要凭记忆编造或沿用旧数字 ID。若候选里没有你预期的常见相，先看前几条的能量与空间群，不要据此断言该材料不存在（同化学式条目可能很多，可加大 limit 或让用户给出确切 ID）。后端使用智能设置里的 MP key，不向你暴露密钥。args: {\"formula\":\"BaTiO3\",\"limit\":5}\n"
         "- mp_import_poscar：按明确材料 ID 获取真实结构，由确定性代码生成 POSCAR 预览和一次性确认卡；确认前不写本地文件，绝不上传或提交。material_id 必须是本轮 mp_search 实际返回的值（形如 mp-aaaditqj），旧数字 ID 已被 MP 停用、会得到 MP_ID_STALE。默认保存任务本地工作区根目录 POSCAR，可用已规划 job_key 指定子目录。多个候选须先让用户选 ID/晶相，不得擅自挑选。args: {\"material_id\":\"mp-aaaditqj\",\"job_key\":\"\"}\n"
         "- hpc_list：列出超算工作区（hpc_dir）远端目录内容（只读；计算发生地，超算上的文件一律用它看）。args: {\"path\":\"相对子目录，可空\"}\n"
         "- hpc_read：读取超算工作区内某个文本文件（只读、有界）。args: {\"path\":\"相对路径\"}\n"

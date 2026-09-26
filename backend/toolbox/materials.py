@@ -84,11 +84,17 @@ def search(key: str, formula: object, limit: object = 5) -> list[dict]:
         raise MaterialsError("[MP_INVALID_QUERY] 化学式无效") from None
     if type(limit) is not int or not 1 <= limit <= 10:
         raise MaterialsError("[MP_INVALID_QUERY] limit 必须是 1 到 10 的整数")
-    docs = _request_fields(
-        key,
-        {"formula": formula, "_limit": limit,
-         "_fields": "material_id,formula_pretty,symmetry,energy_above_hull,band_gap"},
-        {"symmetry"})
+    params = {"formula": formula, "_limit": limit,
+              "_fields": "material_id,formula_pretty,symmetry,energy_above_hull,band_gap"}
+    # 按热力学稳定性升序：MP 默认顺序会把亚稳/高压相排在前面，导致常见材料
+    # （实测 Si 共 43 条）的基态相根本进不了前若干条，模型据此得出「该相不存在」的错误结论。
+    try:
+        docs = _request_fields(key, {**params, "_sort_fields": "energy_above_hull"},
+                               {"symmetry"})
+    except MaterialsError as exc:
+        if "MP_HTTP_ERROR" not in str(exc):     # 排序参数不被支持时降级为默认顺序
+            raise
+        docs = _request_fields(key, params, {"symmetry"})
     rows = []
     for doc in docs[:limit]:
         mid = material_id(doc.get("material_id"))
