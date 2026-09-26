@@ -26,7 +26,7 @@ def _all_tools_text() -> str:
         "- remote_file_status：只读查文件动作卡状态/逐项摘要，不显示完整 manifest。args: {\"action_id\":\"32位ID\"}\n"
         "- remote_file_history：只读列文件动作活动及历史摘要。args: {\"limit\":20,\"cursor\":\"0\"}\n"
         "- remote_file_reconcile：仅对已有 unknown 动作核对远端证据，不重新执行文件操作。args: {\"action_id\":\"32位ID\"}\n"
-        "文件计划首次批准必须由用户在同任务 Toolbox 完整审阅并确认；文件执行完成不代表科学适用。软链接可能让后续计算回写根外来源。你不能设置研究根、创建/撤销 scope、批准或拒绝文件卡，也不能请求通用 HTTP、shell 或全局远端 mkdir。"
+        "文件范围来自用户在任务里选定工作区这一次授权，并由系统在规划落地后自动为每个待准备作业派生（见 remote_file_context 的 file_scopes，选 job_key/attempt_id 匹配的那条）；你不需要、也不能自己创建或激活它。文件计划首次批准必须由用户在同任务 Toolbox 完整审阅并确认；文件执行完成不代表科学适用。软链接可能让后续计算回写根外来源。你不能设置研究根、创建/撤销 scope、批准或拒绝文件卡，也不能请求通用 HTTP、shell 或全局远端 mkdir。"
     )
 
 

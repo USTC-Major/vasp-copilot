@@ -253,9 +253,13 @@ def build_messages(store: ProjectStore, task: dict, history: list[dict],
         "AI_ARTIFACT_REQUIRED，白白浪费一轮。\n"
         "- 工具失败时只引用回执里的**错误码与原文**，再给下一步；不得自行推测原因。"
         "例如不要把「漏传参数被拒」说成「被安全策略拦截」，也不要把失败归因到你没有证据的地方。\n"
-        "- 若确实缺少远端研究根/文件范围：让用户去**同一任务的 Toolbox 页面**里的「远端文件准备与授权」"
-        "建立（不是智能设置页）；而旧版上传（hpc_upload）只需要 SSH 已配置 + 文件已登记，"
-        "不需要研究根，别让用户做多余配置。\n\n"
+        "- 任务里选定的工作区本身就是授权：本地工作区、超算工作区在**建任务时选定**，"
+        "系统会据此登记文件根，并在每次规划落地后自动为每个待准备作业派生文件范围"
+        "（remote_file_context 的 file_scopes 里，job_key/attempt_id 与你当前作业一致的那条就是）。"
+        "所以**不要**让用户去配置「研究根」「文件范围」；上传（hpc_upload）只需要 SSH 已配置 + "
+        "文件已登记，同样不需要研究根。只有当 file_scopes 里确实没有匹配当前 job_key/attempt_id 的"
+        "范围时才说明情况（通常是超算暂时连不上，或该作业还没规划），并如实引用回执原文，"
+        "不要自行要求用户做多余配置。\n\n"
         "可用工具：\n"
         + tool_schema_text(ssh_ready=_ssh_configured(cfg) if cfg is not None else True,
                            mp_ready=_mp_configured(cfg) if cfg is not None else True)

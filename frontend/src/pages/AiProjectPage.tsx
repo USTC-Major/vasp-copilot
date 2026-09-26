@@ -686,6 +686,12 @@ const AiProjectPage: React.FC = () => {
               <Button icon={<FolderOpenOutlined />} onClick={() => setPickerKind('hpc')}>浏览</Button>
             </div>
           </div>
+          <Alert
+            type="info"
+            showIcon
+            message="选定这两个工作区，就是这次任务的文件授权"
+            description="AI 可以在本地工作区与超算工作区之间互传文件（复制输入、上传、写文本、建目录），每一步都先弹确认卡给你；不需要再额外配置研究根或文件范围。想收回授权时，到同一任务的 Toolbox 页面撤销对应文件根即可；清空超算工作区同样会收回授权。"
+          />
         </Space>
       </Modal>
 

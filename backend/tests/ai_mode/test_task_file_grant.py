@@ -1,7 +1,8 @@
-"""「选定工作区即授权」：建任务时登记文件根并记录任务级授权（best-effort）。"""
+"""「选定工作区＝授权」第一层：建任务/改任务时只写本地记录，不连远端。"""
 from types import SimpleNamespace
 
-from backend.toolbox.api import grant_task_file_transfer
+from backend.toolbox.api import (hydrate_task_file_grant, record_task_file_grant,
+                                  schedule_task_file_grant_hydration)
 
 
 class _Store:
@@ -20,36 +21,60 @@ class _Files:
         self.calls = []
         self.fail = fail
 
-    def set_roots(self, project_id, task_id, payload):
+    def ensure_task_file_grant(self, project_id, task_id):
+        self.calls.append((project_id, task_id))
         if self.fail:
             raise RuntimeError("ssh down")
-        self.calls.append(payload)
+        return {"root_registered": True, "scopes_created": 2}
 
 
-def test_task_creation_registers_root_and_grant():
-    files, store = _Files(), _Store()
-    svc = SimpleNamespace(files=files, store=store)
-    grant_task_file_transfer(svc, "prj", {"id": "tsk"}, {"hpc_workspace": "/remote/work"})
-    assert files.calls == [{"expected_version": 0, "roots": [{"path": "/remote/work"}]}]
-    grant = store.flow["file_grant"]
+def _svc(files=None):
+    return SimpleNamespace(files=files, store=_Store())
+
+
+def test_task_creation_records_grant_without_touching_remote():
+    """建任务只写本地授权记录：远端登记延后到后台，绝不拖慢响应。"""
+    files, svc = _Files(), _svc()
+    svc.files = files
+    record_task_file_grant(svc, "prj", {"id": "tsk"}, {"hpc_workspace": "/remote/work"})
+    grant = svc.store.flow["file_grant"]
     assert grant["granted_by"] == "task_workspace_choice"
     assert grant["hpc_workspace"] == "/remote/work"
     assert grant["operations"] == ["copy", "write_text", "mkdir"]
     assert grant["active"] is True
+    assert grant["pending_root"] is True
+    assert files.calls == []  # 记录阶段不产生任何远端调用
 
 
-def test_grant_is_skipped_without_remote_dir_or_file_layer():
-    files, store = _Files(), _Store()
-    svc = SimpleNamespace(files=files, store=store)
-    grant_task_file_transfer(svc, "prj", {"id": "tsk"}, {})
-    grant_task_file_transfer(SimpleNamespace(files=None, store=store),
-                             "prj", {"id": "tsk"}, {"hpc_workspace": "/remote/work"})
-    assert files.calls == [] and store.flow == {}
+def test_clearing_the_workspace_records_an_opt_out():
+    """把超算工作区清空＝显式收回授权，之后不再自动登记根或派生范围。"""
+    svc = _svc(_Files())
+    record_task_file_grant(svc, "prj", {"id": "tsk"}, {"hpc_workspace": ""})
+    grant = svc.store.flow["file_grant"]
+    assert grant["active"] is False and grant["pending_root"] is False
 
 
-def test_grant_failure_never_breaks_task_creation():
-    """远端不可达时只跳过授权，不抛异常、不影响任务本身。"""
-    files, store = _Files(fail=True), _Store()
-    svc = SimpleNamespace(files=files, store=store)
-    grant_task_file_transfer(svc, "prj", {"id": "tsk"}, {"hpc_workspace": "/remote/work"})
-    assert store.flow == {}
+def test_grant_is_untouched_when_the_task_has_no_remote_workspace():
+    svc = _svc(_Files())
+    record_task_file_grant(svc, "prj", {"id": "tsk"}, {"title": "只有标题"})
+    assert svc.store.flow == {}
+
+
+def test_hydration_is_best_effort_and_never_raises():
+    """超算连不上（或没有文件层）时安静跳过，不改变任务本身。"""
+    svc = _svc(_Files(fail=True))
+    assert hydrate_task_file_grant(svc, "prj", "tsk") == {}
+    assert hydrate_task_file_grant(SimpleNamespace(files=None, store=_Store()),
+                                   "prj", "tsk") == {}
+
+
+def test_scheduled_hydration_runs_in_the_background():
+    files, svc = _Files(), _svc()
+    svc.files = files
+    schedule_task_file_grant_hydration(svc, "prj", "tsk")
+    for _ in range(200):
+        if files.calls:
+            break
+        import time
+        time.sleep(0.01)
+    assert files.calls == [("prj", "tsk")]

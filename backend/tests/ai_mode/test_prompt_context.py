@@ -73,12 +73,14 @@ def test_system_prompt_forbids_engineering_jargon(ctx):
 
 
 def test_system_prompt_enforces_tool_call_discipline(ctx):
-    """两条纪律必须在提示词里：取到真实 artifact_id 再上传；失败只引用回执、不自行归因。"""
+    """纪律必须在提示词里：取到真实 artifact_id 再上传；失败只引用回执、不自行归因；
+    且不得让用户去手配「研究根/文件范围」——选定工作区本身就是授权。"""
     system = build(ctx, [], "你好")[0]["content"]
     assert "工具调用纪律" in system
     assert "必须" in system and "AI_ARTIFACT_REQUIRED" in system
     assert "不得自行推测原因" in system
-    assert "远端文件准备与授权" in system      # 指向正确位置，而不是智能设置
+    assert "工作区本身就是授权" in system        # 工作区=授权，不必手配
+    assert "不要**让用户去配置" in system       # 明确禁止多要一步配置
 
 
 def test_tools_are_trimmed_when_hpc_and_mp_are_unconfigured(ctx):

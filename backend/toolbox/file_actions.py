@@ -92,6 +92,14 @@ def file_error(exc):
 
 
 class FileActions:
+    #: 「选定工作区＝授权」派生范围时允许的操作与额度（刻意不含 symlink）。
+    DERIVED_SCOPE_OPERATIONS = ("copy", "write_text", "mkdir")
+    DERIVED_SCOPE_MAX_OPERATIONS = 32
+    DERIVED_SCOPE_MAX_TOTAL_BYTES = 64 * 1024 * 1024
+    DERIVED_SCOPE_TTL_SECONDS = 12 * 3600
+    #: 只有这些状态的作业会拿到自动派生的范围（在途/已完成作业不再自动授权写）。
+    DERIVED_SCOPE_JOB_STATES = ("draft", "waiting")
+
     def __init__(self, service, file_factory=None, *, workers=2, queue_limit=64):
         self.service, self.store = service, service.store
         self.factory, self.worker_count, self.queue_limit = (
@@ -486,8 +494,9 @@ class FileActions:
             return self._save(project, task, update)
 
     @staticmethod
-    def _revoke_in_flow(flow, scope, reason):
-        scope.update(state="revoked", revoked_at=now(), reason=str(reason)[:500])
+    def _revoke_in_flow(flow, scope, reason, *, revoked_by="system"):
+        scope.update(state="revoked", revoked_at=now(), revoked_by=revoked_by,
+                     reason=str(reason)[:500])
         for action in (flow.get("consent") or {}).get("actions", {}).values():
             if (action.get("binding") or {}).get("scope_id") != scope["scope_id"]:
                 continue
@@ -533,7 +542,8 @@ class FileActions:
                 )
                 if scope["state"] != "revoked":
                     self._revoke_in_flow(
-                        flow, scope, payload.get("reason") or "用户撤销文件范围"
+                        flow, scope, payload.get("reason") or "用户撤销文件范围",
+                        revoked_by="human",
                     )
                 return scope
 
@@ -552,6 +562,231 @@ class FileActions:
                     scope.update(state="active", activated_by="human", activated_at=now())
                 return scope
             return self._save(project, task, update)
+
+    # ---------- 「选定工作区＝授权」：任务级授权与作业级范围派生 ----------
+    def task_file_grant(self, project, task):
+        """返回本任务当前有效的「选定工作区」文件授权；没有授权时返回 {}。
+
+        - 用户在**建任务/改任务**时选定超算工作区这一个显式动作，会在 flow 里留下
+          `file_grant` 记录（见 api.record_task_file_grant）；
+        - 用户显式撤销（active=False）后返回 {}，不再自动登记根或派生范围；
+        - 旧任务没有这份记录时回退到任务自身的 hpc_workspace（同样是用户选的），
+          只读不改：不会因此新建授权记录。
+        """
+        current = self.service.require_task(project, task)
+        flow = current.get("flow") or {}
+        record = flow.get("file_grant")
+        if isinstance(record, dict) and not record.get("active"):
+            return {}
+        grant = dict(record) if isinstance(record, dict) else {}
+        remote = str(grant.get("hpc_workspace") or "").strip() or str(
+            current.get("hpc_workspace") or ""
+        ).strip()
+        if not remote:
+            return {}
+        return {
+            **grant,
+            "hpc_workspace": remote,
+            "granted_by": grant.get("granted_by") or "task_workspace_choice",
+            "active": True,
+        }
+
+    @staticmethod
+    def _grant_root(flow, remote):
+        """任务授权对应的已登记文件根（同一路径）；用户换过根就返回 None。"""
+        wanted = str(remote or "").strip().rstrip("/")
+        if not wanted:
+            return None
+        for root in flow.get("file_roots") or []:
+            if str(root.get("requested_path") or "").strip().rstrip("/") == wanted:
+                return root
+        return None
+
+    def _scope_needed(self, flow, job):
+        """该作业是否需要派生范围：待准备作业，且没有可用/被用户撤销过的同名同尝试范围。
+
+        - 已有未撤销且未过期的范围 → 不重复派生；
+        - 用户手工撤销过（revoked_by=human）→ 尊重撤销，不复活；
+        - 因工作区变更被系统撤销、或已过期的范围 → 视为不存在，可重新派生。
+        """
+        if not isinstance(job, dict) or not job.get("key") or not job.get("attempt_id"):
+            return False
+        if str(job.get("status") or "draft") not in self.DERIVED_SCOPE_JOB_STATES:
+            return False
+        for scope in (flow.get("consent") or {}).get("computation_scopes", {}).values():
+            if (
+                scope.get("kind") != "file"
+                or scope.get("job_key") != job["key"]
+                or scope.get("attempt_id") != job["attempt_id"]
+            ):
+                continue
+            if scope.get("state") != "revoked" and self._scope_alive(scope):
+                return False
+            if scope.get("state") == "revoked" and scope.get("revoked_by") == "human":
+                return False
+        return True
+
+    @staticmethod
+    def _scope_alive(scope):
+        try:
+            _remaining(scope.get("expires_at"))
+        except Exception:  # noqa: BLE001 - 过期或缺失都算不可用
+            return False
+        return True
+
+    def derive_task_scopes(self, project, task):
+        """为每个待准备作业派生一个文件范围，返回新建数量（0=无需或远端不可用）。
+
+        派生范围只是**信封**：仍然逐项弹卡、逐项人工确认，不放松任何原有边界；
+        用户撤销过的范围不会被重新复活（同名同尝试只派生一次）。
+        """
+        grant = self.task_file_grant(project, task)
+        if not grant:
+            return 0
+        flow = self._flow(project, task)
+        root = self._grant_root(flow, grant["hpc_workspace"])
+        if root is None:
+            return 0
+        if not any(
+            self._scope_needed(flow, job)
+            for job in (flow.get("plan") or {}).get("jobs") or []
+        ):
+            return 0
+        try:
+            with self.remote() as files:
+                endpoint = files.endpoint()
+                evidence.namespace(endpoint)
+        except Exception:  # noqa: BLE001 - 远端不可达时安静跳过派生
+            return 0
+        if root.get("endpoint_digest") != endpoint.get("endpoint_digest"):
+            return 0
+        expires_at = (
+            dt.datetime.now(dt.timezone.utc)
+            + dt.timedelta(seconds=self.DERIVED_SCOPE_TTL_SECONDS)
+        ).isoformat()
+
+        with consent.task_lock(project, task), self.guard:
+
+            def update(flow):
+                current_root = self._grant_root(flow, grant["hpc_workspace"])
+                if (
+                    current_root is None
+                    or current_root.get("endpoint_digest")
+                    != endpoint.get("endpoint_digest")
+                ):
+                    return 0
+                created = 0
+                for job in (flow.get("plan") or {}).get("jobs") or []:
+                    if not self._scope_needed(flow, job):
+                        continue
+                    scope_id = uuid.uuid4().hex
+                    flow.setdefault("consent", {}).setdefault(
+                        "computation_scopes", {}
+                    )[scope_id] = {
+                        "scope_id": scope_id,
+                        "kind": "file",
+                        "version": 1,
+                        "project_id": project,
+                        "task_id": task,
+                        "job_key": job["key"],
+                        "attempt_id": job["attempt_id"],
+                        "root_bindings": [
+                            {
+                                "root_id": current_root["root_id"],
+                                "version": current_root["version"],
+                                "destination_prefixes": [str(job["key"])],
+                            }
+                        ],
+                        "allowed_operations": list(self.DERIVED_SCOPE_OPERATIONS),
+                        "source_paths": [],
+                        "source_policy": "exact_sources",
+                        "source_bindings": [],
+                        "max_operations": self.DERIVED_SCOPE_MAX_OPERATIONS,
+                        "max_total_bytes": self.DERIVED_SCOPE_MAX_TOTAL_BYTES,
+                        "expires_at": expires_at,
+                        "approval_mode": "human",
+                        "submit_limit": 0,
+                        "state": "proposed",
+                        "created_at": now(),
+                        "derived_from": "task_workspace_choice",
+                    }
+                    created += 1
+                return created
+
+            return self._save(project, task, update) or 0
+
+    def ensure_task_file_grant(self, project, task):
+        """把「选定工作区＝授权」落实为远端文件根 + 各作业范围（best-effort）。
+
+        返回 {"root_registered": bool, "scopes_created": int}。任何远端问题都安静跳过：
+        调用方是建任务、改任务和规划工具，不能因为超算暂时连不上而失败。
+        """
+        summary = {"root_registered": False, "scopes_created": 0}
+        grant = self.task_file_grant(project, task)
+        if not grant:
+            return summary
+        self._register_grant_root(project, task, grant, summary)
+        summary["scopes_created"] = self.derive_task_scopes(project, task)
+        return summary
+
+    def _register_grant_root(self, project, task, grant, summary):
+        """按授权登记/补齐任务工作区这个文件根；只在授权刚被写下时做一次。
+
+        用户自己增删过根（没有 pending_root 标记）时绝不覆盖、也不复活，
+        保证「用户撤销」始终优先于「自动授权」。
+        """
+        flow = self._flow(project, task)
+        raw_record = flow.get("file_grant")
+        record = dict(raw_record) if isinstance(raw_record, dict) else {}
+        # 升级前建的老任务没有授权记录；工作区是用户当时选的，补登记一次。
+        legacy = not isinstance(raw_record, dict)
+        remote = grant["hpc_workspace"]
+        if self._grant_root(flow, remote) is not None:
+            if record.get("pending_root"):
+                self._update_grant(project, task, {"pending_root": False})
+            return
+        backfill = legacy and not (flow.get("file_roots") or [])
+        if not (record.get("pending_root") or backfill):
+            return
+        roots = [
+            {
+                "root_id": root["root_id"],
+                "path": root.get("requested_path") or root.get("canonical_path"),
+            }
+            for root in flow.get("file_roots") or []
+        ]
+        try:
+            self.set_roots(
+                project,
+                task,
+                {
+                    "expected_version": flow.get("file_roots_version", 0),
+                    "roots": roots + [{"path": remote}],
+                },
+            )
+        except Exception:  # noqa: BLE001 - 远端不可达时只跳过授权
+            return
+        summary["root_registered"] = True
+        self._update_grant(project, task, {
+            "pending_root": False,
+            "active": True,
+            "granted_by": record.get("granted_by") or "task_workspace_choice",
+            "hpc_workspace": record.get("hpc_workspace") or remote,
+            "operations": record.get("operations") or list(self.DERIVED_SCOPE_OPERATIONS),
+            "max_operations": record.get("max_operations")
+            or self.DERIVED_SCOPE_MAX_OPERATIONS,
+            "recorded_by": record.get("recorded_by")
+            or ("legacy_task_backfill" if legacy else "task_creation"),
+        })
+
+    def _update_grant(self, project, task, patch):
+        def update(flow):
+            record = dict(flow.get("file_grant") or {})
+            record.update(patch)
+            flow["file_grant"] = record
+            return True
+
+        return self._save(project, task, update)
 
     def _dedup(self, flow, key, request_digest):
         for action in (flow.get("consent") or {}).get("actions", {}).values():

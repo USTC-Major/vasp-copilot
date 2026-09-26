@@ -1,5 +1,7 @@
 """HTTP contract shared by the Toolbox UI and optional AI service."""
 from __future__ import annotations
+import datetime as dt
+import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import APIRouter, FastAPI, Request, Query
@@ -57,32 +59,26 @@ def create_task(project_id: str, request: Request, payload: dict):
         if set(payload) - allowed or any(not isinstance(v, (str, type(None))) for v in payload.values()):
             raise ToolboxError('INVALID_TASK', '只接受任务标题、目标和工作区路径')
         task = svc.store.create_task(project_id, **payload)
-    grant_task_file_transfer(svc, project_id, task, payload)
+    record_task_file_grant(svc, project_id, task, payload)
+    schedule_task_file_grant_hydration(svc, project_id, task['id'])
     return envelope(task=task)
 
 
-def grant_task_file_transfer(svc, project_id: str, task: dict, payload: dict) -> None:
-    """「选定工作区＝授权」：把任务选定的超算目录登记为该任务的文件根，并记录任务级授权。
+def record_task_file_grant(svc, project_id: str, task: dict, payload: dict) -> None:
+    """「选定工作区＝授权」：把用户选定的超算目录记为任务级文件授权。
 
-    - 只覆盖本任务自己选定的那一个远端目录；操作限于复制/写文本/建目录，且有数量与
-      字节上限；不涉及脚本生成、软链到范围外与提交。
-    - best-effort：SSH 未配置、目录核对失败或文件层未启用时**静默跳过**，
-      绝不因为建立授权失败而影响建任务本身，也不改变原有的逐项确认流程。
-    - AI 仍然不能自己创建/激活范围；这里用的是用户在任务里选定工作区这一次显式动作。
+    只写本地记录（不连远端），因此建任务/改任务响应不受 SSH 影响；远端登记与
+    作业级范围派生由 schedule_task_file_grant_hydration() 在后台完成，并同样
+    best-effort。授权来源始终是**用户在任务里选定工作区**这一次显式动作；
+    AI 不能给自己写这份记录。
+
+    payload 里出现 hpc_workspace 就更新这份记录：给了路径=授权（active），
+    清空路径=显式收回（active=False，从此不再自动登记根或派生范围）。
     """
-    if svc.files is None:
+    if 'hpc_workspace' not in payload:
         return
     remote = str(payload.get('hpc_workspace') or '').strip()
-    if not remote:
-        return
     try:
-        current = svc.store.get_task(project_id, task['id']) or {}
-        flow = dict(current.get('flow') or {})
-        if not flow.get('file_roots'):
-            svc.files.set_roots(project_id, task['id'], {
-                'expected_version': flow.get('file_roots_version', 0),
-                'roots': [{'path': remote}],
-            })
         current = svc.store.get_task(project_id, task['id']) or {}
         flow = dict(current.get('flow') or {})
         flow['file_grant'] = {
@@ -90,11 +86,37 @@ def grant_task_file_transfer(svc, project_id: str, task: dict, payload: dict) ->
             'hpc_workspace': remote,
             'operations': ['copy', 'write_text', 'mkdir'],
             'max_operations': 32,
-            'active': True,
+            'active': bool(remote),
+            # 下次落实授权时，按这个路径登记（或补齐）文件根——只做一次。
+            'pending_root': bool(remote),
+            'granted_at': dt.datetime.now(dt.timezone.utc).isoformat(),
         }
         svc.store.update_task(project_id, task['id'], flow=flow)
-    except Exception:  # noqa: BLE001 - 授权建立失败不影响任务创建
+    except Exception:  # noqa: BLE001 - 授权记录失败不影响任务本身
         return
+
+
+def hydrate_task_file_grant(svc, project_id: str, task_id: str) -> dict:
+    """把上面的任务级授权落实为远端文件根 + 各作业文件范围（best-effort）。"""
+    try:
+        if svc.files is None:
+            return {}
+        return svc.files.ensure_task_file_grant(project_id, task_id)
+    except Exception:  # noqa: BLE001 - 超算暂时连不上只跳过授权
+        return {}
+
+
+def schedule_task_file_grant_hydration(svc, project_id: str, task_id: str) -> None:
+    """远端登记必须连 SSH：放到后台线程，绝不阻塞建任务/改任务响应。
+
+    失败（未配置站点、目录核对不过、断网）都被静默吞掉，用户仍可照常逐项确认。
+    """
+    threading.Thread(
+        target=hydrate_task_file_grant,
+        args=(svc, project_id, task_id),
+        name='toolbox-file-grant',
+        daemon=True,
+    ).start()
 
 @router.patch('/projects/{project_id}/tasks/{task_id}')
 def update_task(project_id: str, task_id: str, request: Request, payload: dict):
@@ -126,13 +148,19 @@ def update_task(project_id: str, task_id: str, request: Request, payload: dict):
                         job.pop('draft', None)
                 for scope in (raw.get('consent') or {}).get('computation_scopes', {}).values():
                     if scope.get('state') in {'proposed', 'active'}:
-                        scope['state'] = 'revoked'
+                        scope.update(state='revoked',
+                                     revoked_by='system',
+                                     reason='工作区已变更，需按新工作区重新授权')
                 for action in (raw.get('consent') or {}).get('actions', {}).values():
                     if action.get('state') in {'pending', 'approved'}:
                         action.update(state='expired', result='工作区已变更，必须重新确认')
                 payload = {**payload, 'flow': raw}
         task = svc.store.update_task(project_id, task_id, **payload)
     task.pop('flow', None)
+    if 'hpc_workspace' in payload:
+        # 换/清超算工作区是用户的显式动作：刷新任务级授权，并在后台补齐文件根。
+        record_task_file_grant(svc, project_id, task, payload)
+        schedule_task_file_grant_hydration(svc, project_id, task_id)
     return envelope(task=task)
 
 @router.delete('/projects/{project_id}/tasks/{task_id}')

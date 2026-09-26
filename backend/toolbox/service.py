@@ -176,9 +176,18 @@ class ExecutionService:
                 # Do not expose credentials/upstream exception bodies.
                 raise ToolboxError('TOOL_EXECUTION_FAILED', f'工具执行失败：{type(exc).__name__}', 400) from exc
             self.store.append_event(project_id, task_id, 'tool.' + name, str(result))
-            return envelope(task_id=task_id, ok=error is None, error=error,
-                            result=str(result), pending=pending,
-                            flow=self.detail(project_id, task_id)['flow'])
+            value = envelope(task_id=task_id, ok=error is None, error=error,
+                             result=str(result), pending=pending,
+                             flow=self.detail(project_id, task_id)['flow'])
+        if self.files and error is None and name in {'plan', 'copy_inputs', 'hpc_upload'}:
+            # 「选定工作区＝授权」第二步：按任务里选定的工作区补齐文件根，并在规划
+            # 落地后按作业/尝试派生文件范围。远端不可达或任务没授权时安静跳过，
+            # 绝不影响这次工具调用本身的结果。
+            try:
+                self.files.ensure_task_file_grant(project_id, task_id)
+            except Exception:  # noqa: BLE001 - 派生失败不反悔已成功的调用
+                pass
+        return value
 
     def resolve(self, project_id, task_id, card_id, approved, note='', scope_confirmation=None):
         if not isinstance(approved, bool):

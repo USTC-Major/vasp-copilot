@@ -139,6 +139,8 @@ describe('AI 前端整合（M12）', () => {
     await user.click(screen.getByRole('button', { name: /新建计算任务/ }));
     expect(await screen.findByText('本地工作区（必填 · 可复用）')).toBeInTheDocument();
     expect(screen.getByText('超算工作区（可留空）')).toBeInTheDocument();
+    // 选定工作区＝授权：不再要求用户另外去配研究根/文件范围
+    expect(screen.getByText('选定这两个工作区，就是这次任务的文件授权')).toBeInTheDocument();
   });
 
   it('项目聊天：给演示任务发消息得到回复并出现规划', async () => {
