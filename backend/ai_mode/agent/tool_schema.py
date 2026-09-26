@@ -1,5 +1,5 @@
-def tool_schema_text() -> str:
-    """给 LLM 的工具说明（prompt 内使用的文本 schema）。"""
+def _all_tools_text() -> str:
+    """完整工具说明文本（prompt 内使用的 schema 正文）。"""
     return (
         "- get_state：查看当前计算流程状态（phase/规划/作业/precheck/草稿）。args: {}\n"
         "- ws_list：列出任务本地工作区文件（只读快照，有界）。args: {}\n"
@@ -28,3 +28,45 @@ def tool_schema_text() -> str:
         "- remote_file_reconcile：仅对已有 unknown 动作核对远端证据，不重新执行文件操作。args: {\"action_id\":\"32位ID\"}\n"
         "文件计划首次批准必须由用户在同任务 Toolbox 完整审阅并确认；文件执行完成不代表科学适用。软链接可能让后续计算回写根外来源。你不能设置研究根、创建/撤销 scope、批准或拒绝文件卡，也不能请求通用 HTTP、shell 或全局远端 mkdir。"
     )
+
+
+#: 依赖外部配置的工具：未就绪时既不该出现在提示词里，也要明确告诉模型该引导用户做什么。
+_MP_TOOLS = ("mp_search", "mp_import_poscar")
+_HPC_TOOLS = ("hpc_list", "hpc_read", "hpc_upload")
+
+_MP_NOT_READY = (
+    "- 注意：当前尚未配置 Materials Project API key，mp_search / mp_import_poscar 本轮不可用。"
+    "需要结构时，请引导用户改用本地 POSCAR/CIF 文件，或先到智能设置里填写 MP key；"
+    "不要反复重试这两个工具。\n"
+)
+
+_HPC_NOT_READY = (
+    "- 注意：当前尚未配置超算（SSH 主机/用户名），hpc_list / hpc_read / hpc_upload 本轮不可用。"
+    "需要远端文件操作时，请先引导用户到 Toolbox 执行设置里完成站点配置；"
+    "不要反复重试这些工具，也不要把本地工作区快照当成超算内容。\n"
+)
+
+
+def tool_schema_text(*, ssh_ready: bool = True, mp_ready: bool = True) -> str:
+    """给 LLM 的工具说明；按实际可用性裁剪依赖外部配置的工具。
+
+    默认（两个 flag 均为 True）返回完整说明，便于测试与非配置场景复用；
+    生产调用方按 SSH / MP 配置情况传参，避免模型看到注定失败的工具。
+    """
+    text = _all_tools_text()
+    if ssh_ready and mp_ready:
+        return text
+    gated = set()
+    if not mp_ready:
+        gated |= set(_MP_TOOLS)
+    if not ssh_ready:
+        gated |= set(_HPC_TOOLS)
+    kept = [line for line in text.splitlines(keepends=True)
+            if not any(line.startswith(f"- {name}：") for name in gated)]
+    notes = ""
+    if not mp_ready:
+        notes += _MP_NOT_READY
+    if not ssh_ready:
+        notes += _HPC_NOT_READY
+    kept.append(notes)
+    return "".join(kept)

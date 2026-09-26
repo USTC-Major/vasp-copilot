@@ -162,17 +162,40 @@ def _phase_guidance(phase: str) -> str:
     )
 
 
+#: 单条消息进入上下文的上限。超限时显式标注，避免用户约束被静默丢弃。
+MESSAGE_CHAR_LIMIT = 2000
+
+
+def _clip_for_context(text: str) -> str:
+    """按上限截断并标注实际丢弃的长度，不静默丢内容。"""
+    if len(text) <= MESSAGE_CHAR_LIMIT:
+        return text
+    dropped = len(text) - MESSAGE_CHAR_LIMIT
+    return (text[:MESSAGE_CHAR_LIMIT]
+            + f"\n…（本条超过 {MESSAGE_CHAR_LIMIT} 字符上限，已截断 {dropped} 字符；"
+              "若其中含关键约束，请先向用户确认或请其分段发送）")
+
+
+def _ssh_configured(cfg) -> bool:
+    return bool(cfg and getattr(cfg, "ssh_host", "") and getattr(cfg, "ssh_username", ""))
+
+
+def _mp_configured(cfg) -> bool:
+    return bool(cfg and getattr(cfg, "mp_api_key", ""))
+
+
 def build_messages(store: ProjectStore, task: dict, history: list[dict],
                    content: str, *, limit: int = 40,
                    progress_note: str = "",
-                   hpc_snapshot: str = "") -> list[Message]:
+                   hpc_snapshot: str = "",
+                   cfg=None) -> list[Message]:
     """构造 agent 上下文：系统提示（方向参考+红线+工具+设置+双工作区快照）+ 历史 + 当前消息。"""
     goal = task.get("goal") or "（未填写）"
     # Prompt snapshots are metadata-only. File contents may enter the model
     # only through the explicit, policy-checked ws_read/hpc_read tools.
     snapshot = store.client.tool(task["project_id"], task["id"], "ws_list", {}).get("result", "")
     system = (
-        "你是 VASP-Doctor 智能模式的中枢 AI。用户正在一个计算任务里与你对话，"
+        "你是 VASP-Copilot 智能模式的中枢 AI。用户正在一个计算任务里与你对话，"
         "你负责端到端主导科学计算：从看懂需求到规划、准备输入、提交前检查、"
         "提交与用户确认，一条龙由你决策并真实操作；作业提交后的进度推进与"
         "最终结果报告由系统在后台自动完成，你不需要也不应该自己去查或生成。\n"
@@ -212,7 +235,8 @@ def build_messages(store: ProjectStore, task: dict, history: list[dict],
         "当你做完所有该做的操作，就用一段不含任何工具标记的纯正文总结结果并说明下一步"
         "（例如流程会自动弹出确认卡，你只需简短总结后等用户点卡），这段纯正文就是最终回复。\n\n"
         "可用工具：\n"
-        + tool_schema_text()
+        + tool_schema_text(ssh_ready=_ssh_configured(cfg) if cfg is not None else True,
+                           mp_ready=_mp_configured(cfg) if cfg is not None else True)
         + "\n\n【红线（不可逾越）】\n"
         "1. 真实提交作业到超算必须由用户批准当前精确绑定的一次性确认卡，绝不代替用户执行 "
         "sbatch；你可以在确认前把规划/输入/预检/草稿全部准备好，并把流程停在「待确认」。\n"
@@ -293,13 +317,22 @@ def build_messages(store: ProjectStore, task: dict, history: list[dict],
             + hpc_snapshot
         )
     messages: list[Message] = [{"role": "system", "content": system}]
-    for item in (history or [])[-limit:]:
+    current = (content or "").strip()
+    recent = list((history or [])[-limit:])
+    # 同步与 SSE 入口都会先把当前用户消息落库，历史因此已含本条；
+    # 若这里再追加一次，同一句话会在上下文里出现两遍，模型会把一句话答两遍。
+    # 只丢弃“与当前 content 完全相同的最后一条 user 消息”，用户主动重复发送的内容仍会保留。
+    if recent:
+        last = recent[-1]
+        if last.get("role") == "user" and (last.get("content") or "").strip() == current:
+            recent.pop()
+    for item in recent:
         role = item.get("role")
         if role not in ("user", "assistant"):
             continue
         text = (item.get("content") or "").strip()
-        messages.append({"role": role, "content": text[:2000]})
-    messages.append({"role": "user", "content": (content or "")[:2000]})
+        messages.append({"role": role, "content": _clip_for_context(text)})
+    messages.append({"role": "user", "content": _clip_for_context(current)})
     return messages
 
 
@@ -406,7 +439,7 @@ def run_agent(store, project_id, task_id, content, *,
     history = store.list_messages(project_id, task_id)
     messages = build_messages(store, task, history, content,
                               progress_note=progress,
-                              hpc_snapshot=executor.hpc_snapshot())
+                              hpc_snapshot=executor.hpc_snapshot(), cfg=cfg)
     try:
         llm = (llm_factory or (lambda c: build_client(c)))(cfg)
     except LLMError as exc:
@@ -632,7 +665,7 @@ def run_agent_stream(store, project_id, task_id, content, *,
     history = store.list_messages(project_id, task_id)
     messages = build_messages(store, task, history, content,
                               progress_note=progress,
-                              hpc_snapshot=executor.hpc_snapshot())
+                              hpc_snapshot=executor.hpc_snapshot(), cfg=cfg)
     try:
         llm = (llm_factory or (lambda c: build_client(c)))(cfg)
     except LLMError as exc:
