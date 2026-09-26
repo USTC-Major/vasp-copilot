@@ -42,3 +42,15 @@ def isolated_toolbox_http_transport(tmp_path, monkeypatch):
         yield
     finally:
         stack.close()
+
+
+@pytest.fixture(autouse=True)
+def isolated_secret_store():
+    """测试绝不读写真实系统凭据管理器：LLM / MP 密钥统一走内存后端。"""
+    from backend.toolbox import secrets
+
+    secrets.configure_backend(secrets.MemoryBackend())
+    try:
+        yield
+    finally:
+        secrets.configure_backend(None)

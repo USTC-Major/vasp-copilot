@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import Callable, Mapping, Optional
 
 from ..config import AiModeConfig, save_settings
+from backend.toolbox.secrets import delete_secret, get_secret, set_secret
 
 MASK = "<redacted>"
 SSH_PASSWORD_KEY = "ssh_password"   # 仅内部保留，永不回包
@@ -233,6 +234,11 @@ def update_secret(config: AiModeConfig, kind: str, action: str, value=None, *,
     if action == "replace" and not secret:
         raise ValueError("replace 需要非空 value")
     field = "llm_api_key" if kind == "llm" else "mp_api_key"
+    # 密钥真正落点是系统凭据管理器；配置模型里只保留本次运行的有效值。
+    if action == "clear":
+        delete_secret(field)
+    else:
+        set_secret(field, secret)
     return config.model_copy(update={field: secret})
 
 
@@ -245,12 +251,15 @@ def secret_status(config: AiModeConfig, *,
                 "source": source if configured else "none",
                 "manageable": True}
 
-    llm = ({"configured": True, "source": "environment", "manageable": False}
-           if environment.get("AI_MODE_LLM_API_KEY") else
-           local_state(bool(config.llm_api_key)))
-    mp = ({"configured": True, "source": "environment", "manageable": False}
-          if environment.get("AI_MODE_MP_API_KEY") else
-          local_state(bool(config.mp_api_key)))
+    def secret_state(name: str, env_var: str, value: str) -> dict:
+        if environment.get(env_var):
+            return {"configured": True, "source": "environment", "manageable": False}
+        if get_secret(name):
+            return {"configured": True, "source": "credential_store", "manageable": True}
+        return local_state(bool(value))
+
+    llm = secret_state("llm_api_key", "AI_MODE_LLM_API_KEY", config.llm_api_key)
+    mp = secret_state("mp_api_key", "AI_MODE_MP_API_KEY", config.mp_api_key)
     ssh_configured = get_ssh_password(
         config, credential_store=credential_store) is not None
     return {

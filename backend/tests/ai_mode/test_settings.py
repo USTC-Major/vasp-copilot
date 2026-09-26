@@ -23,6 +23,7 @@ from ai_mode.settings import (
     project_settings_path,
 )
 from ai_mode.settings.global_api import secret_status, update_secret
+from backend.toolbox.secrets import get_secret
 
 GOOD_ACCURACY = [
     "relax 全流程：ENCUT=520，EDIFF 收敛到 1e-5",
@@ -133,8 +134,11 @@ def test_persist_roundtrip(tmp_path):
     persist(cfg, config_path=path)
     data = json.loads(path.read_text(encoding="utf-8"))
     assert "enabled" not in data
-    assert data["llm_api_key"] == "secret-local"   # 仅本地,不上传
     assert data["max_jobs"] == 9
+    # 密钥只进系统凭据管理器：配置文件里不留明文，读取仍能从密钥库取回。
+    assert data["llm_api_key"] == ""
+    assert "secret-local" not in path.read_text(encoding="utf-8")
+    assert get_secret("llm_api_key") == "secret-local"
 
 
 # ---------------- 项目级精度设置 ----------------
@@ -267,10 +271,17 @@ def test_environment_secret_is_unmanageable_and_never_persisted(
 
     persist(update_from_patch(cfg, {"max_jobs": 7}), config_path=path)
     saved = json.loads(path.read_text(encoding="utf-8"))
-    assert saved["llm_api_key"] == "local-behind-env"
-    assert saved["mp_api_key"] == "local-mp"
-    assert "environment-secret" not in path.read_text(encoding="utf-8")
-    assert "environment-mp-secret" not in path.read_text(encoding="utf-8")
+    text = path.read_text(encoding="utf-8")
+    # 配置文件里不再留任何明文密钥（含原先本地存的旧值）
+    assert saved["llm_api_key"] == ""
+    assert saved["mp_api_key"] == ""
+    for leaked in ("local-behind-env", "environment-secret",
+                   "local-mp", "environment-mp-secret"):
+        assert leaked not in text
+    # 但用户原先的本地密钥被搬进凭据管理器，不因环境变量覆盖而丢失；
+    # 环境变量提供的密钥只参与运行，绝不落盘。
+    assert get_secret("llm_api_key") == "local-behind-env"
+    assert get_secret("mp_api_key") == "local-mp"
 
 
 def test_update_secret_ssh_uses_credential_store_without_reveal():

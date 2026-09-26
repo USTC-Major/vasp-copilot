@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 
 from . import paths as _paths
 from .gate import is_ai_mode_enabled
+from backend.toolbox.secrets import get_secret, secret_value_for_file
 
 ENV_PREFIX = "AI_MODE_"
 
@@ -124,6 +125,14 @@ def load_settings(
         config_path = _paths.home_dir() / "ai_config.json"
     base.update(_read_config_file(config_path if config_path.exists() else _paths.config_path()))
     base.update(_env_overrides(env))
+    # 密钥优先级：环境变量 > 系统凭据管理器 > 本地配置文件（旧明文值仍可读，便于迁移）。
+    for field, variable in (("llm_api_key", f"{ENV_PREFIX}LLM_API_KEY"),
+                            ("mp_api_key", f"{ENV_PREFIX}MP_API_KEY")):
+        if env.get(variable):
+            continue
+        stored = get_secret(field)
+        if stored:
+            base[field] = stored
     base["enabled"] = is_ai_mode_enabled(env)
     return AiModeConfig(**base)
 
@@ -141,14 +150,14 @@ def save_settings(config: AiModeConfig, config_path: Path | None = None) -> None
     # Model configuration has its own file; execution settings are owned by 8000.
     if config_path.name == 'ai_config.json':
         payload = {k: v for k, v in payload.items() if k.startswith('llm_') or k == 'data_dir'}
-    # Environment secrets have higher runtime precedence but must never be
-    # copied into the local config by an unrelated settings update. Preserve
-    # any prior local value behind the environment override instead.
-    for variable, field in ((f"{ENV_PREFIX}LLM_API_KEY", "llm_api_key"),
-                            (f"{ENV_PREFIX}MP_API_KEY", "mp_api_key")):
-        if os.environ.get(variable):
-            if field in payload:
-                payload[field] = str(local_before.get(field) or "")
+    # 密钥不落明文：迁移进系统凭据管理器；环境变量提供的密钥只参与本次运行，不落盘。
+    for field, variable in (("llm_api_key", f"{ENV_PREFIX}LLM_API_KEY"),
+                            ("mp_api_key", f"{ENV_PREFIX}MP_API_KEY")):
+        if field not in payload:
+            continue
+        payload[field] = secret_value_for_file(
+            field, str(payload.get(field) or ""),
+            str(local_before.get(field) or ""), os.environ.get(variable) or "")
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(
         json.dumps(payload, ensure_ascii=False, indent=2),

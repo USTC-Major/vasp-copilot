@@ -272,6 +272,7 @@ def secret(kind: str, request: Request, payload: dict):
 @router.get('/settings/secret-status')
 def secret_status(request: Request):
     import os
+    from .secrets import get_secret
     cfg = service(request).settings_loader()
     mp_env = bool(os.environ.get('TOOLBOX_MP_API_KEY') or os.environ.get('AI_MODE_MP_API_KEY'))
     ssh_configured = False
@@ -282,7 +283,11 @@ def secret_status(request: Request):
         except Exception:
             pass
     return envelope(secrets={
-        'mp': {'configured': bool(cfg.mp_api_key), 'source': 'environment' if mp_env else 'local_config' if cfg.mp_api_key else 'none', 'manageable': not mp_env},
+        'mp': {'configured': bool(cfg.mp_api_key),
+               'source': ('environment' if mp_env else
+                          'credential_store' if get_secret('mp_api_key') else
+                          'local_config' if cfg.mp_api_key else 'none'),
+               'manageable': not mp_env},
         'ssh': {'configured': ssh_configured, 'source': 'credential_store' if ssh_configured else 'none', 'manageable': True}})
 
 @router.post('/settings/test/mp')
