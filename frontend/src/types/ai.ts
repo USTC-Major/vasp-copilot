@@ -152,6 +152,8 @@ export interface AiSettingsOut {
   billing_estimate_enabled?: boolean;
   /** 单条消息进入模型上下文的上限（超出部分会被截断，页面据此提示用户）。 */
   message_char_limit?: number;
+  /** 全局免批范围（智能设置）：仅 copy_inputs / generate_kpoints；空数组＝逐项确认。 */
+  auto_approve_kinds?: string[];
   llm: AiSettingsLlm;
   ssh: { name: string; host: string; port: number; username: string; known_hosts_path?: string; identity_file?: string; scheduler_backend?: "slurm" | "paracloud" };
   materials_project: { api_key: string };

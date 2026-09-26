@@ -58,6 +58,8 @@ class AiModeConfig(BaseModel):
     max_jobs: int = 20
     poll_interval_seconds: int = 60
     billing_estimate_enabled: bool = False
+    #: 全局免批范围（真源在 Toolbox 执行设置里；这里镜像以便同一模型可承载该字段）。
+    auto_approve_kinds: list[str] = Field(default_factory=list)
 
     llm_provider: str = "auto"   # fake|openai|auto（auto：有可用 key 走 openai，否则 fake）
     llm_base_url: str = ""
@@ -134,6 +136,8 @@ def load_settings(
         if stored:
             base[field] = stored
     base["enabled"] = is_ai_mode_enabled(env)
+    from backend.toolbox.config import normalize_auto_approve_kinds
+    base["auto_approve_kinds"] = normalize_auto_approve_kinds(base.get("auto_approve_kinds"))
     return AiModeConfig(**base)
 
 

@@ -13,6 +13,9 @@ class ExecutionConfig(BaseModel):
     max_jobs: int = 20
     poll_interval_seconds: int = 60
     billing_estimate_enabled: bool = False
+    #: 用户显式授权的免批范围（全局执行设置，默认空＝逐项确认）。
+    #: 仅限下面 AUTO_APPROVE_KINDS 里的两类机械操作；科学输入/脚本/提交永不免批。
+    auto_approve_kinds: list[str] = Field(default_factory=list)
     ssh_name: str = ''
     ssh_host: str = ''
     ssh_port: int = 22
@@ -21,6 +24,19 @@ class ExecutionConfig(BaseModel):
     ssh_identity_file: str = ''
     scheduler_backend: Literal['slurm', 'paracloud'] = 'slurm'
     mp_api_key: str = ''
+
+
+#: 唯一允许免批的两类操作（复制已登记输入 / 确定性生成 KPOINTS）。
+#: 不含 POTCAR、提交脚本、提交计算、结构导入与任何科学参数修改。
+AUTO_APPROVE_KINDS = ('copy_inputs', 'generate_kpoints')
+
+
+def normalize_auto_approve_kinds(value: object) -> list[str]:
+    """只保留白名单内的类型并按固定顺序去重；非法输入视为未开启。"""
+    if not isinstance(value, (list, tuple)):
+        return []
+    chosen = {str(item) for item in value}
+    return [kind for kind in AUTO_APPROVE_KINDS if kind in chosen]
 
 # Historical annotations are compatible; there are no AI settings on this type.
 AiModeConfig = ExecutionConfig
@@ -48,6 +64,8 @@ def load_settings(*, env: Mapping[str, str] | None = None, config_path: Path | N
         if stored:
             data['mp_api_key'] = stored
     data['data_dir'] = root
+    # 免批范围只认白名单；文件里写了未知值也不会生效（退回逐项确认）。
+    data['auto_approve_kinds'] = normalize_auto_approve_kinds(data.get('auto_approve_kinds'))
     return ExecutionConfig(**data)
 
 def save_settings(config: ExecutionConfig, config_path: Path | None = None):

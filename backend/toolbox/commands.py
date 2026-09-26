@@ -657,6 +657,34 @@ class ToolExecutor:
         with task_lock(self.project_id, self.task_id):
             return self._execute_action_locked(action_id)
 
+    def _auto_approve_kinds(self) -> set:
+        """用户显式开启的免批范围（全局执行设置；读取失败即视为未开启）。"""
+        try:
+            from .config import normalize_auto_approve_kinds
+            return set(normalize_auto_approve_kinds(
+                getattr(self.cfg, "auto_approve_kinds", None)))
+        except Exception:  # noqa: BLE001 - 读不到就退回逐项确认
+            return set()
+
+    def _auto_approve_and_execute(self, card: dict, kind: str):
+        """在用户显式授权的范围内，由 **Toolbox 自身** 批准并执行这张卡。
+
+        返回执行回执文本；若不在授权范围或批准未生效则返回 None（调用方照常
+        抛 PendingConsentError 交人工确认）。AI 进程不参与批准动作。
+        """
+        if kind not in self._auto_approve_kinds():
+            return None
+        from .consent import resolve_card
+        decision = resolve_card(
+            self.store, self.project_id, self.task_id, card["card_id"],
+            approved=True,
+            note=f"按智能设置中开启的免批范围自动批准（{kind}；不含 POTCAR/脚本/提交）")
+        if decision.get("state") != "approved":
+            return None
+        receipt = self.execute_action(card["card_id"])
+        return (f"[AUTO_APPROVED] 已按你在智能设置里开启的免批范围自动批准并执行"
+                f"（{kind}，决议与环境哈希留在卡片记录里）。{receipt}")
+
     def _execute_action_locked(self, action_id: str) -> str:
         """Claim and execute one exact approved action without replaying LLM args."""
         action = claim_action(self.store, self.project_id, self.task_id,
@@ -1266,6 +1294,9 @@ class ToolExecutor:
         )
         saved = save_card(self.store, self.project_id, self.task_id,
                           self._load_flow(), payload)
+        auto = self._auto_approve_and_execute(saved, "generate_kpoints")
+        if auto is not None:
+            return auto
         raise PendingConsentError(saved)
 
     def tool_mp_search(self, args: dict) -> str:
@@ -1402,6 +1433,9 @@ class ToolExecutor:
         )
         saved = save_card(self.store, self.project_id, self.task_id,
                           self._load_flow(), payload)
+        auto = self._auto_approve_and_execute(saved, "copy_inputs")
+        if auto is not None:
+            return auto
         raise PendingConsentError(saved)
 
     # ---------------- 提交边界（不代替用户真实提交） ----------------

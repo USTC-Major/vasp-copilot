@@ -217,6 +217,7 @@ def settings_payload(svc):
     cfg = svc.settings_loader()
     return envelope(settings={
         'max_jobs': cfg.max_jobs, 'poll_interval_seconds': cfg.poll_interval_seconds,
+        'auto_approve_kinds': list(cfg.auto_approve_kinds),
         'ssh': {key: getattr(cfg, 'ssh_' + key) for key in
                 ['name', 'host', 'port', 'username', 'known_hosts_path', 'identity_file']} | {'scheduler_backend': cfg.scheduler_backend},
         'materials_project': {'configured': bool(cfg.mp_api_key)},
@@ -229,16 +230,22 @@ def settings(request: Request):
 @router.put('/settings')
 def update_settings(request: Request, payload: dict):
     svc = service(request)
+    from .config import normalize_auto_approve_kinds
     allowed = set(ExecutionConfig.model_fields) - {'data_dir', 'mp_api_key'}
     if set(payload) - allowed:
         raise ToolboxError('INVALID_SETTINGS', '未知或禁止设置字段')
     with svc._guard:
         try:
             cfg = ExecutionConfig(**(svc.settings_loader().model_dump() | payload))
-            if not 10 <= cfg.poll_interval_seconds <= 3600 or cfg.max_jobs < 1 or not 1 <= cfg.ssh_port <= 65535:
+            if (not 10 <= cfg.poll_interval_seconds <= 3600 or cfg.max_jobs < 1
+                    or not 1 <= cfg.ssh_port <= 65535):
                 raise ValueError('range')
+            if len(normalize_auto_approve_kinds(cfg.auto_approve_kinds)) != len(set(cfg.auto_approve_kinds)):
+                raise ValueError('auto_approve_kinds')
         except Exception:
             raise ToolboxError('INVALID_SETTINGS', '请检查端口、作业上限和轮询间隔（10–3600秒）') from None
+        cfg = cfg.model_copy(update={'auto_approve_kinds':
+                                     normalize_auto_approve_kinds(cfg.auto_approve_kinds)})
         save_settings(cfg, svc.root / 'toolbox_config.json')
     return settings_payload(svc)
 

@@ -127,3 +127,22 @@ it("冲突时明确选择仍然覆盖，才按本页值保存", async () => {
   await waitFor(() => expect(mocks.save).toHaveBeenCalled());
   mocks.refetch.mockReset();
 });
+
+it("免批范围开关默认关闭，开启后随设置一起提交", async () => {
+  mocks.save.mockClear();
+  mocks.refetch.mockReset();
+  const user = userEvent.setup();
+  render(<MemoryRouter><AiSettingsPage /></MemoryRouter>);
+
+  const copySwitch = await screen.findByRole("switch", { name: /复制已登记输入到作业目录/ });
+  const kpointsSwitch = screen.getByRole("switch", { name: /确定性生成 KPOINTS 网格/ });
+  expect(copySwitch).not.toBeChecked();
+  expect(kpointsSwitch).not.toBeChecked();
+
+  await user.click(kpointsSwitch);
+  await user.click(screen.getByRole("button", { name: "保存设置" }));
+
+  await waitFor(() => expect(mocks.save).toHaveBeenCalledWith(expect.objectContaining({
+    auto_approve_kinds: ["generate_kpoints"],
+  })));
+});

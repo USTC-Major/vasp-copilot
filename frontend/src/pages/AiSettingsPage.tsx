@@ -24,6 +24,9 @@ interface Form {
   llm_model: string;
   llm_provider: string;
   llm_enable_thinking: boolean;
+  // 全局免批范围（仅两类机械操作）；科学输入/脚本/提交永远逐项确认。
+  auto_copy_inputs: boolean;
+  auto_generate_kpoints: boolean;
   llm_api_key: string;
   mp_api_key: string;
   ssh_name: string;
@@ -44,6 +47,8 @@ const toForm = (settings: AiSettingsOut): Form => ({
   llm_model: settings.llm.model ?? "",
   llm_provider: settings.llm.provider ?? "auto",
   llm_enable_thinking: settings.llm.enable_thinking ?? false,
+  auto_copy_inputs: (settings.auto_approve_kinds ?? []).includes("copy_inputs"),
+  auto_generate_kpoints: (settings.auto_approve_kinds ?? []).includes("generate_kpoints"),
   llm_api_key: "",
   mp_api_key: "",
   ssh_name: settings.ssh.name ?? "",
@@ -92,6 +97,10 @@ const AiSettingsPage: React.FC = () => {
     }, {});
   patchFields.llm_enable_thinking = form.llm_enable_thinking;
   patchFields.scheduler_backend = form.scheduler_backend;
+  patchFields.auto_approve_kinds = [
+    ...(form.auto_copy_inputs ? ["copy_inputs"] : []),
+    ...(form.auto_generate_kpoints ? ["generate_kpoints"] : []),
+  ];
 
   const confirmOverwrite = (conflicts: string[]) =>
     new Promise<boolean>((resolve) => {
@@ -234,6 +243,31 @@ const AiSettingsPage: React.FC = () => {
           <Col span={24}><Text type="secondary" style={{ fontSize: 12 }}>最大作业数 = 同一超算账号「排队 + 运行中」总数上限，全局生效。</Text></Col>
           <Col span={12}><Text strong>监控轮询间隔（秒）</Text><Input value={form.poll_interval_seconds} onChange={set("poll_interval_seconds")} placeholder="60" /></Col>
           <Col span={24}><Text type="secondary" style={{ fontSize: 12 }}>提交后 AI 按此间隔自动检查超算作业状态（排队/运行/完成/补提后续），直到全部结束并生成报告；下限 10 秒。</Text></Col>
+        </Row>
+      ))}
+
+      {section("免批范围（可选）", <SafetyCertificateOutlined />, (
+        <Row gutter={16}>
+          <Col span={12}>
+            <Space>
+              <Switch aria-label="复制已登记输入到作业目录" checked={form.auto_copy_inputs}
+                      onChange={(v) => setForm((p) => ({ ...p, auto_copy_inputs: v }))} />
+              <Text>复制已登记输入到作业目录</Text>
+            </Space>
+          </Col>
+          <Col span={12}>
+            <Space>
+              <Switch aria-label="确定性生成 KPOINTS 网格" checked={form.auto_generate_kpoints}
+                      onChange={(v) => setForm((p) => ({ ...p, auto_generate_kpoints: v }))} />
+              <Text>确定性生成 KPOINTS 网格</Text>
+            </Space>
+          </Col>
+          <Col span={24}>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              开启后这两类操作由 Toolbox 直接批准执行、不再逐张弹卡（全局生效，默认关闭）。
+              <b>不含</b> POTCAR、提交脚本、提交计算、结构导入与任何科学参数修改——那些仍需你逐项确认。
+            </Text>
+          </Col>
         </Row>
       ))}
 

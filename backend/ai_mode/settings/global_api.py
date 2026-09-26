@@ -118,6 +118,7 @@ def mask_config(config: AiModeConfig) -> dict:
         "poll_interval_seconds": config.poll_interval_seconds,
         "billing_estimate_enabled": config.billing_estimate_enabled,
         "message_char_limit": MESSAGE_CHAR_LIMIT,
+        "auto_approve_kinds": list(getattr(config, "auto_approve_kinds", []) or []),
         "llm": {
             "base_url": config.llm_base_url,
             "model": config.llm_model,
