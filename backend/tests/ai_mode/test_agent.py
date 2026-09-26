@@ -123,7 +123,9 @@ def test_agent_compute_plans_and_runs(ctx):
     llm.enqueue("规划完成；工作量已真实落库。")
     answer = run_agent(ctx.store, ctx.pid, ctx.tid, "帮我做一个结构优化",
                        cfg=ctx.cfg, llm_factory=lambda c: llm)
-    assert "结构优化" in answer
+    # 最终回答 = 最后一次工具动作之后的正文；调用前的叙述不再计入（见更新记录第 16 项）。
+    assert "规划完成；工作量已真实落库。" in answer
+    assert "我先把结构优化作业规划出来。" not in answer
     flow = ctx.store.get_task(ctx.pid, ctx.tid)["flow"]
     assert flow["phase"] == "running"
     assert flow["plan"]["jobs"][0]["label"] == "结构优化"

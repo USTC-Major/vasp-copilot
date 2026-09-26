@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from ai_mode.agent.runner import MESSAGE_CHAR_LIMIT, build_messages
+from ai_mode.agent.runner import MESSAGE_CHAR_LIMIT, _final_answer, build_messages
 from ai_mode.agent.tool_schema import tool_schema_text
 from ai_mode.config import AiModeConfig
 from backend.tests.toolbox.legacy_bridge import ProjectStore
@@ -102,3 +102,17 @@ def test_long_history_entry_is_marked(ctx):
 
 def test_short_message_is_not_touched(ctx):
     assert build(ctx, [], "你好")[-1]["content"] == "你好"
+
+
+# --- 最终回答的取段规则（避免同一句话被答两三遍 / 混入调用前叙述） ---
+
+def test_final_answer_prefers_prose_after_last_tool():
+    assert _final_answer(["调用前的叙述", "工具后的总结"], ["工具后的总结"]) == "工具后的总结"
+
+
+def test_final_answer_falls_back_to_all_prose():
+    assert _final_answer(["只有这一段"], []) == "只有这一段"
+
+
+def test_final_answer_ignores_blank_tail():
+    assert _final_answer(["正文"], ["   "]) == "正文"

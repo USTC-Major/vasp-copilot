@@ -341,6 +341,16 @@ def _join_answer(parts: list[str]) -> str:
     return "\n\n".join(parts).strip() or "（模型未返回有效内容）"
 
 
+def _final_answer(parts_all: list[str], parts_tail: list[str]) -> str:
+    """最终回答取「最后一次工具动作之后的正文」；没有则退回全部正文。
+
+    这样同时避免两类冗余：被 nudge 追问前的那份草稿（表现为同一句话被答两三遍），
+    以及工具调用前“我这就去搜/我这就去规划”之类的计划叙述。
+    """
+    tail = [part for part in parts_tail if part and part.strip()]
+    return _join_answer(tail or parts_all)
+
+
 def _receipt_message(name: str, note: str) -> dict:
     """把工具执行回执包装为 LLM 可读的观察消息。
 
@@ -460,7 +470,8 @@ def _decision_loop(executor: ToolExecutor, llm, messages: list[Message], *,
                    should_stop: Optional[Callable[[], bool]] = None,
                    auto_resume: bool = True) -> str:
     """决策循环主体：LLM 自决意图/工具；返回最终给用户的完整回答文本（纯正文，不含工具回执）。"""
-    parts: list[str] = []
+    parts_all: list[str] = []      # 全部正文（兜底用）
+    parts_tail: list[str] = []     # 最后一次工具动作之后的正文（优先作为最终回答）
     tool_count = 0
     nudged = False
     trunc_nudged = False
@@ -491,17 +502,15 @@ def _decision_loop(executor: ToolExecutor, llm, messages: list[Message], *,
                     continue
             turn.prose = _strip_residual_markers(turn.prose)
         prose = _strip_receipt_wait(turn.prose)
-        if prose:
-            parts.append(prose)
+        # 先决定这一轮是否会被追问：被追问的正文只是草稿，不能计入最终回答，
+        # 否则用户会看到同一句话被答两三遍（每次都以完整答复重新开始）。
         if not turn.tools:
-            if _receipt_stall(turn.prose):
-                if not stall_nudged:
-                    stall_nudged = True
-                    messages.append({"role": "user", "content": _RECEIPT_STALL_NUDGE})
-                    continue
-                parts.append(_STALL_STOP_NOTE)
-                break
-            if (turn.intent == "compute" or _promises_action(turn.prose)) and tool_count == 0 and not nudged:
+            if _receipt_stall(turn.prose) and not stall_nudged:
+                stall_nudged = True
+                messages.append({"role": "user", "content": _RECEIPT_STALL_NUDGE})
+                continue
+            if ((turn.intent == "compute" or _promises_action(turn.prose))
+                    and tool_count == 0 and not nudged):
                 nudged = True
                 messages.append({
                     "role": "user",
@@ -510,7 +519,16 @@ def _decision_loop(executor: ToolExecutor, llm, messages: list[Message], *,
                                 "如果只是描述/提问而不需要计算，用纯正文说明即可。）"),
                 })
                 continue
+        if prose:
+            parts_all.append(prose)
+            parts_tail.append(prose)
+        if not turn.tools:
+            if _receipt_stall(turn.prose):      # 已追问过仍卡在等回执 → 收尾
+                parts_all.append(_STALL_STOP_NOTE)
+                parts_tail.append(_STALL_STOP_NOTE)
             break
+        # 工具轮：本轮正文属于「调用前的叙述」，之后产生的正文才是最终答复。
+        parts_tail.clear()
         # 先记录 AI 的工具调用回合，再执行工具并回填回执
         messages.append({"role": "assistant", "content": text[:3000]})
         abort_loop = False
@@ -531,18 +549,20 @@ def _decision_loop(executor: ToolExecutor, llm, messages: list[Message], *,
                     continue
                 abort_loop = True
                 if state == "denied":
-                    parts.append("（该操作被用户拒绝，已停止）")
+                    note_tail = "（该操作被用户拒绝，已停止）"
                 elif state == "timeout":
-                    parts.append("（等待授权超时，已停止操作）")
+                    note_tail = "（等待授权超时，已停止操作）"
                 else:
-                    parts.append(note2)
+                    note_tail = note2
+                parts_all.append(note_tail)
+                parts_tail.append(note_tail)
                 break
             messages.append(_receipt_message(req.name, note))
         if abort_loop:
             break
         if should_stop and should_stop():
             break
-    return _join_answer(parts)
+    return _final_answer(parts_all, parts_tail)
 
 
 # ---------------- 流式（SSE） ----------------
@@ -701,10 +721,9 @@ def run_agent_stream(store, project_id, task_id, content, *,
             yield {"type": "thinking", "text": tail_thinking}
         first_text = "".join(first_raw).strip()
         first_turn = parse_turn(first_text)
-        parts: list[str] = []
+        parts_all: list[str] = []      # 全部正文（兜底用）
+        parts_tail: list[str] = []     # 最后一次工具动作之后的正文（优先作为最终回答）
         _first_prose = _strip_receipt_wait(first_turn.prose)
-        if _first_prose:
-            parts.append(_first_prose)
         tool_count = 0
         if first_raw:
             messages.append({"role": "assistant", "content": first_text[:3000]})
@@ -713,8 +732,7 @@ def run_agent_stream(store, project_id, task_id, content, *,
             stripped = _strip_residual_markers(first_turn.prose)
             if stripped != first_turn.prose:
                 first_turn.prose = stripped
-                if parts:
-                    parts[-1] = stripped
+                _first_prose = _strip_receipt_wait(stripped)
             if not first_turn.tools:
                 nudged = True
                 messages.append({
@@ -737,8 +755,16 @@ def run_agent_stream(store, project_id, task_id, content, *,
         if not first_turn.tools and not nudged and _receipt_stall(first_turn.prose):
             nudged = True
             messages.append({"role": "user", "content": _RECEIPT_STALL_NUDGE})
+        # 首轮正文只有在“不会被追问”时才计入最终回答；被追问时它只是草稿，
+        # 否则用户会看到同一句话被答两三遍（每次都以完整答复重新开始）。
+        if _first_prose and not nudged:
+            parts_all.append(_first_prose)
+            parts_tail.append(_first_prose)
 
         phase_before = _flow_phase(store, project_id, task_id)
+        if first_turn.tools:
+            # 工具轮：首轮正文属于“调用前的叙述”，之后产生的正文才是最终答复。
+            parts_tail.clear()
         for req in first_turn.tools:
             note = executor.handle(req.name, req.args)
             tool_count += 1
@@ -748,7 +774,7 @@ def run_agent_stream(store, project_id, task_id, content, *,
                 if card:
                     yield {"type": "card", "card": _stream_card(card)}
                 if not auto_resume:
-                    yield {"type": "done", "answer": _join_answer(parts)}
+                    yield {"type": "done", "answer": _final_answer(parts_all, parts_tail)}
                     return
                 state, note2 = _wait_card_decision(
                     store, project_id, task_id, card_id, req,
@@ -759,23 +785,24 @@ def run_agent_stream(store, project_id, task_id, content, *,
                     yield {"type": "status", "text": note}
                     continue
                 if state == "stopped":
-                    yield {"type": "stopped", "answer": _join_answer(parts)}
+                    yield {"type": "stopped", "answer": _final_answer(parts_all, parts_tail)}
                     return
                 tail = ("该操作被用户拒绝，已停止" if state == "denied"
                         else note2 or "等待授权超时，已停止操作")
-                parts.append(tail)
+                parts_all.append(tail)
+                parts_tail.append(tail)
                 yield {"type": "status", "text": tail}
-                yield {"type": "done", "answer": _join_answer(parts)}
+                yield {"type": "done", "answer": _final_answer(parts_all, parts_tail)}
                 return
             messages.append(_receipt_message(req.name, note))
             yield {"type": "status", "text": note}
         if (_flow_phase(store, project_id, task_id) == "await_submit"
                 and phase_before != "await_submit"):
-            yield from _submit_card_events(store, project_id, task_id, parts)
+            yield from _submit_card_events(store, project_id, task_id, parts_tail or parts_all)
             return
         needs_loop = bool(first_turn.tools) or nudged or not first_raw
         if not needs_loop:
-            yield {"type": "done", "answer": _join_answer(parts)}
+            yield {"type": "done", "answer": _final_answer(parts_all, parts_tail)}
             return
         # 后续轮：非流式决策循环
         rounds = 0
@@ -785,7 +812,7 @@ def run_agent_stream(store, project_id, task_id, content, *,
         while rounds < max_rounds:
             rounds += 1
             if should_stop and should_stop():
-                yield {"type": "stopped", "answer": _join_answer(parts)}
+                yield {"type": "stopped", "answer": _final_answer(parts_all, parts_tail)}
                 return
             result = llm.complete(list(messages), max_tokens=AGENT_MAX_TOKENS)
             text = (result.text or "").strip()
@@ -807,19 +834,14 @@ def run_agent_stream(store, project_id, task_id, content, *,
                         continue
                 turn.prose = _strip_residual_markers(turn.prose)
             prose = _strip_receipt_wait(turn.prose)
-            if prose:
-                parts.append(prose)
-                yield {"type": "answer", "text": prose}
+            # 先决定这一轮是否会被追问：被追问的正文只是草稿，既不落最终回答也不推给页面。
             if not turn.tools:
-                if _receipt_stall(turn.prose):
-                    if not stall_nudged:
-                        stall_nudged = True
-                        messages.append({"role": "user", "content": _RECEIPT_STALL_NUDGE})
-                        continue
-                    parts.append(_STALL_STOP_NOTE)
-                    yield {"type": "answer", "text": _STALL_STOP_NOTE}
-                    break
-                if (turn.intent == "compute" or _promises_action(turn.prose)) and tool_count == 0 and not nudged:
+                if _receipt_stall(turn.prose) and not stall_nudged:
+                    stall_nudged = True
+                    messages.append({"role": "user", "content": _RECEIPT_STALL_NUDGE})
+                    continue
+                if ((turn.intent == "compute" or _promises_action(turn.prose))
+                        and tool_count == 0 and not nudged):
                     nudged = True
                     messages.append({
                         "role": "user",
@@ -828,7 +850,17 @@ def run_agent_stream(store, project_id, task_id, content, *,
                                     "操作；如果只是描述/提问，用纯正文说明即可。）"),
                     })
                     continue
+            if prose:
+                parts_all.append(prose)
+                parts_tail.append(prose)
+                yield {"type": "answer", "text": prose}
+            if not turn.tools:
+                if _receipt_stall(turn.prose):      # 已追问过仍卡在等回执 → 收尾
+                    parts_all.append(_STALL_STOP_NOTE)
+                    parts_tail.append(_STALL_STOP_NOTE)
+                    yield {"type": "answer", "text": _STALL_STOP_NOTE}
                 break
+            parts_tail.clear()                      # 工具轮：本轮正文属于“调用前的叙述”
             messages.append({"role": "assistant", "content": text[:3000]})
             phase_before = _flow_phase(store, project_id, task_id)
             for req in turn.tools:
@@ -841,7 +873,7 @@ def run_agent_stream(store, project_id, task_id, content, *,
                     if card:
                         yield {"type": "card", "card": _stream_card(card)}
                     if not auto_resume:
-                        yield {"type": "done", "answer": _join_answer(parts)}
+                        yield {"type": "done", "answer": _final_answer(parts_all, parts_tail)}
                         return
                     state, note2 = _wait_card_decision(
                         store, project_id, task_id, card_id, req,
@@ -852,21 +884,22 @@ def run_agent_stream(store, project_id, task_id, content, *,
                         yield {"type": "status", "text": note}
                         continue
                     if state == "stopped":
-                        yield {"type": "stopped", "answer": _join_answer(parts)}
+                        yield {"type": "stopped", "answer": _final_answer(parts_all, parts_tail)}
                         return
                     tail = ("该操作被用户拒绝，已停止" if state == "denied"
                             else note2 or "等待授权超时，已停止操作")
-                    parts.append(tail)
+                    parts_all.append(tail)
+                    parts_tail.append(tail)
                     yield {"type": "status", "text": tail}
-                    yield {"type": "done", "answer": _join_answer(parts)}
+                    yield {"type": "done", "answer": _final_answer(parts_all, parts_tail)}
                     return
                 messages.append(_receipt_message(req.name, note))
                 yield {"type": "status", "text": note}
             if (_flow_phase(store, project_id, task_id) == "await_submit"
                     and phase_before != "await_submit"):
-                yield from _submit_card_events(store, project_id, task_id, parts)
+                yield from _submit_card_events(store, project_id, task_id, parts_tail or parts_all)
                 return
-        yield {"type": "done", "answer": _join_answer(parts)}
+        yield {"type": "done", "answer": _final_answer(parts_all, parts_tail)}
     except LLMUnavailableError as exc:
         msg = offline_text(str(exc))
         yield {"type": "error", "message": msg}

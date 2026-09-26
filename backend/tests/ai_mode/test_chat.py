@@ -64,13 +64,32 @@ def test_compute_agent_plans_immediately(tmp_path, monkeypatch):
     answer = reply(store, pid, tid, "帮我算一个结构优化", llm_factory=lambda _c: llm)
     assert "已收到你的计算需求" not in answer
     assert "开始计算流程" not in answer
-    assert "结构优化" in answer
+    # 最终回答只取“最后一次工具动作之后的正文”（产品契约：末段纯正文即最终回复），
+    # 工具调用前的叙述不再混进来；这里断言的是工具执行后那轮总结。
+    assert "规划已落库，接下来可准备输入。" in answer
+    assert "我先规划这个结构优化任务。" not in answer
     assert llm.calls
     assert llm.calls[0][-1]["content"] == "帮我算一个结构优化"
     updated = store.get_task(pid, tid)
     assert updated.get("pending_flow") is None
     assert updated["flow"]["phase"] == "running"
     assert updated["flow"]["plan"]["jobs"][0]["label"] == "结构优化"
+
+
+def test_nudged_draft_is_not_echoed_in_final_answer(tmp_path, monkeypatch):
+    """只口头承诺、没有工具调用时系统会追问一轮；被追问的草稿不得出现在最终回答里。"""
+    monkeypatch.setenv("VASP_AI_HOME", str(tmp_path / "home"))
+    store = ProjectStore(tmp_path / "home")
+    prj = store.create_project("聊天项目")
+    tk = store.create_task(prj["id"], goal="看看工作区")
+    llm = FakeLLM()
+    llm.enqueue("好的，我这就先查看工作区，把文件列出来。")   # 只承诺 → 触发追问
+    llm.enqueue("你的工作区里现在有 INCAR、POSCAR、KPOINTS 三个文件。")
+    answer = reply(store, prj["id"], tk["id"], "看看工作区",
+                   llm_factory=lambda _c: llm)
+    assert len(llm.calls) == 2, "应当发生一次追问"
+    assert answer.strip() == "你的工作区里现在有 INCAR、POSCAR、KPOINTS 三个文件。"
+    assert "我这就先查看工作区" not in answer
 
 
 def test_compute_llm_unavailable_does_not_start_flow(task):
