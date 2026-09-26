@@ -149,3 +149,61 @@ it("免批范围开关默认关闭，开启后随设置一起提交", async () =
     auto_approve_kinds: ["generate_kpoints", "hpc_upload"],
   })));
 });
+
+const clearModals = () => {
+  Modal.destroyAll();
+  document.querySelectorAll(".ant-modal-root, .ant-modal-wrap, .ant-modal-mask")
+    .forEach((node) => node.remove());
+};
+
+it("POTCAR 开关默认关闭：取消免责声明不生效，确认后才生效并随设置提交", async () => {
+  mocks.save.mockClear();
+  mocks.refetch.mockReset();
+  const user = userEvent.setup();
+  render(<MemoryRouter><AiSettingsPage /></MemoryRouter>);
+
+  const potcar = await screen.findByRole("switch", { name: /允许用 vaspkit 在超算作业目录生成 POTCAR/ });
+  expect(potcar).not.toBeChecked();
+
+  // 取消免责声明 → 开关保持关闭
+  await user.click(potcar);
+  expect((await screen.findAllByText(/开启 POTCAR 自动生成/)).length).toBeGreaterThan(0);
+  expect((await screen.findAllByText(/使用许可与适用性由使用者负责/)).length).toBeGreaterThan(0);
+  await user.click(screen.getByRole("button", { name: /取\s*消/ }));
+  await waitFor(() => expect(potcar).not.toBeChecked());
+  clearModals();
+
+  // 确认后才生效
+  await user.click(potcar);
+  await user.click(await screen.findByRole("button", { name: "我已知悉，开启" }));
+  await waitFor(() => expect(potcar).toBeChecked());
+
+  await user.click(screen.getByRole("button", { name: "保存设置" }));
+  await waitFor(() => expect(mocks.save).toHaveBeenCalledWith(expect.objectContaining({
+    allow_potcar_assembly: true,
+  })));
+});
+
+it("提交脚本模板路径可填写，脚本复制开关确认后才生效", async () => {
+  mocks.save.mockClear();
+  mocks.refetch.mockReset();
+  const user = userEvent.setup();
+  render(<MemoryRouter><AiSettingsPage /></MemoryRouter>);
+
+  const script = await screen.findByRole("switch", { name: /允许 AI 把模板脚本复制到作业目录/ });
+  expect(script).not.toBeChecked();
+  await user.type(screen.getByPlaceholderText(/templates\/run\.sh/),
+                  "/publicfs03/templates/run.sh");
+
+  await user.click(script);
+  expect((await screen.findAllByText(/允许 AI 复制提交脚本模板/)).length).toBeGreaterThan(0);
+  expect((await screen.findAllByText(/逐字节复制/)).length).toBeGreaterThan(0);
+  await user.click(screen.getByRole("button", { name: /开\s*启/ }));
+  await waitFor(() => expect(script).toBeChecked());
+
+  await user.click(screen.getByRole("button", { name: "保存设置" }));
+  await waitFor(() => expect(mocks.save).toHaveBeenCalledWith(expect.objectContaining({
+    allow_script_deploy: true,
+    submit_script_template: "/publicfs03/templates/run.sh",
+  })));
+});

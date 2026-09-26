@@ -60,6 +60,10 @@ class AiModeConfig(BaseModel):
     billing_estimate_enabled: bool = False
     #: 全局免批范围（真源在 Toolbox 执行设置里；这里镜像以便同一模型可承载该字段）。
     auto_approve_kinds: list[str] = Field(default_factory=list)
+    #: 下面三项同样真源在 Toolbox 执行设置里，这里只做镜像（默认关＝不做）。
+    allow_potcar_assembly: bool = False
+    allow_script_deploy: bool = False
+    submit_script_template: str = ""
 
     llm_provider: str = "auto"   # fake|openai|auto（auto：有可用 key 走 openai，否则 fake）
     llm_base_url: str = ""

@@ -86,10 +86,14 @@ SETTABLE_FIELDS: dict[str, Callable[[object], Optional[str]]] = {
     "ssh_identity_file": _str,
     "scheduler_backend": _str,
     "mp_api_key": _str,
+    "allow_potcar_assembly": _bool,
+    "allow_script_deploy": _bool,
+    "submit_script_template": _str,
 }
 
 
 _BOOL_FIELDS = {"billing_estimate_enabled", "llm_enable_thinking"}
+_BOOL_FIELDS |= {"allow_potcar_assembly", "allow_script_deploy"}
 
 _INT_FIELDS = {"max_jobs", "poll_interval_seconds",
                "llm_timeout_seconds", "llm_max_retries", "llm_max_tokens"}
@@ -119,6 +123,9 @@ def mask_config(config: AiModeConfig) -> dict:
         "billing_estimate_enabled": config.billing_estimate_enabled,
         "message_char_limit": MESSAGE_CHAR_LIMIT,
         "auto_approve_kinds": list(getattr(config, "auto_approve_kinds", []) or []),
+        "allow_potcar_assembly": bool(getattr(config, "allow_potcar_assembly", False)),
+        "allow_script_deploy": bool(getattr(config, "allow_script_deploy", False)),
+        "submit_script_template": str(getattr(config, "submit_script_template", "") or ""),
         "llm": {
             "base_url": config.llm_base_url,
             "model": config.llm_model,

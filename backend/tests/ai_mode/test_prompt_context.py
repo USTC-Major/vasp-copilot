@@ -132,6 +132,26 @@ def test_readiness_comes_from_the_execution_side_not_the_ai_config(ctx):
     assert "尚未配置超算" in fallback
 
 
+def test_potcar_and_script_tools_follow_their_switches(ctx):
+    """POTCAR 生成与脚本复制是**开关型**能力：没开时连工具说明都不给模型。"""
+    names = ("generate_potcar", "deploy_submit_script")
+    off = build_with_readiness(ctx, {"ssh": True, "mp": True},
+                               cfg=AiModeConfig())[0]["content"]
+    for name in names:
+        assert f"- {name}：" not in off
+    assert "POTCAR 自动生成未开启" in off
+    assert "提交脚本复制未开启" in off
+
+    on = build_with_readiness(ctx, {"ssh": True, "mp": True,
+                                    "potcar": True, "script_deploy": True},
+                              cfg=AiModeConfig())[0]["content"]
+    for name in names:
+        assert f"- {name}：" in on
+    assert "POTCAR 自动生成未开启" not in on
+    assert "永不自动批准" in on          # POTCAR 属科学输入，逐次确认
+    assert "逐字节复制" in on            # 脚本只复制、不修改
+
+
 def test_long_current_message_is_marked_not_silently_cut(ctx):
     long_text = "约" * (MESSAGE_CHAR_LIMIT + 1500)
     last = build(ctx, [], long_text)[-1]["content"]

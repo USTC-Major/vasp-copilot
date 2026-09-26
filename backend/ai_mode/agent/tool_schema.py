@@ -9,6 +9,8 @@ def _all_tools_text() -> str:
         "- hpc_list：列出超算工作区（hpc_dir）远端目录内容（只读；计算发生地，超算上的文件一律用它看）。args: {\"path\":\"相对子目录，可空\"}\n"
         "- hpc_read：读取超算工作区内某个文本文件（只读、有界）。args: {\"path\":\"相对路径\"}\n"
         "- hpc_upload：请求把已登记的本地工作区文件上传到超算工作区；默认只生成逐次确认卡，确认前绝不写远端（若用户在智能设置里开启了「上传」免批，则由 Toolbox 直接执行并返回 [AUTO_APPROVED] 回执）。一次调用只传一个文件——要传多个文件，请在**同一条回复里连续写多个 hpc_upload 标记**（协议支持一次多个工具），系统会把它们合并成一组让用户一次点击整批批准；不要一个文件一轮。args: {\"artifact_id\":\"用户已登记文件 ID\",\"job_key\":\"作业 key\"}\n"
+        "- generate_potcar：在指定作业目录用 vaspkit 生成 POTCAR。用哪套赝势由 vaspkit 自己的默认规则决定，你不能指定元素变体、不能传命令或参数；该目录里必须已有 POSCAR。每次都会先弹确认卡、**永不自动批准**；生成后回执只给数据集名、与 POSCAR 的元素顺序是否一致、大小与哈希，不回显 POTCAR 内容。缺 POTCAR 时用它，不要要求用户手工拼接。args: {\"job_key\":\"relax\",\"attempt_id\":\"从get_state获取\"}\n"
+        "- deploy_submit_script：把**用户在智能设置里配置的模板脚本**逐字节复制到作业目录（目标名＝模板文件名）。只复制、不修改、不执行；脚本内容对你不可见。若该目录里已有其它 *.sh 会被拒绝（不覆盖、不删除），需要你如实告诉用户。复制后仍需用户认领该脚本才能进预检/草稿/提交。args: {\"job_key\":\"relax\",\"attempt_id\":\"从get_state获取\"}\n"
         "- stop_monitor：终止当前计算流程（用户明确表示不做了/换思路/作业作废时调用）：全部未完成作业置 canceled、停止后台监控与后续提交流程；已在超算运行的作业会给出 scancel 建议。args: {}\n"
         "- plan：自主制定计算计划并落库（作业数/类型/顺序由你决定）。作业 key 请用语义化英文名（如 relax/static/band/dos），label 用中文。有先后依赖的作业必须用 requires 声明依赖（如 {\"key\":\"relax/static\",\"requires\":[\"relax\"]}）；前序 completed 只会解锁后续，重新预检并由用户再次确认后才能提交。依赖链作业 key/目录用嵌套路径依次往下建（relax → relax/static → relax/static/dos），独立作业才并列。args: {\"strategy\":\"策略\",\"jobs\":[{\"key\":\"relax\",\"label\":\"结构优化\",\"kind\":\"relax\"}]}\n"
         "- copy_inputs：请求把用户已登记输入复制到计算目录；只接受 artifact_id 与作业 key，确认前不写文件。args: {\"artifact_ids\":[\"用户已登记文件 ID\"],\"job_key\":\"relax\"}\n"
@@ -33,6 +35,8 @@ def _all_tools_text() -> str:
 #: 依赖外部配置的工具：未就绪时既不该出现在提示词里，也要明确告诉模型该引导用户做什么。
 _MP_TOOLS = ("mp_search", "mp_import_poscar")
 _HPC_TOOLS = ("hpc_list", "hpc_read", "hpc_upload")
+_POTCAR_TOOLS = ("generate_potcar",)
+_SCRIPT_TOOLS = ("deploy_submit_script",)
 
 _MP_NOT_READY = (
     "- 注意：当前尚未配置 Materials Project API key，mp_search / mp_import_poscar 本轮不可用。"
@@ -46,21 +50,39 @@ _HPC_NOT_READY = (
     "不要反复重试这些工具，也不要把本地工作区快照当成超算内容。\n"
 )
 
+_POTCAR_NOT_READY = (
+    "- 注意：POTCAR 自动生成未开启（智能设置 → POTCAR）。需要 POTCAR 时，请引导用户去打开该开关"
+    "（打开时会显示风险提示与免责声明），或让用户自己把 POTCAR 放进作业目录；"
+    "不要反复重试 generate_potcar，也不要尝试用自由命令拼接 POTCAR。\n"
+)
 
-def tool_schema_text(*, ssh_ready: bool = True, mp_ready: bool = True) -> str:
+_SCRIPT_NOT_READY = (
+    "- 注意：提交脚本复制未开启，或还没配置模板路径（智能设置 → 提交脚本）。需要脚本时，"
+    "请引导用户填写超算上的模板路径（.sh）并打开开关，或让用户自己把脚本放进作业目录；"
+    "不要反复重试 deploy_submit_script，也不得自己生成或修改脚本。\n"
+)
+
+
+def tool_schema_text(*, ssh_ready: bool = True, mp_ready: bool = True,
+                     potcar_ready: bool = True, script_ready: bool = True) -> str:
     """给 LLM 的工具说明；按实际可用性裁剪依赖外部配置的工具。
 
-    默认（两个 flag 均为 True）返回完整说明，便于测试与非配置场景复用；
-    生产调用方按 SSH / MP 配置情况传参，避免模型看到注定失败的工具。
+    默认（全部 flag 为 True）返回完整说明，便于测试与非配置场景复用；
+    生产调用方按 SSH / MP / POTCAR / 脚本模板的配置情况传参，
+    避免模型看到注定失败的工具（开关关掉时连工具说明都不给）。
     """
     text = _all_tools_text()
-    if ssh_ready and mp_ready:
+    if ssh_ready and mp_ready and potcar_ready and script_ready:
         return text
     gated = set()
     if not mp_ready:
         gated |= set(_MP_TOOLS)
     if not ssh_ready:
         gated |= set(_HPC_TOOLS)
+    if not potcar_ready:
+        gated |= set(_POTCAR_TOOLS)
+    if not script_ready:
+        gated |= set(_SCRIPT_TOOLS)
     kept = [line for line in text.splitlines(keepends=True)
             if not any(line.startswith(f"- {name}：") for name in gated)]
     notes = ""
@@ -68,5 +90,9 @@ def tool_schema_text(*, ssh_ready: bool = True, mp_ready: bool = True) -> str:
         notes += _MP_NOT_READY
     if not ssh_ready:
         notes += _HPC_NOT_READY
+    if not potcar_ready:
+        notes += _POTCAR_NOT_READY
+    if not script_ready:
+        notes += _SCRIPT_NOT_READY
     kept.append(notes)
     return "".join(kept)

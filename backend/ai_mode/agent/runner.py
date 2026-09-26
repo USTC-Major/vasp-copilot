@@ -195,17 +195,23 @@ def _executor_readiness(executor):
         return None
 
 
-def _readiness_flags(cfg, readiness) -> tuple[bool, bool]:
+def _readiness_flags(cfg, readiness) -> dict:
     """工具可用性判定：优先用执行侧（Toolbox）的就绪状态，退回本地配置。
 
     智能模式自身配置不含 SSH（执行设置归 8000），只看它会误判成"超算未配置"。
+    取不到的部分一律按"未开启"处理（fail-closed）：宁可少给模型一个工具，
+    也不要让它去调用注定被拒的开关。
     """
     local_ssh = _ssh_configured(cfg) if cfg is not None else True
     local_mp = _mp_configured(cfg) if cfg is not None else True
+    local_potcar = bool(getattr(cfg, "allow_potcar_assembly", False)) if cfg else False
+    local_script = bool(getattr(cfg, "allow_script_deploy", False)) if cfg else False
     if not isinstance(readiness, dict):
-        return local_ssh, local_mp
-    return (bool(readiness.get("ssh", local_ssh)),
-            bool(readiness.get("mp", local_mp)))
+        readiness = {}
+    return {"ssh_ready": bool(readiness.get("ssh", local_ssh)),
+            "mp_ready": bool(readiness.get("mp", local_mp)),
+            "potcar_ready": bool(readiness.get("potcar", local_potcar)),
+            "script_ready": bool(readiness.get("script_deploy", local_script))}
 
 
 def build_messages(store: ProjectStore, task: dict, history: list[dict],
@@ -219,7 +225,7 @@ def build_messages(store: ProjectStore, task: dict, history: list[dict],
     # only through the explicit, policy-checked ws_read/hpc_read tools.
     snapshot = store.client.tool(task["project_id"], task["id"], "ws_list", {}).get("result", "")
     # 工具清单按执行侧（Toolbox）实际就绪状态裁剪，而不是按智能模式自己的配置。
-    ssh_ready, mp_ready = _readiness_flags(cfg, readiness)
+    ready = _readiness_flags(cfg, readiness)
     system = (
         "你是 VASP-Copilot 智能模式的中枢 AI。用户正在一个计算任务里与你对话，"
         "你负责端到端主导科学计算：从看懂需求到规划、准备输入、提交前检查、"
@@ -290,7 +296,7 @@ def build_messages(store: ProjectStore, task: dict, history: list[dict],
         "范围时才说明情况（通常是超算暂时连不上，或该作业还没规划），并如实引用回执原文，"
         "不要自行要求用户做多余配置。\n\n"
         "可用工具：\n"
-        + tool_schema_text(ssh_ready=ssh_ready, mp_ready=mp_ready)
+        + tool_schema_text(**ready)
         + "\n\n【红线（不可逾越）】\n"
         "1. 真实提交作业到超算必须由用户批准当前精确绑定的一次性确认卡，绝不代替用户执行 "
         "sbatch；你可以在确认前把规划/输入/预检/草稿全部准备好，并把流程停在「待确认」。\n"

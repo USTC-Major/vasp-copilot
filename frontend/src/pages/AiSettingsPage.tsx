@@ -2,7 +2,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Card, Typography, Space, Button, Input, Col, Row, Spin, Collapse, Switch, Select, message, Alert, Modal } from "antd";
 import { Link } from "react-router-dom";
-import { LinkOutlined, SafetyCertificateOutlined, RocketOutlined } from "@ant-design/icons";
+import { LinkOutlined, SafetyCertificateOutlined, RocketOutlined, ExperimentOutlined, FileTextOutlined } from "@ant-design/icons";
 import ErrorAlert from "../components/common/ErrorAlert";
 import SecretInput from "../components/ai/SecretInput";
 import type { AiSecretState, AiSettingsOut } from "../types/ai";
@@ -28,6 +28,10 @@ interface Form {
   auto_copy_inputs: boolean;
   auto_generate_kpoints: boolean;
   auto_hpc_upload: boolean;
+  // POTCAR 自动生成（vaspkit）与提交脚本模板：默认关，打开时要看风险提示。
+  allow_potcar_assembly: boolean;
+  allow_script_deploy: boolean;
+  submit_script_template: string;
   llm_api_key: string;
   mp_api_key: string;
   ssh_name: string;
@@ -51,6 +55,9 @@ const toForm = (settings: AiSettingsOut): Form => ({
   auto_copy_inputs: (settings.auto_approve_kinds ?? []).includes("copy_inputs"),
   auto_generate_kpoints: (settings.auto_approve_kinds ?? []).includes("generate_kpoints"),
   auto_hpc_upload: (settings.auto_approve_kinds ?? []).includes("hpc_upload"),
+  allow_potcar_assembly: Boolean(settings.allow_potcar_assembly),
+  allow_script_deploy: Boolean(settings.allow_script_deploy),
+  submit_script_template: settings.submit_script_template ?? "",
   llm_api_key: "",
   mp_api_key: "",
   ssh_name: settings.ssh.name ?? "",
@@ -104,6 +111,67 @@ const AiSettingsPage: React.FC = () => {
     ...(form.auto_generate_kpoints ? ["generate_kpoints"] : []),
     ...(form.auto_hpc_upload ? ["hpc_upload"] : []),
   ];
+  patchFields.allow_potcar_assembly = form.allow_potcar_assembly;
+  patchFields.allow_script_deploy = form.allow_script_deploy;
+  patchFields.submit_script_template = form.submit_script_template;
+
+  /** 开启 POTCAR 自动生成＝让 AI 在超算上真的写文件：先看风险与免责声明，确认才生效。 */
+  const togglePotcarAssembly = async (next: boolean) => {
+    if (!next) {
+      setForm((p) => ({ ...p, allow_potcar_assembly: false }));
+      return;
+    }
+    const ok = await new Promise<boolean>((resolve) => {
+      Modal.confirm({
+        title: "开启 POTCAR 自动生成（vaspkit）",
+        width: 560,
+        content: (
+          <div style={{ fontSize: 13, lineHeight: 1.7 }}>
+            <div>开启后，缺 POTCAR 时 AI 会用超算上的 vaspkit 在指定作业目录生成它：</div>
+            <ul style={{ margin: "6px 0 6px 18px", padding: 0 }}>
+              <li>用哪套赝势（数据集）由 <b>vaspkit 自己的默认规则</b>决定；系统不替你挑选，也不保证它符合你的计算目的。</li>
+              <li>生成会<b>写入你的超算作业目录</b>，且<b>每次都会单独弹确认卡</b>（永不自动批准、不进免批范围）。</li>
+              <li>VASP 赝势（POTCAR）的<b>使用许可与适用性由使用者负责</b>；本系统只做自动化调用与机械校验（元素顺序 / 哈希），不对科学正确性负责。</li>
+            </ul>
+            <div>你也可以保持关闭，自己把 POTCAR 放进作业目录。</div>
+          </div>
+        ),
+        okText: "我已知悉，开启",
+        cancelText: "取消",
+        onOk: () => resolve(true),
+        onCancel: () => resolve(false),
+      });
+    });
+    setForm((p) => ({ ...p, allow_potcar_assembly: ok }));
+  };
+
+  /** 开启脚本复制＝允许 AI 搬运你指定的模板：先讲清边界，确认才生效。 */
+  const toggleScriptDeploy = async (next: boolean) => {
+    if (!next) {
+      setForm((p) => ({ ...p, allow_script_deploy: false }));
+      return;
+    }
+    const ok = await new Promise<boolean>((resolve) => {
+      Modal.confirm({
+        title: "允许 AI 复制提交脚本模板",
+        content: (
+          <div style={{ fontSize: 13, lineHeight: 1.7 }}>
+            <div>开启后，AI 只能把你配置的模板脚本<b>逐字节复制</b>到作业目录：</div>
+            <ul style={{ margin: "6px 0 6px 18px", padding: 0 }}>
+              <li>不修改、不改名、不执行；脚本内容对 AI 不可见。</li>
+              <li>作业目录里若已有其它 *.sh，会被拒绝（不覆盖、不删除）。</li>
+              <li>复制完成后仍需你<b>认领</b>该脚本；提交作业仍要单独确认。</li>
+            </ul>
+          </div>
+        ),
+        okText: "开启",
+        cancelText: "取消",
+        onOk: () => resolve(true),
+        onCancel: () => resolve(false),
+      });
+    });
+    setForm((p) => ({ ...p, allow_script_deploy: ok }));
+  };
 
   const confirmOverwrite = (conflicts: string[]) =>
     new Promise<boolean>((resolve) => {
@@ -278,6 +346,52 @@ const AiSettingsPage: React.FC = () => {
               <b>不含</b> 提交计算、结构导入、脚本生成与任何科学参数修改——那些仍需你逐项确认。
               开启「上传」后，AI 把你已登记的文件（含 POTCAR 与你自备的 run.sh）传到该任务的超算作业目录时也不再逐次弹卡；
               上传只写入本任务自己选定的超算工作区，不会提交作业。
+            </Text>
+          </Col>
+        </Row>
+      ))}
+
+      {section("POTCAR 自动生成（可选 · 默认关闭）", <ExperimentOutlined />, (
+        <Row gutter={16}>
+          <Col span={24}>
+            <Space>
+              <Switch aria-label="允许用 vaspkit 在超算作业目录生成 POTCAR"
+                      checked={form.allow_potcar_assembly}
+                      onChange={(v) => void togglePotcarAssembly(v)} />
+              <Text>允许用 vaspkit 在超算作业目录生成 POTCAR</Text>
+            </Space>
+          </Col>
+          <Col span={24}>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              缺 POTCAR 时，AI 可用超算上的 vaspkit 生成：<b>数据集由 vaspkit 自己的默认规则决定</b>，
+              每次生成都会单独弹确认卡（<b>永不自动批准、不进免批范围</b>）。超算上需已装好 vaspkit（系统会先探测）。
+              VASP 赝势（POTCAR）的使用许可与适用性由你负责；本项只做自动化调用与机械校验。
+            </Text>
+          </Col>
+        </Row>
+      ))}
+
+      {section("提交脚本模板（可选 · 默认关闭）", <FileTextOutlined />, (
+        <Row gutter={16}>
+          <Col span={24}>
+            <Text>模板路径（超算上的绝对路径，.sh 结尾；一份模板通吃所有作业）</Text>
+            <Input
+              placeholder="如 /publicfs03/fs03-a2/home/demo-user/templates/run.sh"
+              value={form.submit_script_template}
+              onChange={(e) => setForm((p) => ({ ...p, submit_script_template: e.target.value }))} />
+          </Col>
+          <Col span={24}>
+            <Space>
+              <Switch aria-label="允许 AI 把模板脚本复制到作业目录"
+                      checked={form.allow_script_deploy}
+                      onChange={(v) => void toggleScriptDeploy(v)} />
+              <Text>允许 AI 把模板脚本复制到作业目录</Text>
+            </Space>
+          </Col>
+          <Col span={24}>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              开启后 AI 只做<b>逐字节复制</b>：不修改、不改名、不执行；脚本内容对 AI 不可见；
+              作业目录里已有其它 *.sh 会被拒绝（不覆盖、不删除）。复制后仍需你认领该脚本，提交作业仍要单独确认。
             </Text>
           </Col>
         </Row>
