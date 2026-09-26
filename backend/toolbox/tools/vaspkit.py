@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import shlex
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -119,23 +120,79 @@ def potcar_menu_code(menu_text: str) -> tuple[str, bool]:
     并标记为可能连带改动其他输入文件（卡片上会写明）。
     """
     broad = ""
+    fallback = ""
     for line in (menu_text or "").splitlines():
-        if "POTCAR" not in line.upper():
+        upper = line.upper()
+        if "POTCAR" not in upper:
             continue
         numbers = _extract_numbers(line)
         if not numbers:
             continue
-        if any(hint in line.lower() for hint in _BROAD_TASK_HINTS):
+        low = line.lower()
+        if "user specified" in low or "specified potential" in low:
+            # 让用户指定赝势的那种：也只会生成 POTCAR，但不是"听默认的"，留作保底
+            fallback = fallback or numbers[0]
+            continue
+        if "default" in low:
+            return numbers[0], True
+        if any(hint in low for hint in _BROAD_TASK_HINTS):
             broad = broad or numbers[0]
             continue
         return numbers[0], True
-    return broad, False
+    if broad:
+        return broad, False
+    return fallback, True
+
+
+def vasp_input_menu_code(menu_text: str) -> str:
+    """主菜单里「VASP Input-Files Generator」那一项的两位菜单号（1.5.x 是两级菜单）。"""
+    for line in (menu_text or "").splitlines():
+        low = line.lower()
+        if "vasp input" not in low or "generator" not in low:
+            continue
+        found = re.search(r"^\s*([0-9]{2})\)", line)
+        if found:
+            return found.group(1)
+    return ""
+
+
+_VERSION_RE = re.compile(r"VASPKIT\s+[A-Za-z ]*Edition\s+([0-9][0-9.]*)")
+
+
+def parse_version(text: str) -> str:
+    """从 banner 里读版本号（1.5.x 的 `-v` 是非法参数，只能从 banner 读）。"""
+    found = _VERSION_RE.search(text or "")
+    return found.group(1) if found else ""
+
+
+def _run_text(run: Run, command: str, timeout: float) -> str:
+    """跑一条只读探测命令，返回 stdout（失败/为空都返回空串）。"""
+    try:
+        code, out, _err = run(command, timeout=timeout)
+    except Exception:  # noqa: BLE001 - 探测命令失败按"读不到"处理
+        return ""
+    return (out or "") if code == 0 or (out or "").strip() else ""
+
+
+def read_menu(run: Run, path: str, *, timeout: float = 30.0) -> str:
+    """拿菜单文本：1.5.x 靠 `printf '0\\n' | vaspkit`（主菜单 + 版本 banner），
+    老版本退回 `-h` / `-v`。全部失败返回空串。"""
+    quoted = shlex.quote(path)
+    for command in (f"printf '0\\n' | {quoted}", f"{quoted} -h", f"{quoted} -v"):
+        text = _run_text(run, command, timeout)
+        if (text or "").strip():
+            return text
+    return ""
 
 
 def probe_vaspkit(run: Run, *, timeout: int = 30) -> VaspkitSkill:
-    """在超算侧探测 vaspkit：先定位可执行文件，再尽力读版本/能力信息。
+    """在超算侧探测 vaspkit：定位可执行文件、读版本、读 POTCAR 菜单号。
 
-    探测失败一律返回 ``found=False``，不抛异常（保证集成可用性）。
+    兼容两种风格：
+    - 1.5.x：`-v`/`-h` 是非法参数，版本在 banner 里，POTCAR 在「VASP Input-Files
+      Generator」二级菜单里（实测 1.5.1 是 `103) Generate POTCAR File with Default Setting`）；
+    - 老版本：扁平菜单，POTCAR 行直接出现在 `-h` 输出里。
+    探测失败一律返回 ``found=False`` / 空字段，不抛异常。
     """
     skill = VaspkitSkill()
     try:
@@ -145,25 +202,30 @@ def probe_vaspkit(run: Run, *, timeout: int = 30) -> VaspkitSkill:
             return skill
         skill.path = _safe_path(lines[0])
         skill.found = True
-        try:
-            vc, vout, _ = run(f"{skill.path} -v", timeout=timeout)
-            if _run_ok(vc) and (vout or "").strip():
-                skill.version = (vout or "").strip().splitlines()[0][:80]
-        except Exception:  # noqa: BLE001
-            pass
-        cap_text = ""
-        for cmd in (f"{skill.path} -h", f"echo 0 | {skill.path}"):
-            try:
-                hc, hout, _ = run(cmd, timeout=timeout)
-                if _run_ok(hc) and (hout or "").strip():
-                    cap_text = hout
-                    break
-            except Exception:  # noqa: BLE001
-                continue
+        cap_text = read_menu(run, skill.path, timeout=timeout)
+        if not cap_text.strip():
+            _sync_notes(skill)
+            return skill
+        skill.version = parse_version(cap_text)
+        direct, direct_only = potcar_menu_code(cap_text)
+        if direct:
+            skill.potcar_code, skill.potcar_only = direct, direct_only
+        else:
+            parent = vasp_input_menu_code(cap_text)
+            if parent:
+                quoted = shlex.quote(skill.path)
+                sub = _run_text(run, f"printf '{parent}\\n0\\n' | {quoted}", timeout)
+                if sub.strip():
+                    cap_text = f"{cap_text}\n{sub}"
+                    found, only = potcar_menu_code(sub)
+                    if found:
+                        skill.potcar_code, skill.potcar_only = found, only
         skill.tasks = _detect_tasks(cap_text)
-        skill.potcar_code, skill.potcar_only = potcar_menu_code(cap_text)
+        if skill.potcar_code:
+            skill.tasks.setdefault("potcar", [skill.potcar_code])
         _sync_notes(skill)
-        logger.info("vaspkit 探测完成: found=%s path=%s", skill.found, skill.path)
+        logger.info("vaspkit 探测完成: found=%s path=%s version=%s potcar=%s",
+                    skill.found, skill.path, skill.version, skill.potcar_code)
     except Exception as exc:  # noqa: BLE001
         logger.warning("vaspkit 探测异常，按未发现处理: %s", exc)
         skill.found = False
