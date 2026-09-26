@@ -17,7 +17,7 @@ import AiDirectoryPicker from '../components/ai/AiDirectoryPicker';
 import ToolboxTaskStatus, { ToolboxEnvironmentTags } from '../components/toolbox/ToolboxTaskStatus';
 import { aiApi, toolboxApi } from '../api/client';
 import { AI_JOB_STATUS_MAP } from '../types/ai';
-import { useAiTasks, useAiTaskCreate, useAiMessages, useAiTaskContext, useAiTaskUpdate, useAiTaskDelete, useToolboxTaskDetail } from '../hooks/useApi';
+import { useAiTasks, useAiTaskCreate, useAiMessages, useAiTaskContext, useAiTaskUpdate, useAiTaskDelete, useToolboxTaskDetail, useAiSettings } from '../hooks/useApi';
 import type { AiMessage as AiMsg, AiTask, AiConsentCard } from '../types/ai';
 
 const { Content } = Layout;
@@ -87,6 +87,11 @@ const AiProjectPage: React.FC = () => {
 
   const tasks = tasksQuery.data?.tasks ?? [];
   const selectedTask = tasks.find((t) => t.id === selectedTaskId) ?? null;
+  // 单条消息进入模型上下文的上限由后端下发，避免前后端各写一份常量。
+  const settingsQuery = useAiSettings(true);
+  const messageLimit = settingsQuery.data?.settings.message_char_limit ?? 2000;
+  const draftLength = input.trim().length;
+  const draftOverLimit = draftLength > messageLimit;
   const executionQuery = useToolboxTaskDetail(projectId, selectedTaskId, { observeOnly: true });
   const messagesQuery = useAiMessages(projectId, selectedTaskId);
   const taskContextQuery = useAiTaskContext(projectId, selectedTaskId);
@@ -265,6 +270,10 @@ const AiProjectPage: React.FC = () => {
   const send = async () => {
     const content = input.trim();
     if (!content || !selectedTask || conversationBusy) return;
+    if (content.length > messageLimit) {
+      // 后端按上限截断后才会进模型上下文；这里如实告知，避免用户以为全文都被读到。
+      message.warning(`本条消息 ${content.length} 字，超过 ${messageLimit} 字上限；超出部分不会进入模型上下文，建议分段发送。`);
+    }
     const taskId = selectedTask.id;
     const requestId = ++streamSequenceRef.current;
     const controller = new AbortController();
@@ -502,6 +511,11 @@ const AiProjectPage: React.FC = () => {
                 </Button>
               )}
             </div>
+            {draftOverLimit && (
+              <div style={{ marginTop: 6, fontSize: 12, color: '#d46b08' }}>
+                本条消息 {draftLength} 字，超过 {messageLimit} 字上限；超出部分不会进入模型上下文，建议分段发送。
+              </div>
+            )}
           </div>
         )}
       </Content>

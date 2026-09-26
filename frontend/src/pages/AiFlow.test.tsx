@@ -357,4 +357,20 @@ describe('AI 前端整合（M12）', () => {
     expect(screen.getByLabelText('输入新的密钥以整体替换')).toBeDisabled();
     expect(screen.getByRole('button', { name: /清\s*除/ })).toBeDisabled();
   });
+
+  it('草稿超过单条上下文上限时提示会被截断', async () => {
+    server.use(http.get('/ai/v1/settings', () => HttpResponse.json({
+      mode: 'ai', enabled: true, writable: [],
+      settings: {
+        enabled: true, max_jobs: 20, poll_interval_seconds: 60, message_char_limit: 5,
+        llm: { base_url: '', model: '', provider: 'auto', api_key: '' },
+        ssh: { name: '', host: '', port: 22, username: '', known_hosts_path: '', identity_file: '', scheduler_backend: 'slurm' },
+        materials_project: { api_key: '' },
+      },
+    })));
+    renderPath('/ai/projects/prj_001');
+    const input = await screen.findByPlaceholderText(/描述计算需求/);
+    await userEvent.type(input, '1234567890');
+    expect(await screen.findByText(/超过 5 字上限/)).toBeInTheDocument();
+  });
 });

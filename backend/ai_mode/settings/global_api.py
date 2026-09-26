@@ -108,12 +108,16 @@ def _coerce(key: str, raw) -> object:
 
 def mask_config(config: AiModeConfig) -> dict:
     """把配置汇总结成可安全对外展示的字典（密钥一律掩码）。"""
+    # 前端据此外提示“本条消息会被截断”（与后端上下文构造共用同一常量）。
+    from ..agent.runner import MESSAGE_CHAR_LIMIT
+
     return {
         "enabled": config.enabled,
         "data_dir": str(config.data_dir),
         "max_jobs": config.max_jobs,
         "poll_interval_seconds": config.poll_interval_seconds,
         "billing_estimate_enabled": config.billing_estimate_enabled,
+        "message_char_limit": MESSAGE_CHAR_LIMIT,
         "llm": {
             "base_url": config.llm_base_url,
             "model": config.llm_model,
