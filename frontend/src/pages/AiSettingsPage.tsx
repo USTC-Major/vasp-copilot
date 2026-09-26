@@ -24,9 +24,10 @@ interface Form {
   llm_model: string;
   llm_provider: string;
   llm_enable_thinking: boolean;
-  // 全局免批范围（仅两类机械操作）；科学输入/脚本/提交永远逐项确认。
+  // 全局免批范围（仅机械操作）；科学输入/结构导入/脚本生成/提交永远逐项确认。
   auto_copy_inputs: boolean;
   auto_generate_kpoints: boolean;
+  auto_hpc_upload: boolean;
   llm_api_key: string;
   mp_api_key: string;
   ssh_name: string;
@@ -49,6 +50,7 @@ const toForm = (settings: AiSettingsOut): Form => ({
   llm_enable_thinking: settings.llm.enable_thinking ?? false,
   auto_copy_inputs: (settings.auto_approve_kinds ?? []).includes("copy_inputs"),
   auto_generate_kpoints: (settings.auto_approve_kinds ?? []).includes("generate_kpoints"),
+  auto_hpc_upload: (settings.auto_approve_kinds ?? []).includes("hpc_upload"),
   llm_api_key: "",
   mp_api_key: "",
   ssh_name: settings.ssh.name ?? "",
@@ -100,6 +102,7 @@ const AiSettingsPage: React.FC = () => {
   patchFields.auto_approve_kinds = [
     ...(form.auto_copy_inputs ? ["copy_inputs"] : []),
     ...(form.auto_generate_kpoints ? ["generate_kpoints"] : []),
+    ...(form.auto_hpc_upload ? ["hpc_upload"] : []),
   ];
 
   const confirmOverwrite = (conflicts: string[]) =>
@@ -262,10 +265,19 @@ const AiSettingsPage: React.FC = () => {
               <Text>确定性生成 KPOINTS 网格</Text>
             </Space>
           </Col>
+          <Col span={12}>
+            <Space>
+              <Switch aria-label="上传已登记文件到超算工作区" checked={form.auto_hpc_upload}
+                      onChange={(v) => setForm((p) => ({ ...p, auto_hpc_upload: v }))} />
+              <Text>上传已登记文件到超算工作区</Text>
+            </Space>
+          </Col>
           <Col span={24}>
             <Text type="secondary" style={{ fontSize: 12 }}>
-              开启后这两类操作由 Toolbox 直接批准执行、不再逐张弹卡（全局生效，默认关闭）。
-              <b>不含</b> POTCAR、提交脚本、提交计算、结构导入与任何科学参数修改——那些仍需你逐项确认。
+              开启后这类操作由 Toolbox 直接批准执行、不再逐张弹卡（全局生效，默认关闭，每个动作仍单独留执行回执）。
+              <b>不含</b> 提交计算、结构导入、脚本生成与任何科学参数修改——那些仍需你逐项确认。
+              开启「上传」后，AI 把你已登记的文件（含 POTCAR 与你自备的 run.sh）传到该任务的超算作业目录时也不再逐次弹卡；
+              上传只写入本任务自己选定的超算工作区，不会提交作业。
             </Text>
           </Col>
         </Row>

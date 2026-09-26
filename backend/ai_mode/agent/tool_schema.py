@@ -8,7 +8,7 @@ def _all_tools_text() -> str:
         "- mp_import_poscar：按明确材料 ID 获取真实结构，由确定性代码生成 POSCAR 预览和一次性确认卡；确认前不写本地文件，绝不上传或提交。material_id 必须是本轮 mp_search 实际返回的值（形如 mp-aaaditqj），旧数字 ID 已被 MP 停用、会得到 MP_ID_STALE。默认保存任务本地工作区根目录 POSCAR，可用已规划 job_key 指定子目录。多个候选须先让用户选 ID/晶相，不得擅自挑选。args: {\"material_id\":\"mp-aaaditqj\",\"job_key\":\"\"}\n"
         "- hpc_list：列出超算工作区（hpc_dir）远端目录内容（只读；计算发生地，超算上的文件一律用它看）。args: {\"path\":\"相对子目录，可空\"}\n"
         "- hpc_read：读取超算工作区内某个文本文件（只读、有界）。args: {\"path\":\"相对路径\"}\n"
-        "- hpc_upload：请求把已登记的本地工作区文件上传到超算工作区；该操作只生成逐次确认卡，确认前绝不写远端。args: {\"artifact_id\":\"用户已登记文件 ID\",\"job_key\":\"作业 key\"}\n"
+        "- hpc_upload：请求把已登记的本地工作区文件上传到超算工作区；默认只生成逐次确认卡，确认前绝不写远端（若用户在智能设置里开启了「上传」免批，则由 Toolbox 直接执行并返回 [AUTO_APPROVED] 回执）。一次调用只传一个文件——要传多个文件，请在**同一条回复里连续写多个 hpc_upload 标记**（协议支持一次多个工具），系统会把它们合并成一组让用户一次点击整批批准；不要一个文件一轮。args: {\"artifact_id\":\"用户已登记文件 ID\",\"job_key\":\"作业 key\"}\n"
         "- stop_monitor：终止当前计算流程（用户明确表示不做了/换思路/作业作废时调用）：全部未完成作业置 canceled、停止后台监控与后续提交流程；已在超算运行的作业会给出 scancel 建议。args: {}\n"
         "- plan：自主制定计算计划并落库（作业数/类型/顺序由你决定）。作业 key 请用语义化英文名（如 relax/static/band/dos），label 用中文。有先后依赖的作业必须用 requires 声明依赖（如 {\"key\":\"relax/static\",\"requires\":[\"relax\"]}）；前序 completed 只会解锁后续，重新预检并由用户再次确认后才能提交。依赖链作业 key/目录用嵌套路径依次往下建（relax → relax/static → relax/static/dos），独立作业才并列。args: {\"strategy\":\"策略\",\"jobs\":[{\"key\":\"relax\",\"label\":\"结构优化\",\"kind\":\"relax\"}]}\n"
         "- copy_inputs：请求把用户已登记输入复制到计算目录；只接受 artifact_id 与作业 key，确认前不写文件。args: {\"artifact_ids\":[\"用户已登记文件 ID\"],\"job_key\":\"relax\"}\n"

@@ -691,7 +691,8 @@ class ToolExecutor:
         decision = resolve_card(
             self.store, self.project_id, self.task_id, card["card_id"],
             approved=True,
-            note=f"按智能设置中开启的免批范围自动批准（{kind}；不含 POTCAR/脚本/提交）")
+            note=(f"按智能设置中开启的免批范围自动批准（{kind}；"
+                  "科学参数、结构导入、脚本生成与提交永不免批）"))
         if decision.get("state") != "approved":
             return None
         receipt = self.execute_action(card["card_id"])
@@ -1036,6 +1037,9 @@ class ToolExecutor:
                 else:
                     files.discard_legacy_candidate(hpc)
             raise
+        auto = self._auto_approve_and_execute(saved, "hpc_upload")
+        if auto is not None:
+            return auto
         raise PendingConsentError(saved)
 
     # ---------------- 永久禁用的提交脚本写入兼容入口 ----------------

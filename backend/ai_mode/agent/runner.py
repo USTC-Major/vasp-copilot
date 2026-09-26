@@ -279,6 +279,9 @@ def build_messages(store: ProjectStore, task: dict, history: list[dict],
         "AI_ARTIFACT_REQUIRED，白白浪费一轮。\n"
         "- 工具失败时只引用回执里的**错误码与原文**，再给下一步；不得自行推测原因。"
         "例如不要把「漏传参数被拒」说成「被安全策略拦截」，也不要把失败归因到你没有证据的地方。\n"
+        "- 需要用户确认的同类机械操作（尤其是上传：一个文件一次 hpc_upload 调用），"
+        "必须在**同一条回复里连续写出多个工具标记**（协议支持一次多个，上限约 8 个），"
+        "系统会把它们合成一组让用户一次点击整批批准；不要一个文件一轮，那会让用户逐张点确认。\n"
         "- 任务里选定的工作区本身就是授权：本地工作区、超算工作区在**建任务时选定**，"
         "系统会据此登记文件根，并在每次规划落地后自动为每个待准备作业派生文件范围"
         "（remote_file_context 的 file_scopes 里，job_key/attempt_id 与你当前作业一致的那条就是）。"
@@ -455,13 +458,14 @@ def _submit_card_events(store, project_id: str, task_id: str,
 
 def _wait_card_decision(store, project_id: str, task_id: str, card_id: str,
                         req, *, executor: ToolExecutor,
-                        should_stop) -> tuple[str, str]:
+                        should_stop, deadline: float | None = None) -> tuple[str, str]:
     """Wait for one action decision and execute its immutable binding once.
 
     The original tool request is intentionally never replayed.
     """
     del req
-    deadline = time.monotonic() + _CONSENT_TIMEOUT_SECONDS
+    if deadline is None:
+        deadline = time.monotonic() + _CONSENT_TIMEOUT_SECONDS
     while time.monotonic() < deadline:
         if should_stop is not None and should_stop():
             return ("stopped", "")
@@ -477,6 +481,30 @@ def _wait_card_decision(store, project_id: str, task_id: str, card_id: str,
             return (state, str(action.get("result") or {"expired": "授权已过期，未执行", "failed": "操作失败，请查看执行记录", "unknown": "执行结果未知，请核对远端任务；不得自动重试"}[state]))
         time.sleep(_CONSENT_POLL_INTERVAL)
     return ("timeout", "等待授权超时，已停止该操作")
+
+
+def _pending_card_id(note: str) -> str:
+    """工具回执是"等待授权"时取出卡号；否则返回空串。"""
+    return note[len(_CONSENT_PENDING):] if note.startswith(_CONSENT_PENDING) else ""
+
+
+def _wait_card_group(store, project_id: str, task_id: str, cards: list[tuple[object, str]],
+                     *, executor: ToolExecutor, should_stop) -> tuple[str, str]:
+    """等这一批卡片的决议，返回 (state, 回执)。state=='executed' 时回执是逐项合并文本。
+
+    关键点：用户对整批点一次「全部批准」时，后面的卡在进入等待前就已经有决议，
+    因此这一轮会立刻收敛，不需要逐张再点；超时按整批共用一个截止时间，不叠加。
+    """
+    deadline = time.monotonic() + _CONSENT_TIMEOUT_SECONDS
+    receipts: list[str] = []
+    for req, card_id in cards:
+        state, note = _wait_card_decision(store, project_id, task_id, card_id,
+                                          req, executor=executor,
+                                          should_stop=should_stop, deadline=deadline)
+        if state != "executed":
+            return state, note
+        receipts.append(note)
+    return "executed", "\n".join(receipts)
 
 
 def run_agent(store, project_id, task_id, content, *,
@@ -584,21 +612,25 @@ def _decision_loop(executor: ToolExecutor, llm, messages: list[Message], *,
         # 先记录 AI 的工具调用回合，再执行工具并回填回执
         messages.append({"role": "assistant", "content": text[:3000]})
         abort_loop = False
-        for req in turn.tools:
-            note = executor.handle(req.name, req.args)
-            tool_count += 1
-            if note.startswith(_CONSENT_PENDING):
-                if not auto_resume:
-                    abort_loop = True
-                    break
-                card_id = note[len(_CONSENT_PENDING):]
-                state, note2 = _wait_card_decision(
-                    executor.store, executor.project_id, executor.task_id,
-                    card_id, req, executor=executor,
-                    should_stop=should_stop)
-                if state == "executed":
-                    messages.append(_receipt_message(req.name, note2))
-                    continue
+        # 先让本回合所有工具都完成"提案"：该建的卡一次全建出来，同类卡片就能同时
+        # 出现在页面上，用户可以一次点击整批批准，而不是逐张等他点。
+        results = [(req, executor.handle(req.name, req.args)) for req in turn.tools]
+        tool_count += len(results)
+        group = [(req, card_id) for req, note in results
+                 if (card_id := _pending_card_id(note))]
+        if group and not auto_resume:
+            abort_loop = True
+        for req, note in results:
+            if _pending_card_id(note):
+                continue
+            messages.append(_receipt_message(req.name, note))
+        if group and auto_resume:
+            state, note2 = _wait_card_group(
+                executor.store, executor.project_id, executor.task_id, group,
+                executor=executor, should_stop=should_stop)
+            if state == "executed":
+                messages.append(_receipt_message(group[0][0].name, note2))
+            else:
                 abort_loop = True
                 if state == "denied":
                     note_tail = "（该操作被用户拒绝，已停止）"
@@ -608,8 +640,6 @@ def _decision_loop(executor: ToolExecutor, llm, messages: list[Message], *,
                     note_tail = note2
                 parts_all.append(note_tail)
                 parts_tail.append(note_tail)
-                break
-            messages.append(_receipt_message(req.name, note))
         if abort_loop:
             break
         if should_stop and should_stop():
@@ -818,28 +848,39 @@ def run_agent_stream(store, project_id, task_id, content, *,
         if first_turn.tools:
             # 工具轮：首轮正文属于“调用前的叙述”，之后产生的正文才是最终答复。
             parts_tail.clear()
-        for req in first_turn.tools:
-            note = executor.handle(req.name, req.args)
-            tool_count += 1
-            if note.startswith(_CONSENT_PENDING):
-                card_id = note[len(_CONSENT_PENDING):]
-                card = _get_consent_card(store, project_id, task_id, card_id)
-                if card:
-                    yield {"type": "card", "card": _stream_card(card)}
-                if not auto_resume:
-                    yield {"type": "done", "answer": _final_answer(parts_all, parts_tail)}
-                    return
-                state, note2 = _wait_card_decision(
-                    store, project_id, task_id, card_id, req,
-                    executor=executor, should_stop=should_stop)
-                if state == "executed":
-                    note = note2
-                    messages.append(_receipt_message(req.name, note))
-                    yield {"type": "status", "text": note}
-                    continue
-                if state == "stopped":
-                    yield {"type": "stopped", "answer": _final_answer(parts_all, parts_tail)}
-                    return
+        # 与后续轮一致：先把首轮所有工具跑完（该建的卡一次全建出来），
+        # 再把同类卡片一起交给用户，一次点击即可整批批准。
+        first_results = [(req, executor.handle(req.name, req.args))
+                         for req in first_turn.tools]
+        tool_count += len(first_results)
+        first_group = [(req, card_id) for req, note in first_results
+                       if (card_id := _pending_card_id(note))]
+        for req, note in first_results:
+            if not _pending_card_id(note):
+                continue
+            card = _get_consent_card(store, project_id, task_id,
+                                     _pending_card_id(note))
+            if card:
+                yield {"type": "card", "card": _stream_card(card)}
+        if first_group and not auto_resume:
+            yield {"type": "done", "answer": _final_answer(parts_all, parts_tail)}
+            return
+        for req, note in first_results:
+            if _pending_card_id(note):
+                continue
+            messages.append(_receipt_message(req.name, note))
+            yield {"type": "status", "text": note}
+        if first_group:
+            state, note2 = _wait_card_group(
+                store, project_id, task_id, first_group,
+                executor=executor, should_stop=should_stop)
+            if state == "executed":
+                messages.append(_receipt_message(first_group[0][0].name, note2))
+                yield {"type": "status", "text": note2}
+            elif state == "stopped":
+                yield {"type": "stopped", "answer": _final_answer(parts_all, parts_tail)}
+                return
+            else:
                 tail = ("该操作被用户拒绝，已停止" if state == "denied"
                         else note2 or "等待授权超时，已停止操作")
                 parts_all.append(tail)
@@ -847,8 +888,6 @@ def run_agent_stream(store, project_id, task_id, content, *,
                 yield {"type": "status", "text": tail}
                 yield {"type": "done", "answer": _final_answer(parts_all, parts_tail)}
                 return
-            messages.append(_receipt_message(req.name, note))
-            yield {"type": "status", "text": note}
         if (_flow_phase(store, project_id, task_id) == "await_submit"
                 and phase_before != "await_submit"):
             yield from _submit_card_events(store, project_id, task_id, parts_tail or parts_all)
@@ -916,29 +955,38 @@ def run_agent_stream(store, project_id, task_id, content, *,
             parts_tail.clear()                      # 工具轮：本轮正文属于“调用前的叙述”
             messages.append({"role": "assistant", "content": text[:3000]})
             phase_before = _flow_phase(store, project_id, task_id)
-            for req in turn.tools:
-                note = executor.handle(req.name, req.args)
-                tool_count += 1
-                if note.startswith(_CONSENT_PENDING):
-                    card_id = note[len(_CONSENT_PENDING):]
-                    card = _get_consent_card(store, project_id, task_id,
-                                             card_id)
-                    if card:
-                        yield {"type": "card", "card": _stream_card(card)}
-                    if not auto_resume:
-                        yield {"type": "done", "answer": _final_answer(parts_all, parts_tail)}
-                        return
-                    state, note2 = _wait_card_decision(
-                        store, project_id, task_id, card_id, req,
-                        executor=executor, should_stop=should_stop)
-                    if state == "executed":
-                        note = note2
-                        messages.append(_receipt_message(req.name, note))
-                        yield {"type": "status", "text": note}
-                        continue
-                    if state == "stopped":
-                        yield {"type": "stopped", "answer": _final_answer(parts_all, parts_tail)}
-                        return
+            # 先把本回合所有工具跑完（该建的卡一次全建出来），再把同类卡片一起
+            # 交给用户：页面上会合成一组，一次点击即可整批批准。
+            results = [(req, executor.handle(req.name, req.args)) for req in turn.tools]
+            tool_count += len(results)
+            group = [(req, card_id) for req, note in results
+                     if (card_id := _pending_card_id(note))]
+            for req, note in results:
+                if not _pending_card_id(note):
+                    continue
+                card = _get_consent_card(store, project_id, task_id,
+                                         _pending_card_id(note))
+                if card:
+                    yield {"type": "card", "card": _stream_card(card)}
+            if group and not auto_resume:
+                yield {"type": "done", "answer": _final_answer(parts_all, parts_tail)}
+                return
+            for req, note in results:
+                if _pending_card_id(note):
+                    continue
+                messages.append(_receipt_message(req.name, note))
+                yield {"type": "status", "text": note}
+            if group:
+                state, note2 = _wait_card_group(
+                    store, project_id, task_id, group,
+                    executor=executor, should_stop=should_stop)
+                if state == "executed":
+                    messages.append(_receipt_message(group[0][0].name, note2))
+                    yield {"type": "status", "text": note2}
+                elif state == "stopped":
+                    yield {"type": "stopped", "answer": _final_answer(parts_all, parts_tail)}
+                    return
+                else:
                     tail = ("该操作被用户拒绝，已停止" if state == "denied"
                             else note2 or "等待授权超时，已停止操作")
                     parts_all.append(tail)
@@ -946,8 +994,6 @@ def run_agent_stream(store, project_id, task_id, content, *,
                     yield {"type": "status", "text": tail}
                     yield {"type": "done", "answer": _final_answer(parts_all, parts_tail)}
                     return
-                messages.append(_receipt_message(req.name, note))
-                yield {"type": "status", "text": note}
             if (_flow_phase(store, project_id, task_id) == "await_submit"
                     and phase_before != "await_submit"):
                 yield from _submit_card_events(store, project_id, task_id, parts_tail or parts_all)

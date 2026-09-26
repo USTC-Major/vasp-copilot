@@ -136,13 +136,16 @@ it("免批范围开关默认关闭，开启后随设置一起提交", async () =
 
   const copySwitch = await screen.findByRole("switch", { name: /复制已登记输入到作业目录/ });
   const kpointsSwitch = screen.getByRole("switch", { name: /确定性生成 KPOINTS 网格/ });
+  const uploadSwitch = screen.getByRole("switch", { name: /上传已登记文件到超算工作区/ });
   expect(copySwitch).not.toBeChecked();
   expect(kpointsSwitch).not.toBeChecked();
+  expect(uploadSwitch).not.toBeChecked();
 
   await user.click(kpointsSwitch);
+  await user.click(uploadSwitch);
   await user.click(screen.getByRole("button", { name: "保存设置" }));
 
   await waitFor(() => expect(mocks.save).toHaveBeenCalledWith(expect.objectContaining({
-    auto_approve_kinds: ["generate_kpoints"],
+    auto_approve_kinds: ["generate_kpoints", "hpc_upload"],
   })));
 });

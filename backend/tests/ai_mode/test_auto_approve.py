@@ -1,4 +1,4 @@
-"""免批范围回归：全局设置开启后，仅 copy_inputs / generate_kpoints 自动执行。"""
+"""免批范围回归：全局设置开启后，仅白名单内的机械操作自动执行。"""
 import json
 from types import SimpleNamespace
 
@@ -29,7 +29,8 @@ def bare(tmp_path, monkeypatch):
 
 @pytest.fixture
 def authorized(tmp_path, monkeypatch):
-    return make_ctx(tmp_path, monkeypatch, ["copy_inputs", "generate_kpoints"])
+    return make_ctx(tmp_path, monkeypatch,
+                    ["copy_inputs", "generate_kpoints", "hpc_upload"])
 
 
 def plan_relax(ctx):
@@ -65,8 +66,12 @@ def test_scientific_card_ignores_scope(authorized):
 
 def test_script_and_submit_are_never_in_scope(bare):
     """白名单外的一切（脚本、提交、结构导入等）不接受免批配置。"""
-    assert normalize_auto_approve_kinds(["submit", "draft", "hpc_upload"]) == []
+    assert normalize_auto_approve_kinds(["submit", "draft", "propose_incar",
+                                         "retry_job"]) == []
     assert normalize_auto_approve_kinds(["copy_inputs", "submit"]) == ["copy_inputs"]
+    # 上传属于机械传输，可免批；顺序固定为白名单顺序
+    assert normalize_auto_approve_kinds(["hpc_upload", "copy_inputs"]) == \
+        ["copy_inputs", "hpc_upload"]
 
 
 def test_copy_inputs_runs_without_card_when_authorized(authorized):

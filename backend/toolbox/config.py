@@ -14,7 +14,7 @@ class ExecutionConfig(BaseModel):
     poll_interval_seconds: int = 60
     billing_estimate_enabled: bool = False
     #: 用户显式授权的免批范围（全局执行设置，默认空＝逐项确认）。
-    #: 仅限下面 AUTO_APPROVE_KINDS 里的两类机械操作；科学输入/脚本/提交永不免批。
+    #: 仅限下面 AUTO_APPROVE_KINDS 里的机械操作；科学输入/结构导入/脚本生成/提交永不免批。
     auto_approve_kinds: list[str] = Field(default_factory=list)
     ssh_name: str = ''
     ssh_host: str = ''
@@ -26,9 +26,10 @@ class ExecutionConfig(BaseModel):
     mp_api_key: str = ''
 
 
-#: 唯一允许免批的两类操作（复制已登记输入 / 确定性生成 KPOINTS）。
-#: 不含 POTCAR、提交脚本、提交计算、结构导入与任何科学参数修改。
-AUTO_APPROVE_KINDS = ('copy_inputs', 'generate_kpoints')
+#: 允许免批的机械操作（本地复制已登记输入 / 确定性生成 KPOINTS / 上传已登记文件到超算）。
+#: 不含提交计算、结构导入、脚本生成与任何科学参数修改；上传只是把用户已登记的文件
+#: 放进该任务自己选定的超算工作区，每个文件仍单独留执行回执。
+AUTO_APPROVE_KINDS = ('copy_inputs', 'generate_kpoints', 'hpc_upload')
 
 
 def normalize_auto_approve_kinds(value: object) -> list[str]:

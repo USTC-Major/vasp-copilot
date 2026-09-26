@@ -4,16 +4,18 @@
 import json
 from types import SimpleNamespace
 import hashlib
+import time
 
 import pytest
 
 from ai_mode.agent import parse_turn, run_agent, run_agent_stream
-from ai_mode.agent.runner import _strip_receipt_wait
+from ai_mode.agent.runner import _strip_receipt_wait, _wait_card_group
 from ai_mode.agent.protocol import INTENT_MARK, TOOL_MARK
 from ai_mode.agent.tools import _CONSENT_PENDING
 from backend.tests.toolbox.legacy_bridge import ToolExecutor
 from ai_mode.config import AiModeConfig
-from backend.toolbox.consent import claim_action, get_card, resolve_card
+from backend.toolbox.consent import (claim_action, get_card, list_cards,
+                                     resolve_card)
 from ai_mode.llm.fake import FakeLLM
 from backend.tests.toolbox.legacy_bridge import ProjectStore
 from backend.tests.valid_vasp_inputs import FILES as VALID_INPUTS
@@ -1549,3 +1551,96 @@ def test_action_failure_text_keeps_error_code():
     text = _action_failure_text(exc)
     assert "SCOPE_EXPIRED" in text and "expired" in text
     assert _action_failure_text(ValueError("plain")).startswith("操作失败且未重试：ValueError")
+
+
+# ---------------- 同类卡片一次批准（用户点一次，整批继续） ----------------
+def _two_jobs(ctx):
+    ToolExecutor(store=ctx.store, project_id=ctx.pid, task_id=ctx.tid,
+                 cfg=ctx.cfg).handle("plan", {"jobs": [
+        {"key": "relax", "label": "结构优化", "kind": "relax"},
+        {"key": "static", "label": "静态自洽", "kind": "static"}]})
+
+
+def _two_kpoints_cards(ctx):
+    ex = ToolExecutor(store=ctx.store, project_id=ctx.pid, task_id=ctx.tid,
+                      cfg=ctx.cfg)
+    notes = [
+        ex.handle("generate_kpoints", {"job_key": "relax", "grid": [4, 4, 4],
+                                       "centering": "Gamma"}),
+        ex.handle("generate_kpoints", {"job_key": "static", "grid": [6, 6, 6],
+                                       "centering": "Gamma"}),
+    ]
+    assert all(note.startswith(_CONSENT_PENDING) for note in notes)
+    return ex, [(None, note[len(_CONSENT_PENDING):]) for note in notes]
+
+
+def test_wait_card_group_converges_after_one_batch_approval(ctx):
+    """两张卡都已批准执行时，整批等待立刻收敛并带回两条回执。"""
+    _two_jobs(ctx)
+    ex, cards = _two_kpoints_cards(ctx)
+    for _req, card_id in cards:
+        resolve_card(ctx.store, ctx.pid, ctx.tid, card_id, approved=True)
+        ex.execute_action(card_id)
+    state, note = _wait_card_group(ctx.store, ctx.pid, ctx.tid, cards,
+                                   executor=ex, should_stop=None)
+    assert state == "executed"
+    assert note.count("KPOINTS") >= 2
+    assert (ex.local_dir() / "relax" / "KPOINTS").is_file()
+    assert (ex.local_dir() / "static" / "KPOINTS").is_file()
+
+
+def test_wait_card_group_stops_at_the_first_unapproved_card(ctx):
+    """整批里有一张被拒 → 立即返回拒绝，不继续等后面的卡。"""
+    _two_jobs(ctx)
+    ex, cards = _two_kpoints_cards(ctx)
+    resolve_card(ctx.store, ctx.pid, ctx.tid, cards[0][1], approved=True)
+    ex.execute_action(cards[0][1])
+    resolve_card(ctx.store, ctx.pid, ctx.tid, cards[1][1], approved=False)
+    state, note = _wait_card_group(ctx.store, ctx.pid, ctx.tid, cards,
+                                   executor=ex, should_stop=None)
+    assert state == "denied"
+    assert not (ex.local_dir() / "static" / "KPOINTS").exists()
+
+
+def test_stream_turn_emits_two_cards_and_needs_one_approval(ctx):
+    """同一条回复里的两个待确认操作会同时出卡；用户整批批准后这一轮直接继续。"""
+    import threading
+    _two_jobs(ctx)
+    llm = FakeLLM()
+    llm.enqueue(_tool("generate_kpoints", job_key="relax", grid=[4, 4, 4],
+                      centering="Gamma")
+                + _tool("generate_kpoints", job_key="static", grid=[6, 6, 6],
+                        centering="Gamma"))
+    llm.enqueue("两个网格都已生成。")
+
+    approved: set[str] = set()
+
+    def approver():
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline and len(approved) < 2:
+            pending = list_cards(ctx.store, ctx.pid, ctx.tid)
+            if pending:
+                ex = ToolExecutor(store=ctx.store, project_id=ctx.pid,
+                                  task_id=ctx.tid, cfg=ctx.cfg)
+                for card in pending:
+                    resolve_card(ctx.store, ctx.pid, ctx.tid, card["card_id"],
+                                 approved=True)
+                    ex.execute_action(card["card_id"])
+                    approved.add(card["card_id"])
+            time.sleep(0.05)
+
+    worker = threading.Thread(target=approver, daemon=True)
+    worker.start()
+    events = list(run_agent_stream(ctx.store, ctx.pid, ctx.tid, "给我两个网格",
+                                  cfg=ctx.cfg, llm_factory=lambda c: llm))
+    worker.join(5)
+
+    cards = [e["card"] for e in events if e["type"] == "card"]
+    assert len(cards) == 2, events
+    status = " ".join(e.get("text", "") for e in events if e["type"] == "status")
+    assert status.count("KPOINTS") >= 2
+    assert events[-1]["type"] == "done"
+    local_dir = ToolExecutor(store=ctx.store, project_id=ctx.pid, task_id=ctx.tid,
+                             cfg=ctx.cfg).local_dir()
+    assert (local_dir / "relax" / "KPOINTS").is_file()
+    assert (local_dir / "static" / "KPOINTS").is_file()
