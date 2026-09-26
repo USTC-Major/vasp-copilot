@@ -126,13 +126,17 @@ def test_potcar_card_then_generation_records_datasets_and_hash(tmp_path):
         assert card and card["kind"] == "potcar_generate"
         assert "菜单号 103" in card["summary"]
         assert "Si" in card["summary"] and "vaspkit 自己决定" in card["summary"]
+        # 最重要的那条声明：本智能体不提供任何 POTCAR（避免版权问题）
+        assert "不提供、不分发任何 POTCAR" in card["reason"]
         assert card["risk"] == "high"
         assert f"{ROOT}/relax/POTCAR" not in hpc.files  # 确认前不生成
 
         saved = resolve_card(api, pid, tid, card["card_id"], True)["card"]
         assert saved["state"] == "executed", saved
         assert f"{ROOT}/relax/POTCAR" in hpc.files
-        assert "数据集 Si" in saved["result"] and "SHA-256" in saved["result"]
+        assert "数据集 Si" in saved["result"]
+        # 面向用户的回执要短：不带哈希、不带绝对路径（细节留在卡片与 flow 记录里）
+        assert "SHA-256" not in saved["result"] and "/review/" not in saved["result"]
         assert "Synthetic test metadata" not in saved["result"]  # 不回显 POTCAR 内容
         flow = api.app.state.toolbox.require_task(pid, tid)["flow"]
         record = flow["potcar_generations"]["relax"]
@@ -151,7 +155,9 @@ def test_potcar_generation_falls_back_to_the_interactive_menu(tmp_path):
         saved = resolve_card(api, pid, tid, card["card_id"], True)["card"]
         assert saved["state"] == "executed", saved
         assert f"{ROOT}/relax/POTCAR" in hpc.files
-        assert "菜单 103" in saved["result"]
+        # 用交互式菜单兜底：回执不含命令细节，但调用记录里能看到走了哪条路径
+        assert any(command.startswith("printf") and "POTCAR" not in command
+                   for command, _cwd in hpc.run_calls)
 
 
 def test_potcar_generation_refuses_when_poscar_changed(tmp_path):
@@ -248,6 +254,13 @@ def test_script_deploy_card_copies_bytes_verbatim(tmp_path):
         assert digest[:16] in saved["result"]
         flow = api.app.state.toolbox.require_task(pid, tid)["flow"]
         assert flow["script_deploys"]["relax"]["sha256"] == digest
+        # 「复制即认领」：批准复制卡本身就把该脚本登记为本次提交脚本（不再需要额外认领）
+        attestation = flow["script_attestations"]["relax"]
+        assert attestation["sha256"] == digest
+        assert attestation["claimed_by"] == "script_deploy"
+        assert attestation["script_name"] == "run.sh"
+        assert attestation["directory"] == f"{ROOT}/relax"
+        assert attestation["source"] == "remote"
 
 
 def test_script_deploy_never_overwrites_an_existing_script(tmp_path):
@@ -264,6 +277,7 @@ def test_script_deploy_never_overwrites_an_existing_script(tmp_path):
 
 
 def test_script_deploy_is_idempotent_for_the_same_copy(tmp_path):
+    """目录里已是同一份副本：不再写入，但照样出一张卡——批准即完成认领。"""
     hpc = VaspkitHPC()
     with _setup(tmp_path, hpc, allow_script_deploy=True,
                 submit_script_template=TEMPLATE) as (_c, api, hpc, pid, tid):
@@ -271,8 +285,31 @@ def test_script_deploy_is_idempotent_for_the_same_copy(tmp_path):
         hpc.files[TEMPLATE] = TEMPLATE_BYTES
         hpc.files[f"{ROOT}/relax/run.sh"] = TEMPLATE_BYTES
         out = call_tool(api, pid, tid, "deploy_submit_script", {"job_key": "relax"})
-        assert out["ok"] is True and out["pending"] is None
-        assert "没有重复复制" in out["result"]
+        card = out["pending"]
+        assert card and "不再写入" in card["summary"]
+        writes_before = list(hpc.write_calls)
+        saved = resolve_card(api, pid, tid, card["card_id"], True)["card"]
+        assert saved["state"] == "executed", saved
+        assert hpc.write_calls == writes_before          # 没有重复写入
+        assert "没有重复写入" in saved["result"]
+        flow = api.app.state.toolbox.require_task(pid, tid)["flow"]
+        assert flow["script_attestations"]["relax"]["claimed_by"] == "script_deploy"
+
+
+def test_deploy_card_attests_so_precheck_needs_no_extra_claim(tmp_path):
+    """复制即认领：批准复制卡后，预检不该再要求用户额外认领一次。"""
+    hpc = VaspkitHPC()
+    with _setup(tmp_path, hpc, allow_script_deploy=True,
+                submit_script_template=TEMPLATE) as (_c, api, hpc, pid, tid):
+        _remote_inputs(hpc)
+        hpc.files[f"{ROOT}/relax/POTCAR"] = VALID_INPUTS["POTCAR"]
+        hpc.files[TEMPLATE] = TEMPLATE_BYTES
+        card = call_tool(api, pid, tid, "deploy_submit_script",
+                         {"job_key": "relax"})["pending"]
+        resolve_card(api, pid, tid, card["card_id"], True)
+        out = call_tool(api, pid, tid, "precheck", {"job_key": "relax"})
+        assert out["ok"] is True, out.get("result")
+        assert "尚未由用户认领" not in str(out.get("result"))
 
 
 def test_script_deploy_refuses_when_template_changed(tmp_path):

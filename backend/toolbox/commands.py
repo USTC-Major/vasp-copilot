@@ -1182,8 +1182,11 @@ class ToolExecutor:
             tool="generate_potcar",
             args={"job_key": job["key"], "attempt_id": job.get("attempt_id")},
             risk="high",
-            reason=("POTCAR 直接决定计算结果：数据集由 vaspkit 按其默认规则选择，请确认元素顺序与"
-                    "用途后再生成；该命令会写入你的超算目录。VASP 赝势的许可与适用性由你负责。"),
+            reason=("本智能体**不提供、不分发任何 POTCAR/赝势文件**：POTCAR 始终由你（用户）自己准备，"
+                    "这里只是调用你超算账户里已装好的 vaspkit、用你自己的赝势库生成；"
+                    "赝势的版权与许可由你与 VASP 官方处理，本智能体不承担版权或科学正确性责任。"
+                    "POTCAR 直接决定计算结果：数据集由 vaspkit 按其默认规则选择，请确认元素顺序与用途；"
+                    "该命令会写入你的超算作业目录，生成后仍会做元素顺序与哈希校验。"),
             batch_key=f"potcar|{job['key']}|{calc}",
             kind="potcar_generate",
             summary=summary,
@@ -1258,10 +1261,9 @@ class ToolExecutor:
         self._save_flow(flow)
         note = ("；注意：vaspkit 还改动了 " + "、".join(changed)
                 + "（哈希已变化，请核对）") if changed else ""
-        return (f"已在 {calc} 用 vaspkit 生成 POTCAR："
-                f"数据集 {'、'.join(titles) or '（未能解析 TITEL）'}，与 POSCAR 元素顺序"
-                f"（{'、'.join(species)}）一致；{size} B，SHA-256 {digest[:16]}…。"
-                f"命令：{'；'.join(attempts)}。POTCAR 内容不会进入对话{note}。")
+        return (f"已在作业目录 {binding['job_key']} 生成 POTCAR："
+                f"数据集 {'、'.join(titles) or '（未能解析 TITEL）'}，与 POSCAR 元素顺序一致"
+                f"（{'、'.join(species)}）。内容不会进入对话{note}。")
 
     # ---------------- 提交脚本模板：逐字节复制（不修改、不生成） ----------------
     def tool_deploy_submit_script(self, args: dict) -> str:
@@ -1304,19 +1306,23 @@ class ToolExecutor:
             return ToolFailure('SCRIPT_TEMPLATE_INVALID', "模板脚本读取长度与远端不一致")
         digest = hashlib.sha256(data).hexdigest()
         name = template.rsplit("/", 1)[-1]
-        target = f"{calc}/{name}"
+        # 与 fingerprint_remote_submit_script 的规范化方式保持一致（认领比对要逐字相等）
+        target = posixpath.join(posixpath.normpath("/" + calc.lstrip("/")), name)
         existing = self._remote_sh_names(hpc, calc)
+        already_identical = False
         if existing:
             if (len(existing) == 1 and existing[0] == name
                     and self._remote_stat(hpc, target)
                     and hpc.sha256_file(target) == digest):
-                return (f"该作业目录里已经就是模板的副本：{target}"
-                        f"（SHA-256 {digest[:16]}…）；没有重复复制。请按既有流程认领该脚本。")
-            return ToolFailure(
-                'SCRIPT_ALREADY_PRESENT',
-                f"[SCRIPT_ALREADY_PRESENT] 作业目录 {calc} 里已有脚本 "
-                f"{'、'.join(existing)}；我只把模板复制进去，不覆盖、不删除已有脚本。"
-                "请先处理该目录里的脚本（或换作业目录）后重试。")
+                # 目录里已经就是同一份副本：不再写入，但仍要一张确认卡——
+                # 用户批准这张卡即完成"认领"，之后就能直接进预检/草稿/提交。
+                already_identical = True
+            else:
+                return ToolFailure(
+                    'SCRIPT_ALREADY_PRESENT',
+                    f"[SCRIPT_ALREADY_PRESENT] 作业目录 {calc} 里已有脚本 "
+                    f"{'、'.join(existing)}；我只把模板复制进去，不覆盖、不删除已有脚本。"
+                    "请先处理该目录里的脚本（或换作业目录）后重试。")
         binding = {
             "operation": "script_deploy",
             "project_id": self.project_id, "task_id": self.task_id,
@@ -1325,19 +1331,26 @@ class ToolExecutor:
             "remote_root": root, "job_dir": calc,
             "template_path": template, "template_sha256": digest,
             "template_size": size, "script_name": name, "target_path": target,
+            "already_identical": already_identical,
         }
         payload = card_payload(
             tool="deploy_submit_script",
             args={"job_key": job["key"], "attempt_id": job.get("attempt_id")},
             risk="medium",
-            reason=("只把你指定的模板逐字节复制进该作业目录：不修改、不改名、不执行；"
-                    "脚本内容我读不到。复制后仍需你按既有流程认领为本次提交脚本。"),
+            reason=("只把你指定的模板逐字节复制进该作业目录：不修改、不改名、不执行；脚本内容我读不到。"
+                    "**批准这张卡＝同时把该脚本认领为本次提交脚本**（绑定目标文件 SHA-256，"
+                    "提交前会再次复核哈希；提交作业仍需你另外确认一次）。"),
             batch_key=f"script|{job['key']}|{target}|{digest[:12]}",
             kind="script_deploy",
-            summary=(f"把提交脚本模板复制到作业目录：\n"
-                     f"- 模板：{template}（{size} B，SHA-256 {digest[:16]}…）\n"
-                     f"- 目标：{target}\n"
-                     f"- 逐字节复制，绝不修改；复制后仍需你认领。"),
+            summary=((f"作业目录里已经是这份模板的副本，不再写入：\n"
+                      f"- 模板：{template}（{size} B，SHA-256 {digest[:16]}…）\n"
+                      f"- 目录：{calc}\n"
+                      f"- 批准这张卡＝把该脚本认领为本次提交脚本（提交仍单独确认）。")
+                     if already_identical else
+                     (f"把提交脚本模板复制到作业目录：\n"
+                      f"- 模板：{template}（{size} B，SHA-256 {digest[:16]}…）\n"
+                      f"- 目标：{target}\n"
+                      f"- 逐字节复制，绝不修改；批准后即认领为本次提交脚本（提交仍单独确认）。")),
             binding=binding,
         )
         saved = save_card(self.store, self.project_id, self.task_id,
@@ -1367,24 +1380,52 @@ class ToolExecutor:
         if existing and not (len(existing) == 1
                              and existing[0] == binding.get("script_name")):
             raise ValueError("作业目录里出现了新的脚本，已拒绝覆盖：" + "、".join(existing))
-        atomic_write = getattr(hpc, "atomic_write_file", None)
-        if atomic_write is None:
-            raise ValueError("HPC adapter 不支持带校验的原子写入")
-        written = atomic_write(target, data, expected_sha256=binding["template_sha256"])
-        if written != len(data) or hpc.sha256_file(target) != binding["template_sha256"]:
-            raise ValueError("远端脚本哈希与模板不一致，请核对")
+        if binding.get("already_identical"):
+            # 提案时目录里就已是同一份副本：只复核哈希，不重复写入。
+            if hpc.sha256_file(target) != binding["template_sha256"]:
+                raise ValueError("目录里的脚本与模板已不一致，请重新提案")
+            target_size = int((self._remote_stat(hpc, target) or {}).get("size") or 0)
+        else:
+            atomic_write = getattr(hpc, "atomic_write_file", None)
+            if atomic_write is None:
+                raise ValueError("HPC adapter 不支持带校验的原子写入")
+            written = atomic_write(target, data, expected_sha256=binding["template_sha256"])
+            if written != len(data) or hpc.sha256_file(target) != binding["template_sha256"]:
+                raise ValueError("远端脚本哈希与模板不一致，请核对")
+            target_size = len(data)
         flow = self._load_flow()
         deploys = dict(flow.get("script_deploys") or {})
         deploys[binding["job_key"]] = {
             "template_path": template, "target_path": target,
-            "sha256": binding["template_sha256"], "size": len(data),
+            "sha256": binding["template_sha256"], "size": target_size,
             "deployed_at": _now_iso(),
         }
         flow["script_deploys"] = deploys
+        # 「复制即认领」：这张卡本身就是用户对**这一份精确字节**的确认（目标哈希已复核），
+        # 所以直接把它登记为本次提交脚本，省掉再点一次"认领"；提交作业仍需单独确认。
+        attestations = dict(flow.get("script_attestations") or {})
+        attestations[binding["job_key"]] = {
+            "job_key": binding["job_key"],
+            "attempt_id": binding.get("attempt_id"),
+            "source": "remote",
+            "directory": calc,
+            "script_name": binding.get("script_name"),
+            "normalized_path": target,
+            "sha256": binding["template_sha256"],
+            "size": target_size,
+            "action_id": binding.get("action_id") or "",
+            "claimed_by": "script_deploy",
+            "claimed_at": _now_iso(),
+        }
+        flow["script_attestations"] = attestations
         self._save_flow(flow)
-        return (f"已把模板 {template} 逐字复制到 {target}"
-                f"（{len(data)} B，SHA-256 {binding['template_sha256'][:16]}…，未修改任何字节）。"
-                "请核对后用既有流程认领该脚本；脚本内容不会进入对话。")
+        if binding.get("already_identical"):
+            return (f"{binding['job_key']} 作业目录里已是模板的同一份副本"
+                    f"（{binding.get('script_name')}，SHA-256 {binding['template_sha256'][:16]}…），"
+                    "没有重复写入；已认领为本次提交脚本（提交前会再复核哈希）。")
+        return (f"已把模板脚本逐字复制到 {binding['job_key']} 作业目录"
+                f"（{binding.get('script_name')}，SHA-256 {binding['template_sha256'][:16]}…，"
+                "未修改任何字节），并已认领为本次提交脚本（提交前会再复核哈希）。")
 
     # ---------------- 永久禁用的提交脚本写入兼容入口 ----------------
     def tool_hpc_write_script(self, args: dict) -> str:

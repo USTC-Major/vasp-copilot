@@ -130,10 +130,11 @@ const AiSettingsPage: React.FC = () => {
             <div>开启后，缺 POTCAR 时 AI 会用超算上的 vaspkit 在指定作业目录生成它：</div>
             <ul style={{ margin: "6px 0 6px 18px", padding: 0 }}>
               <li>用哪套赝势（数据集）由 <b>vaspkit 自己的默认规则</b>决定；系统不替你挑选，也不保证它符合你的计算目的。</li>
+              <li><b>本智能体不提供、不分发任何 POTCAR/赝势文件</b>：这里只是调用你超算账户里已装好的 vaspkit、用你自己的赝势库生成。</li>
               <li>生成会<b>写入你的超算作业目录</b>，且<b>每次都会单独弹确认卡</b>（永不自动批准、不进免批范围）。</li>
-              <li>VASP 赝势（POTCAR）的<b>使用许可与适用性由使用者负责</b>；本系统只做自动化调用与机械校验（元素顺序 / 哈希），不对科学正确性负责。</li>
+              <li>VASP 赝势的<b>版权、许可与适用性由使用者负责</b>（与 VASP 官方/发行方处理）；本系统只做自动化调用与机械校验（元素顺序），不承担版权或科学正确性责任。</li>
             </ul>
-            <div>你也可以保持关闭，自己把 POTCAR 放进作业目录。</div>
+            <div>你也可以保持关闭，自己把 POTCAR 放进作业目录（系统同样不提供 POTCAR）。</div>
           </div>
         ),
         okText: "我已知悉，开启",
@@ -160,7 +161,7 @@ const AiSettingsPage: React.FC = () => {
             <ul style={{ margin: "6px 0 6px 18px", padding: 0 }}>
               <li>不修改、不改名、不执行；脚本内容对 AI 不可见。</li>
               <li>作业目录里若已有其它 *.sh，会被拒绝（不覆盖、不删除）。</li>
-              <li>复制完成后仍需你<b>认领</b>该脚本；提交作业仍要单独确认。</li>
+              <li>你批准这张复制卡＝同时把该脚本<b>认领</b>为本次提交脚本（绑定文件指纹，提交前会再复核）；提交作业仍要单独确认。</li>
             </ul>
           </div>
         ),
@@ -365,7 +366,8 @@ const AiSettingsPage: React.FC = () => {
             <Text type="secondary" style={{ fontSize: 12 }}>
               缺 POTCAR 时，AI 可用超算上的 vaspkit 生成：<b>数据集由 vaspkit 自己的默认规则决定</b>，
               每次生成都会单独弹确认卡（<b>永不自动批准、不进免批范围</b>）。超算上需已装好 vaspkit（系统会先探测）。
-              VASP 赝势（POTCAR）的使用许可与适用性由你负责；本项只做自动化调用与机械校验。
+              <b>本智能体不提供、不分发任何 POTCAR/赝势文件</b>——用的是你自己超算账户里的 vaspkit 与赝势库；
+              赝势的版权、许可与适用性由你负责。
             </Text>
           </Col>
         </Row>
@@ -376,7 +378,7 @@ const AiSettingsPage: React.FC = () => {
           <Col span={24}>
             <Text>模板路径（超算上的绝对路径，.sh 结尾；一份模板通吃所有作业）</Text>
             <Input
-              placeholder="如 /publicfs03/fs03-a2/home/demo-user/templates/run.sh"
+              placeholder="如 /home/你的账号/templates/run.sh（超算上的绝对路径）"
               value={form.submit_script_template}
               onChange={(e) => setForm((p) => ({ ...p, submit_script_template: e.target.value }))} />
           </Col>
@@ -391,7 +393,8 @@ const AiSettingsPage: React.FC = () => {
           <Col span={24}>
             <Text type="secondary" style={{ fontSize: 12 }}>
               开启后 AI 只做<b>逐字节复制</b>：不修改、不改名、不执行；脚本内容对 AI 不可见；
-              作业目录里已有其它 *.sh 会被拒绝（不覆盖、不删除）。复制后仍需你认领该脚本，提交作业仍要单独确认。
+              作业目录里已有其它 *.sh 会被拒绝（不覆盖、不删除）。
+              你批准那张复制卡＝同时把脚本<b>认领</b>为本次提交脚本（绑定文件指纹），所以不用再额外点一次"认领"；提交作业仍要单独确认。
             </Text>
           </Col>
         </Row>

@@ -168,7 +168,9 @@ it("POTCAR 开关默认关闭：取消免责声明不生效，确认后才生效
   // 取消免责声明 → 开关保持关闭
   await user.click(potcar);
   expect((await screen.findAllByText(/开启 POTCAR 自动生成/)).length).toBeGreaterThan(0);
-  expect((await screen.findAllByText(/使用许可与适用性由使用者负责/)).length).toBeGreaterThan(0);
+  expect((await screen.findAllByText(/版权、许可与适用性由使用者负责/)).length).toBeGreaterThan(0);
+  // 最重要的那条声明必须在：本智能体不提供任何 POTCAR（避免版权问题）
+  expect((await screen.findAllByText(/不提供、不分发任何 POTCAR/)).length).toBeGreaterThan(0);
   await user.click(screen.getByRole("button", { name: /取\s*消/ }));
   await waitFor(() => expect(potcar).not.toBeChecked());
   clearModals();
@@ -193,7 +195,7 @@ it("提交脚本模板路径可填写，脚本复制开关确认后才生效", a
   const script = await screen.findByRole("switch", { name: /允许 AI 把模板脚本复制到作业目录/ });
   expect(script).not.toBeChecked();
   await user.type(screen.getByPlaceholderText(/templates\/run\.sh/),
-                  "/publicfs03/templates/run.sh");
+                  "/home/demo/templates/run.sh");
 
   await user.click(script);
   expect((await screen.findAllByText(/允许 AI 复制提交脚本模板/)).length).toBeGreaterThan(0);
@@ -204,6 +206,6 @@ it("提交脚本模板路径可填写，脚本复制开关确认后才生效", a
   await user.click(screen.getByRole("button", { name: "保存设置" }));
   await waitFor(() => expect(mocks.save).toHaveBeenCalledWith(expect.objectContaining({
     allow_script_deploy: true,
-    submit_script_template: "/publicfs03/templates/run.sh",
+    submit_script_template: "/home/demo/templates/run.sh",
   })));
 });

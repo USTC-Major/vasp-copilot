@@ -34,10 +34,19 @@ from .consent import get_card as _get_consent_card
 from .consent import list_cards as _list_consent_cards
 from .consent import task_lock as _task_state_lock
 from .agent.runner import _stream_card
+
 from .projects import get_project_store as _get_project_store
 from .storage import ensure_layout
 from .streaming import ACTIVE_STOPS as _ACTIVE_STOPS
 from .streaming import ChatRun, GenerationBusy, generation_status, request_stop
+
+
+def _generation_running(store, project_id: str, task_id: str) -> bool:
+    """对话轮是否正在进行；取不到状态时按"没有在跑"处理（回执就落库留痕）。"""
+    try:
+        return bool(generation_status(store, project_id, task_id).get('running'))
+    except Exception:  # noqa: BLE001 - 测试替身/异常时退回旧行为
+        return False
 
 logger = logging.getLogger("ai_mode")
 
@@ -622,7 +631,11 @@ def create_ai_mode_app() -> FastAPI:
                 'retryable': False}, 'card_id': card_id, 'kind': 'remote_file'})
         path = store.client.task_path(project_id, task_id) + '/consents/' + quote(card_id, safe='')
         result = store.client.request('POST', path, json={'approved': payload.get('approved'), 'note': payload.get('note', '')})
-        if result.get('result') and not result.get('replayed'):
+        # 回执只在"没有正在进行的对话轮"时才落成 assistant 消息：这时没有 AI 会替它
+        # 总结，用户需要留痕（例如上一个进程死掉后恢复的卡片）。
+        # 对话轮还在跑时，那张卡会被当轮 AI 收尾总结，不必再逐条刷"已把…复制到…"。
+        if (result.get('result') and not result.get('replayed')
+                and not _generation_running(store, project_id, task_id)):
             store.append_message(project_id, task_id, role='assistant', content=str(result['result']))
         return {**result, 'mode': 'ai', 'state': result['card']['state'], 'kind': result['card'].get('kind'), 'approved': payload.get('approved')}
 

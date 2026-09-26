@@ -540,12 +540,14 @@ const AiProjectPage: React.FC = () => {
                 <AiChatBubble key={`live-${idx}`} role={m.role} name={m.role === 'assistant' ? 'VASP 计算助手' : undefined}>
                   <>
                     {m.role === 'assistant' && m.thinking ? (
-                      <div style={{ marginBottom: 10, padding: '8px 12px', background: 'rgba(0,0,0,0.035)', borderRadius: 8, borderLeft: '3px solid #0071e3' }}>
-                        <Text strong style={{ fontSize: 12, display: 'block', marginBottom: 4, color: '#6e6e73' }}>
-                          <LoadingOutlined spin style={{ marginRight: 6 }} />思考过程
-                        </Text>
-                        <div style={{ whiteSpace: 'pre-wrap', color: '#6e6e73', fontSize: 13 }}>{m.thinking}</div>
-                      </div>
+                      // 思考过程默认收起：模型的自述/中间推理（常含英文）不占聊天版面，
+                      // 想看过程点一下即可展开。
+                      <details style={{ marginBottom: 10, padding: '8px 12px', background: 'rgba(0,0,0,0.035)', borderRadius: 8, borderLeft: '3px solid #0071e3' }}>
+                        <summary style={{ fontSize: 12, fontWeight: 600, color: '#6e6e73', cursor: 'pointer', userSelect: 'none' }}>
+                          思考过程 <Text type="secondary" style={{ fontSize: 11 }}>（点击展开）</Text>
+                        </summary>
+                        <div style={{ whiteSpace: 'pre-wrap', color: '#6e6e73', fontSize: 13, marginTop: 8 }}>{m.thinking}</div>
+                      </details>
                     ) : null}
                     {m.role === 'assistant' && !m.thinking && !m.content ? (
                       <div style={{ color: '#8a8a8e', fontSize: 13 }}>
