@@ -9,6 +9,9 @@ from backend.toolbox import secrets
 from backend.toolbox.config import ExecutionConfig
 from backend.toolbox.config import load_settings as toolbox_load
 from backend.toolbox.config import save_settings as toolbox_save
+from fastapi.testclient import TestClient
+
+from ai_mode.server import create_ai_mode_app
 
 
 class FailingBackend:
@@ -98,3 +101,14 @@ def test_toolbox_env_mp_key_is_not_persisted(tmp_path, monkeypatch):
     path = tmp_path / "toolbox_config.json"
     toolbox_save(ExecutionConfig(mp_api_key="mp-from-env"), config_path=path)
     assert "mp-from-env" not in path.read_text(encoding="utf-8")
+
+
+def test_secret_status_endpoint_reports_credential_store(monkeypatch, tmp_path):
+    """端点曾内联硬编码 local_config，密钥迁移后必须显示真实来源。"""
+    secrets.set_secret("llm_api_key", "sk-in-credential-store")
+    monkeypatch.setenv("ENABLE_AI_MODE", "true")
+    monkeypatch.setenv("VASP_AI_HOME", str(tmp_path / "home"))
+    client = TestClient(create_ai_mode_app())
+    body = client.get("/ai/v1/settings/secret-status").json()
+    assert body["secrets"]["llm"] == {
+        "configured": True, "source": "credential_store", "manageable": True}

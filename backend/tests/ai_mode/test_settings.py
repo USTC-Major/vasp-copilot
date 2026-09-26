@@ -244,8 +244,9 @@ def test_route_secrets_are_write_only_replace_or_clear(client):
     assert replaced.status_code == 200 and replaced.json()["configured"] is True
     assert "sk-localsecret" not in replaced.text
     status = client.get("/ai/v1/settings/secret-status")
+    # 密钥写入系统凭据管理器（此前落在本地配置文件）
     assert status.json()["secrets"]["llm"] == {
-        "configured": True, "source": "local_config", "manageable": True}
+        "configured": True, "source": "credential_store", "manageable": True}
     reveal = client.post("/ai/v1/settings/reveal", json={"kind": "llm"})
     assert reveal.status_code == 403
     assert reveal.json()["error"]["code"] == "AI_SECRET_REVEAL_DISABLED"
