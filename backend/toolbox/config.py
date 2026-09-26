@@ -16,6 +16,13 @@ class ExecutionConfig(BaseModel):
     #: 用户显式授权的免批范围（全局执行设置，默认空＝逐项确认）。
     #: 仅限下面 AUTO_APPROVE_KINDS 里的机械操作；科学输入/结构导入/脚本生成/提交永不免批。
     auto_approve_kinds: list[str] = Field(default_factory=list)
+    #: POTCAR：允许按 vaspkit 自己的默认选择在超算作业目录里生成（默认关）。
+    #: 打开时前端要弹风险提示与免责声明；每次生成仍单独弹卡，永不进入免批范围。
+    allow_potcar_assembly: bool = False
+    #: 提交脚本模板：超算上的绝对路径（一份通吃），以及是否允许 AI 把它复制进作业目录。
+    #: 复制是逐字节搬运用户自己的文件；AI 永远不能修改或生成脚本内容。
+    submit_script_template: str = ''
+    allow_script_deploy: bool = False
     ssh_name: str = ''
     ssh_host: str = ''
     ssh_port: int = 22
@@ -38,6 +45,29 @@ def normalize_auto_approve_kinds(value: object) -> list[str]:
         return []
     chosen = {str(item) for item in value}
     return [kind for kind in AUTO_APPROVE_KINDS if kind in chosen]
+
+
+def normalize_submit_script_template(value: object) -> str:
+    """脚本模板只接受「超算绝对路径 + .sh 结尾」；其余一律视为未配置。"""
+    text = str(value or '').strip().strip('"').strip("'")
+    if not text or not text.startswith('/') or text.endswith('/'):
+        return ''
+    if '\\' in text or any(ch in text for ch in '\r\n\t'):
+        return ''
+    if any(segment in {'..', ''} for segment in text.split('/')[1:]):
+        return ''
+    name = text.rsplit('/', 1)[-1]
+    if not name or name.startswith('.') or not name.lower().endswith('.sh'):
+        return ''
+    return text
+
+
+def as_bool(value: object) -> bool:
+    """真值解析：bool 原样，字符串按常见写法；读不懂一律 False（安全默认）。"""
+    if isinstance(value, bool):
+        return value
+    return str(value or '').strip().lower() in {'1', 'true', 'yes', 'on'}
+
 
 # Historical annotations are compatible; there are no AI settings on this type.
 AiModeConfig = ExecutionConfig
@@ -67,6 +97,11 @@ def load_settings(*, env: Mapping[str, str] | None = None, config_path: Path | N
     data['data_dir'] = root
     # 免批范围只认白名单；文件里写了未知值也不会生效（退回逐项确认）。
     data['auto_approve_kinds'] = normalize_auto_approve_kinds(data.get('auto_approve_kinds'))
+    # 脚本模板只认绝对 .sh 路径；两个新开关按真值解析，读不懂一律关。
+    data['submit_script_template'] = normalize_submit_script_template(
+        data.get('submit_script_template'))
+    data['allow_potcar_assembly'] = as_bool(data.get('allow_potcar_assembly'))
+    data['allow_script_deploy'] = as_bool(data.get('allow_script_deploy'))
     return ExecutionConfig(**data)
 
 def save_settings(config: ExecutionConfig, config_path: Path | None = None):

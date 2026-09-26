@@ -283,6 +283,9 @@ def settings_payload(svc):
     return envelope(settings={
         'max_jobs': cfg.max_jobs, 'poll_interval_seconds': cfg.poll_interval_seconds,
         'auto_approve_kinds': list(cfg.auto_approve_kinds),
+        'allow_potcar_assembly': bool(cfg.allow_potcar_assembly),
+        'allow_script_deploy': bool(cfg.allow_script_deploy),
+        'submit_script_template': str(cfg.submit_script_template or ''),
         'ssh': {key: getattr(cfg, 'ssh_' + key) for key in
                 ['name', 'host', 'port', 'username', 'known_hosts_path', 'identity_file']} | {'scheduler_backend': cfg.scheduler_backend},
         'materials_project': {'configured': bool(cfg.mp_api_key)},
@@ -295,7 +298,8 @@ def settings(request: Request):
 @router.put('/settings')
 def update_settings(request: Request, payload: dict):
     svc = service(request)
-    from .config import normalize_auto_approve_kinds
+    from .config import (as_bool, normalize_auto_approve_kinds,
+                         normalize_submit_script_template)
     allowed = set(ExecutionConfig.model_fields) - {'data_dir', 'mp_api_key'}
     if set(payload) - allowed:
         raise ToolboxError('INVALID_SETTINGS', '未知或禁止设置字段')
@@ -309,8 +313,12 @@ def update_settings(request: Request, payload: dict):
                 raise ValueError('auto_approve_kinds')
         except Exception:
             raise ToolboxError('INVALID_SETTINGS', '请检查端口、作业上限和轮询间隔（10–3600秒）') from None
-        cfg = cfg.model_copy(update={'auto_approve_kinds':
-                                     normalize_auto_approve_kinds(cfg.auto_approve_kinds)})
+        cfg = cfg.model_copy(update={
+            'auto_approve_kinds': normalize_auto_approve_kinds(cfg.auto_approve_kinds),
+            'submit_script_template': normalize_submit_script_template(cfg.submit_script_template),
+            'allow_potcar_assembly': as_bool(cfg.allow_potcar_assembly),
+            'allow_script_deploy': as_bool(cfg.allow_script_deploy),
+        })
         save_settings(cfg, svc.root / 'toolbox_config.json')
     return settings_payload(svc)
 

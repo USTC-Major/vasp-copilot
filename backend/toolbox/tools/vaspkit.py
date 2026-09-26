@@ -32,6 +32,10 @@ VASPKIT_TASKS: dict[str, tuple[str, ...]] = {
     "post": ("600", "601", "602", "700", "701", "702", "711"),
 }
 
+#: 菜单行里出现这些词，说明该任务不止生成 POTCAR（可能连 INCAR/KPOINTS 一起改）；
+#: 只有在菜单里找不到「只针对 POTCAR」的项时才退而求其次，并在卡片里说清楚。
+_BROAD_TASK_HINTS = ("input file", "input files", "incar", "kpoints", "all")
+
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -49,6 +53,8 @@ class VaspkitSkill:
     :param version: 版本号（尽力解析，可能为空）。
     :param path: 超算上 vaspkit 可执行文件路径。
     :param tasks: family -> 已探测到可用的任务号列表。
+    :param potcar_code: 从菜单里读到的 POTCAR 任务号；空字符串表示没读出来。
+    :param potcar_only: 该 POTCAR 任务是否只生成 POTCAR（不连带改 INCAR/KPOINTS）。
     :param notes: 探测小结（给 LLM 的文字说明）。
     :param detected_at: ISO 时间戳。
     """
@@ -57,12 +63,15 @@ class VaspkitSkill:
     version: str = ""
     path: str = ""
     tasks: dict[str, list[str]] = field(default_factory=dict)
+    potcar_code: str = ""
+    potcar_only: bool = False
     notes: str = ""
     detected_at: str = field(default_factory=_now_iso)
 
     def to_dict(self) -> dict:
         return {"found": self.found, "version": self.version, "path": self.path,
-                "tasks": self.tasks, "notes": self.notes,
+                "tasks": self.tasks, "potcar_code": self.potcar_code,
+                "potcar_only": self.potcar_only, "notes": self.notes,
                 "detected_at": self.detected_at}
 
     @classmethod
@@ -71,6 +80,8 @@ class VaspkitSkill:
                    version=str(data.get("version", "")),
                    path=str(data.get("path", "")),
                    tasks={str(k): [str(x) for x in v] for k, v in (data.get("tasks") or {}).items()},
+                   potcar_code=str(data.get("potcar_code", "")),
+                   potcar_only=bool(data.get("potcar_only", False)),
                    notes=str(data.get("notes", "")),
                    detected_at=str(data.get("detected_at", _now_iso())))
 
@@ -98,6 +109,27 @@ def _detect_tasks(stdout: str) -> dict[str, list[str]]:
 
 def _run_ok(code: int) -> bool:
     return code == 0
+
+
+def potcar_menu_code(menu_text: str) -> tuple[str, bool]:
+    """从 vaspkit 菜单文本里读 POTCAR 任务号（不猜编号，按菜单自己写的）。
+
+    返回 ``(code, 是否只针对 POTCAR)``：优先选描述里只有 POTCAR、不含
+    INCAR/KPOINTS/"input files" 的那一行；找不到就退回「提到 POTCAR 的任意一行」，
+    并标记为可能连带改动其他输入文件（卡片上会写明）。
+    """
+    broad = ""
+    for line in (menu_text or "").splitlines():
+        if "POTCAR" not in line.upper():
+            continue
+        numbers = _extract_numbers(line)
+        if not numbers:
+            continue
+        if any(hint in line.lower() for hint in _BROAD_TASK_HINTS):
+            broad = broad or numbers[0]
+            continue
+        return numbers[0], True
+    return broad, False
 
 
 def probe_vaspkit(run: Run, *, timeout: int = 30) -> VaspkitSkill:
@@ -129,6 +161,7 @@ def probe_vaspkit(run: Run, *, timeout: int = 30) -> VaspkitSkill:
             except Exception:  # noqa: BLE001
                 continue
         skill.tasks = _detect_tasks(cap_text)
+        skill.potcar_code, skill.potcar_only = potcar_menu_code(cap_text)
         _sync_notes(skill)
         logger.info("vaspkit 探测完成: found=%s path=%s", skill.found, skill.path)
     except Exception as exc:  # noqa: BLE001

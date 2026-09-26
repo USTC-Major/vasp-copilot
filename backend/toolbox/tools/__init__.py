@@ -17,6 +17,7 @@ from .slurm import (
 from .vaspkit import (
     VASPKIT_TASKS,
     VaspkitSkill,
+    potcar_menu_code,
     probe_and_store,
     probe_vaspkit,
     store_path,
@@ -27,6 +28,6 @@ __all__ = [
     "make_draft_only_submitter", "submit_command",
     "DEFAULT_DIRECTIVES", "DIRECTIVE_ALLOWLIST", "default_directives",
     "render_sbatch", "sanitize_text", "validate_directives",
-    "VASPKIT_TASKS", "VaspkitSkill", "probe_and_store", "probe_vaspkit",
-    "store_path",
+    "VASPKIT_TASKS", "VaspkitSkill", "potcar_menu_code", "probe_and_store",
+    "probe_vaspkit", "store_path",
 ]
