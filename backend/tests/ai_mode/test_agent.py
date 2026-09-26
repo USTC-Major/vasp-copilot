@@ -23,6 +23,45 @@ def _intent(kind: str = "compute") -> str:
     return INTENT_MARK + json.dumps({"intent": kind}, ensure_ascii=False)
 
 
+def test_execution_readiness_follows_the_toolbox_settings():
+    """就绪状态取执行侧（Toolbox /settings），不取智能模式自己的配置。"""
+    seen = []
+
+    class _Client:
+        def __init__(self, value=None, error=None):
+            self.value, self.error = value, error
+
+        def request(self, method, path, **kwargs):
+            seen.append((method, path, kwargs))
+            if self.error:
+                raise self.error
+            return self.value
+
+    payload = {"backend_mode": "Real",
+               "settings": {"ssh": {"host": "h", "username": "u"},
+                            "materials_project": {"configured": True}}}
+    from ai_mode.agent.tools import ToolExecutor as AgentToolExecutor
+    executor = AgentToolExecutor(store=None, project_id="p", task_id="t",
+                                 client=_Client(payload))
+    assert executor.execution_readiness() == {"ssh": True, "mp": True,
+                                              "backend_mode": "Real"}
+    assert seen == [("GET", "/settings", {})]
+
+    empty = AgentToolExecutor(store=None, project_id="p", task_id="t",
+                              client=_Client({"backend_mode": "None",
+                                              "settings": {"ssh": {},
+                                                           "materials_project": {}}}))
+    assert empty.execution_readiness() == {"ssh": False, "mp": False,
+                                           "backend_mode": "None"}
+
+    # 查询失败/响应异常一律返回 {}，让提示词退回原判定，不影响对话
+    broken = AgentToolExecutor(store=None, project_id="p", task_id="t",
+                               client=_Client(error=RuntimeError("toolbox down")))
+    assert broken.execution_readiness() == {}
+    assert AgentToolExecutor(store=None, project_id="p", task_id="t",
+                             client=_Client({"settings": "nope"})).execution_readiness() == {}
+
+
 def _tool(name: str, **args) -> str:
     payload = json.dumps({"name": name, "args": args, "reason": "r"},
                          ensure_ascii=False)

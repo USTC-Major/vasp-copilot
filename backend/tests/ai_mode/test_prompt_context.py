@@ -27,6 +27,11 @@ def build(ctx, history, content, cfg=None):
     return build_messages(ctx.store, task, history, content, cfg=cfg)
 
 
+def build_with_readiness(ctx, readiness, cfg=None):
+    task = ctx.store.get_task(ctx.pid, ctx.tid)
+    return build_messages(ctx.store, task, [], "你好", cfg=cfg, readiness=readiness)
+
+
 def user_texts(messages):
     return [m["content"] for m in messages if m["role"] == "user"]
 
@@ -104,6 +109,27 @@ def test_tool_schema_default_stays_complete():
     text = tool_schema_text()
     for name in GATED_TOOLS:
         assert f"- {name}：" in text
+
+
+def test_readiness_comes_from_the_execution_side_not_the_ai_config(ctx):
+    """执行设置归 Toolbox（8000）管：智能模式自己的配置里没有 SSH，
+    只看它会把「超算已配好」误判成「超算未配置」。"""
+    # 智能模式配置为空 + 执行侧报告就绪 → 超算工具必须保留
+    ready = build_with_readiness(ctx, {"ssh": True, "mp": True},
+                                 cfg=AiModeConfig())[0]["content"]
+    for name in GATED_TOOLS:
+        assert f"- {name}：" in ready
+    assert "尚未配置超算" not in ready
+    # 执行侧明确报告未就绪 → 仍然裁剪并给出引导
+    bare = build_with_readiness(ctx, {"ssh": False, "mp": False},
+                                cfg=AiModeConfig(ssh_host="host", ssh_username="user",
+                                                 mp_api_key="key"))[0]["content"]
+    for name in GATED_TOOLS:
+        assert f"- {name}：" not in bare
+    assert "尚未配置超算" in bare
+    # 就绪状态取不到 → 退回本地配置判定（旧行为）
+    fallback = build_with_readiness(ctx, {}, cfg=AiModeConfig())[0]["content"]
+    assert "尚未配置超算" in fallback
 
 
 def test_long_current_message_is_marked_not_silently_cut(ctx):
