@@ -183,5 +183,5 @@ def commit_incar_action(action: dict, *, root: Path) -> str:
     finally:
         if temp_name and os.path.exists(temp_name):
             os.unlink(temp_name)
-    return (f"已原子写入 `{rel}`（{len(data)} B，"
-            f"SHA-256 {binding['proposal_sha256'][:12]}…）")
+    # 面向用户的结果文案：说人话，不放哈希/实现术语（校验值仍在卡片记录里可核对）。
+    return f"已写入 {rel}。"

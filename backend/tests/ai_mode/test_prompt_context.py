@@ -62,6 +62,16 @@ def test_system_prompt_uses_current_product_name(ctx):
     assert "VASP-Doctor" not in system
 
 
+def test_system_prompt_forbids_engineering_jargon(ctx):
+    """面向用户必须说人话：禁止哈希/内部编号/实现术语，并给出反例与正例。"""
+    system = build(ctx, [], "你好")[0]["content"]
+    assert "面向用户的说法" in system
+    assert "已原子写入" in system          # 反例留在提示词里，明确禁止
+    assert "SHA-256" in system             # 反例里出现，但被标为禁止
+    assert "mp-xxxxxxx" in system          # 内部编号同样禁止
+    assert "Si 的金刚石结构" in system      # 正例示范
+
+
 def test_tools_are_trimmed_when_hpc_and_mp_are_unconfigured(ctx):
     ready = AiModeConfig(mp_api_key="test-key", ssh_host="host", ssh_username="user")
     full = build(ctx, [], "你好", cfg=ready)[0]["content"]

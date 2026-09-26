@@ -154,7 +154,9 @@ def test_import_consent_exact_content_and_no_hpc(ctx):
     assert "private-test-key" not in json.dumps(card)
     resolve(ctx, aid)
     result = ctx.ex.execute_action(aid)
-    assert "Materials Project mp-149" in result
+    # 面向用户的结果文案不再出现内部材料编号（技术信息仍留在卡片 binding 里）
+    assert "Materials Project 的标准结构" in result
+    assert "mp-149" not in result
     assert (ctx.root / "POSCAR").read_bytes() == card["binding"]["content"].encode()
     assert get_card(ctx.store, ctx.pid, ctx.tid, aid)["state"] == "executed"
     stamp = (ctx.root / "POSCAR").stat().st_mtime_ns
@@ -273,7 +275,7 @@ def test_consent_endpoint_executes_restored_import_without_live_chat(
     assert get_card(ctx.store, ctx.pid, ctx.tid, aid)["state"] == "executed"
     messages = ctx.store.list_messages(ctx.pid, ctx.tid)
     assert messages[-1]["role"] == "assistant"
-    assert "Materials Project mp-149" in messages[-1]["content"]
+    assert "Materials Project 的标准结构" in messages[-1]["content"]
 
     # Replaying the same HTTP decision is idempotent and adds no message.
     again = client.post(url, json={"card_id": aid, "approved": True})

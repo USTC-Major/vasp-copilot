@@ -733,7 +733,7 @@ class ToolExecutor:
                 }
                 flow["material_imports"] = imported
                 self._save_flow(flow)
-                result += f"，来源 Materials Project {binding['material_id']}；未上传或提交。"
+                result += "，来源是 Materials Project 的标准结构；还没有上传到超算，也没有提交。"
             elif operation == "script_attestation":
                 result = self._execute_script_attestation(action)
             elif operation == "retry_job":
@@ -815,8 +815,8 @@ class ToolExecutor:
         finally:
             if temp_name and os.path.exists(temp_name):
                 os.unlink(temp_name)
-        return (f"已原子写入 `{binding['relative_path']}`（SHA-256 "
-                f"{binding['proposal_sha256'][:12]}…）")
+        # 面向用户的结果文案：说人话，不放哈希/实现术语（校验值仍在卡片记录与绑定里可核对）。
+        return f"已写入 {binding['relative_path']}。"
 
     def _execute_upload_action(self, binding: dict, *, ready=None, before_write=None,
                                verify_after=None) -> str:
@@ -871,8 +871,7 @@ class ToolExecutor:
         flow["uploaded_artifacts"] = uploaded
         flow["uploaded"] = True
         self._save_flow(flow)
-        return (f"已通过 SFTP 上传确认的登记输入到 `{remote_path}` "
-                f"（SHA-256 {binding['source_sha256'][:12]}…）")
+        return f"已把这份输入上传到超算工作区：{remote_path}。"
 
     def _execute_script_attestation(self, action: dict) -> str:
         binding = action.get("binding") or {}
@@ -1566,7 +1565,7 @@ class ToolExecutor:
             where = "超算作业目录" if source == "remote" else "本地计算目录"
             lines.append(f"- {job['key']}（{job.get('label') or job['key']}）"
                          f"→ 目录 `{calc_dir}`，使用{where}的提交脚本 "
-                         f"{script_name}（SHA-256 {fingerprint['sha256']}）")
+                         f"{script_name}（指纹已记入卡片记录）")
         selected["draft"] = drafts[0]
         selected["draft"]["scheduler_target"] = selected["precheck"]["snapshot"]["scheduler_target"]
         selected["draft"]["resources"] = {"verification": "human_exact_script", "script_sha256": drafts[0]["script_sha256"]}
