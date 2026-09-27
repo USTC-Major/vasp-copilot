@@ -807,6 +807,27 @@ class ToolExecutor:
                   .get("file_prepare_grant") or {})
         return bool(record.get("active"))
 
+    def _file_prepare_grant_pending(self) -> bool:
+        """同一轮里是否已经申请了「文件准备」授权卡（还没批准）。"""
+        for action in ((self._load_flow().get("consent") or {})
+                       .get("actions") or {}).values():
+            if (action.get("kind") == "file_prepare_grant"
+                    and action.get("state") == "pending"):
+                return True
+        return False
+
+    def _cancel_card(self, card_id: str) -> None:
+        """撤掉一张刚建出来、又不该让用户看到的卡（不进待确认列表）。"""
+        def update(flow):
+            action = ((flow.get("consent") or {}).get("actions") or {}).get(card_id)
+            if isinstance(action, dict) and action.get("state") == "pending":
+                action.update(state="expired",
+                              result="已被「文件准备」一次性授权取代，无需确认",
+                              resolved_at=_now_iso())
+            return True
+
+        self._save_flow(update(self._load_flow()))
+
     def tool_request_file_prepare(self, args: dict) -> str:
         """申请**一次**文件准备授权：批准后本任务的输入放置/上传/POTCAR/脚本复制都不再逐张弹卡。"""
         del args
@@ -868,9 +889,19 @@ class ToolExecutor:
         返回执行回执文本；若不在授权范围或批准未生效则返回 None（调用方照常
         抛 PendingConsentError 交人工确认）。AI 进程不参与批准动作。
         """
-        granted = (kind in self._auto_approve_kinds()
-                   or (kind in self.FILE_PREPARE_KINDS
-                       and self._file_prepare_grant_active()))
+        if kind in self.FILE_PREPARE_KINDS:
+            if self._file_prepare_grant_active() or kind in self._auto_approve_kinds():
+                granted = True                      # 已授权：直接执行
+            elif self._file_prepare_grant_pending():
+                # 同一轮里刚申请过授权（还没批）：撤掉这张逐文件卡，等授权批准后统一执行，
+                # 否则用户会看到"一张授权卡 + 一堆逐文件卡"。
+                self._cancel_card(card["card_id"])
+                return ("已申请「文件准备」授权（只有一张卡）：你批准后我会直接把这类文件都准备好，"
+                        "本次不再另外出卡。")
+            else:
+                return None                          # 没申请过授权：照旧逐张确认（安全兜底）
+        else:
+            granted = kind in self._auto_approve_kinds()
         if not granted:
             return None
         from .consent import resolve_card
