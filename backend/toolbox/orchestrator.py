@@ -504,6 +504,7 @@ class Orchestrator:
             for key in resumed:
                 (flow.get("script_attestations") or {}).pop(key, None)
                 (flow.get("staged_inputs") or {}).pop(key, None)
+            flow["phase"] = "monitoring"     # 任务重新变为"在办"，后台继续推进到出提交卡
         return resumed
 
     def _advance_ready_jobs(self, store, project_id: str, task_id: str,

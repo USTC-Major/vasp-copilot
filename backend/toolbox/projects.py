@@ -241,8 +241,23 @@ class ProjectStore:
             out: list[tuple[str, str]] = []
             for t in self._data.get("tasks", []):
                 flow = t.get("flow") or {}
-                if isinstance(flow, dict) and flow.get("phase") in {"monitoring",
-                                                                     "await_submit"}:
+                if not isinstance(flow, dict):
+                    continue
+                phase = flow.get("phase")
+                if phase in {"monitoring", "await_submit"}:
+                    out.append((t.get("project_id") or "", t.get("id") or ""))
+                    continue
+                # 已判"完成"但还有被取消/阻断、且上游已完成的作业：也要扫，
+                # 交给 pump 自动接回来（否则 static 跑完 dos 会永远停在那里）。
+                jobs = (flow.get("plan") or {}).get("jobs") or []
+                statuses = {j.get("key"): (j.get("status") or "draft") for j in jobs}
+                resumable = any(
+                    j.get("status") in {"canceled", "blocked"}
+                    and not j.get("slurm_id") and not j.get("submission_state")
+                    and all(statuses.get(k) == "completed"
+                            for k in (j.get("requires") or []))
+                    for j in jobs)
+                if resumable:
                     out.append((t.get("project_id") or "", t.get("id") or ""))
             return out
 
