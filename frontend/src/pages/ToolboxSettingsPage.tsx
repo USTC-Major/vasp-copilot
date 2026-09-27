@@ -67,21 +67,23 @@ const ToolboxSettingsPage: React.FC = () => {
     try {
       // 保存前对齐服务端：页面加载后若他处改过配置，先确认再覆盖，
       // 避免把旧的 SSH 用户名/主机等设置写回去（AI 设置页同款保护）。
+      const snapshot = loadedRef.current;
       const latest = await settingsQuery.refetch();
       const latestSettings = latest?.data?.settings;
-      if (latestSettings) {
-        const latestForm = toForm(latestSettings);
-        const snapshot = loadedRef.current;
-        const conflicts = (Object.keys(values) as (keyof SettingsForm)[])
-          .filter((key) => snapshot
-            && String(latestForm[key]) !== String(snapshot[key])
-            && String(values[key]) !== String(latestForm[key]));
-        loadedRef.current = latestForm;
-        if (conflicts.length && !(await confirmOverwrite(conflicts))) {
-          form.setFieldsValue(latestForm);
-          message.info('已改用后台最新配置，未覆盖');
-          return;
-        }
+      if (latest?.isError || !latestSettings) {
+        message.error('无法确认最新设置，未保存');
+        return;
+      }
+      const latestForm = toForm(latestSettings);
+      const conflicts = (Object.keys(values) as (keyof SettingsForm)[])
+        .filter((key) => snapshot
+          && String(latestForm[key]) !== String(snapshot[key])
+          && String(values[key]) !== String(latestForm[key]));
+      loadedRef.current = latestForm;
+      if (conflicts.length && !(await confirmOverwrite(conflicts))) {
+        form.setFieldsValue(latestForm);
+        message.info('已改用后台最新配置，未覆盖');
+        return;
       }
       await toolboxApi.saveSettings({ ...values });
       message.success('Toolbox 执行设置已保存');

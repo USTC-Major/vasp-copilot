@@ -27,7 +27,7 @@ const renderPage = () => {
   render(<QueryClientProvider client={client}><ToolboxSettingsPage /></QueryClientProvider>);
 };
 
-it('后台配置已被他处改动时先提示冲突，选择刷新则不覆盖', async () => {
+it('刷新后台查询状态后仍用原快照检测冲突，选择刷新则不覆盖', async () => {
   let reads = 0;
   let writes = 0;
   server.use(
@@ -71,6 +71,28 @@ it('冲突时明确选择仍然覆盖，才写入本页值', async () => {
   const confirmButtons = await screen.findAllByRole('button', { name: '仍然覆盖' });
   confirmButtons.forEach((button) => fireEvent.click(button));
   await waitFor(() => expect(writes).toBe(1));
+});
+
+it('保存前读取最新设置失败时不写入，并解除保存中状态', async () => {
+  let reads = 0;
+  let writes = 0;
+  server.use(
+    http.get('/api/v1/toolbox/settings', () => {
+      reads += 1;
+      return reads === 1
+        ? HttpResponse.json(settingsBody('demo-user'))
+        : HttpResponse.json({ error: { code: 'DOWN', message: 'offline' } }, { status: 503 });
+    }),
+    http.put('/api/v1/toolbox/settings', () => { writes += 1; return HttpResponse.json({}); }),
+  );
+  renderPage();
+
+  expect(await screen.findByDisplayValue('demo-user')).toBeInTheDocument();
+  await userEvent.click(screen.getByRole('button', { name: '保存执行设置' }));
+
+  expect(await screen.findByText('无法确认最新设置，未保存')).toBeInTheDocument();
+  expect(writes).toBe(0);
+  expect(await screen.findByText('无法读取 Toolbox 设置')).toBeInTheDocument();
 });
 
 it('keeps settings and credential actions unavailable until a failed read recovers', async () => {

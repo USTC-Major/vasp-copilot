@@ -75,14 +75,17 @@ def test_clear_secret_removes_it_from_store(tmp_path):
     assert secrets.get_secret("llm_api_key") is None
 
 
-def test_fallback_keeps_plaintext_when_store_unavailable(tmp_path):
-    """凭据后端不可用时宁可保留原值，也不能把密钥弄丢。"""
+def test_migration_failure_preserves_original_file_and_reports_error(tmp_path):
+    """迁移失败保留原文件；不能用成功回执掩盖凭据异常。"""
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({'llm_api_key': 'must-survive'}), encoding='utf-8')
+    cfg = load_settings(config_path=path)
+    before = path.read_bytes()
     secrets.configure_backend(FailingBackend())
     try:
-        path = tmp_path / "config.json"
-        cfg = load_settings()
-        save_settings(cfg.model_copy(update={"llm_api_key": "must-survive"}), config_path=path)
-        assert json.loads(path.read_text(encoding="utf-8"))["llm_api_key"] == "must-survive"
+        with pytest.raises(secrets.SecretStorageError):
+            save_settings(cfg, config_path=path)
+        assert path.read_bytes() == before
     finally:
         secrets.configure_backend(secrets.MemoryBackend())
 

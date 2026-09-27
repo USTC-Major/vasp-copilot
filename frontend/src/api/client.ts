@@ -666,7 +666,7 @@ export const aiApi = {
     }
   },
   stopMessage: (projectId: string, taskId: string) =>
-    aiRequest<{ mode: string; stopped: boolean; message?: string; running_jobs?: string[] }>(
+    aiRequest<{ mode: 'ai'; stopped: boolean }>(
       `/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(taskId)}/messages/stop`,
       { method: "POST" }),
   resolveConsent: (projectId: string, taskId: string, cardId: string, approved: boolean, note?: string) =>

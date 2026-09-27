@@ -1,7 +1,7 @@
 """M11++ 全局设置：掩码汇总 + 可设字段校验 + 真连通测试派发（后端支撑）。
 
-- 私人信息（MP/LLM/SSH 密码）只存本地（LLM key 落 config.json、SSH 密码走系统
-  凭据管理器），绝不上传、不进回包。
+- 私人信息（MP/LLM/SSH 密码）只存本机系统凭据管理器，兼容旧配置迁移；
+  绝不上传、不进回包，环境变量值不写入配置或凭据后端。
 - 对外回包一律走 mask_config()，密钥只出现 <redacted>；另设「只读状态」接口
   只返回是否已配置的布尔态；密钥只能整体替换或清除，永不回显原文。
 - 真连通：llm 走 M3 工厂（auto->openai 时真正 ping）；mp 用最小 GET 验证 key 有效性；
@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from typing import Callable, Mapping, Optional
 
 from ..config import AiModeConfig, save_settings
-from backend.toolbox.secrets import delete_secret, get_secret, set_secret
+from backend.toolbox.secrets import SecretStorageError, delete_secret, get_secret, set_secret
 
 MASK = "<redacted>"
 SSH_PASSWORD_KEY = "ssh_password"   # 仅内部保留，永不回包
@@ -86,14 +86,10 @@ SETTABLE_FIELDS: dict[str, Callable[[object], Optional[str]]] = {
     "ssh_identity_file": _str,
     "scheduler_backend": _str,
     "mp_api_key": _str,
-    "allow_potcar_assembly": _bool,
-    "allow_script_deploy": _bool,
-    "submit_script_template": _str,
 }
 
 
 _BOOL_FIELDS = {"billing_estimate_enabled", "llm_enable_thinking"}
-_BOOL_FIELDS |= {"allow_potcar_assembly", "allow_script_deploy"}
 
 _INT_FIELDS = {"max_jobs", "poll_interval_seconds",
                "llm_timeout_seconds", "llm_max_retries", "llm_max_tokens"}
@@ -122,10 +118,6 @@ def mask_config(config: AiModeConfig) -> dict:
         "poll_interval_seconds": config.poll_interval_seconds,
         "billing_estimate_enabled": config.billing_estimate_enabled,
         "message_char_limit": MESSAGE_CHAR_LIMIT,
-        "auto_approve_kinds": list(getattr(config, "auto_approve_kinds", []) or []),
-        "allow_potcar_assembly": bool(getattr(config, "allow_potcar_assembly", False)),
-        "allow_script_deploy": bool(getattr(config, "allow_script_deploy", False)),
-        "submit_script_template": str(getattr(config, "submit_script_template", "") or ""),
         "llm": {
             "base_url": config.llm_base_url,
             "model": config.llm_model,
@@ -212,8 +204,8 @@ def get_ssh_password(config: AiModeConfig, *,
     store = credential_store or _default_credential_store()
     try:
         return store.get_password(config.ssh_host, config.ssh_username)
-    except Exception:  # noqa: BLE001
-        return None
+    except Exception as exc:
+        raise SecretStorageError('SSH凭据状态读取失败') from exc
 
 
 def update_secret(config: AiModeConfig, kind: str, action: str, value=None, *,
@@ -228,7 +220,7 @@ def update_secret(config: AiModeConfig, kind: str, action: str, value=None, *,
     environment = os.environ if env is None else env
     variable = {"llm": "AI_MODE_LLM_API_KEY",
                 "mp": "AI_MODE_MP_API_KEY"}.get(kind)
-    if variable and environment.get(variable):
+    if variable and (environment.get(variable) or (kind == 'mp' and environment.get('TOOLBOX_MP_API_KEY'))):
         raise ValueError(f"{kind} 密钥由环境变量 {variable} 管理，不能在页面替换或清除")
     if kind == "ssh":
         if not config.ssh_host or not config.ssh_username:
@@ -241,6 +233,9 @@ def update_secret(config: AiModeConfig, kind: str, action: str, value=None, *,
             if not secret:
                 raise ValueError("replace 需要非空 value")
             store.set_password(config.ssh_host, config.ssh_username, secret)
+        expected = '' if action == 'clear' else secret
+        if (store.get_password(config.ssh_host, config.ssh_username) or '') != expected:
+            raise SecretStorageError('凭据后端未确认SSH密码变更')
         return config
     secret = "" if action == "clear" else str(value or "")
     if action == "replace" and not secret:
@@ -264,7 +259,7 @@ def secret_status(config: AiModeConfig, *,
                 "manageable": True}
 
     def secret_state(name: str, env_var: str, value: str) -> dict:
-        if environment.get(env_var):
+        if environment.get(env_var) or (name == 'mp_api_key' and environment.get('TOOLBOX_MP_API_KEY')):
             return {"configured": True, "source": "environment", "manageable": False}
         if get_secret(name):
             return {"configured": True, "source": "credential_store", "manageable": True}

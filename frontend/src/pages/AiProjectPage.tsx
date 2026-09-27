@@ -25,9 +25,8 @@ const { Text, Title } = Typography;
 
 // 可批量处理的卡片：只限“机械文件准备”。科学输入（INCAR/KPOINTS/结构导入）、
 // 脚本认领、提交与重试一律逐项确认，不做批量。
-// 文件准备阶段的所有机械动作（复制输入 / 上传 / 生成 POTCAR / 部署脚本）在用户眼里
-// 就是"同一件事"：并成**一组**，一次点击全部批准；科学参数、结构导入、提交仍逐项确认。
-const BATCHABLE_KINDS = new Set(['copy_inputs', 'hpc_upload', 'potcar_generate', 'script_deploy']);
+// 文件复制与上传可批量处理；科学参数、结构导入、脚本与提交仍逐项确认。
+const BATCHABLE_KINDS = new Set(['copy_inputs', 'hpc_upload']);
 const PREPARE_GROUP_KEY = 'prepare';
 
 const CARD_LABELS: Record<string, string> = {
@@ -316,7 +315,9 @@ const AiProjectPage: React.FC = () => {
     try {
       const r = await aiApi.stopMessage(projectId, selectedTask.id);
       if (!r.stopped) {
-        message.info('当前没有进行中的回复生成，可直接发送下一条。');
+        message.info('当前没有正在生成的回复');
+      } else {
+        message.info('已停止生成');
       }
       void messagesQuery.refetch();
     } catch (err) {
@@ -356,20 +357,6 @@ const AiProjectPage: React.FC = () => {
       }
     } finally {
       if (selectedTaskIdRef.current === taskId) setResolvingCardId(null);
-    }
-  };
-
-  /** 顶栏「停止」：一个按钮停到底（后端负责同时停对话、监控与自动唤醒），并刷出 AI 的收尾提醒。 */
-  const handleStopAll = async () => {
-    if (!selectedTask) return;
-    try {
-      const r = await aiApi.stopMessage(projectId, selectedTask.id);
-      if (r.message) message.info('已停止：对话与计算流程都停下了（已在超算运行的作业见对话里的提示）');
-      await messagesQuery.refetch();
-      void tasksQuery.refetch();
-      void taskContextQuery.refetch();
-    } catch (err) {
-      message.warning(err instanceof Error ? err.message : '停止失败');
     }
   };
 
@@ -523,17 +510,7 @@ const AiProjectPage: React.FC = () => {
                 {selectedTask.local_workspace && <Tag icon={<FolderOutlined />} color="geekblue" style={{ margin: 0 }}>{selectedTask.local_workspace}</Tag>}
                 {selectedTask.hpc_workspace && <Tag icon={<CloudServerOutlined />} color="purple" style={{ margin: 0 }}>{selectedTask.hpc_workspace}</Tag>}
                 <AiContextBar context={taskContextQuery.data} />
-                {/* 一个按钮停到底：对话生成 + 计算流程 + 后台自动唤醒全停；再说一句「继续」即可接上 */}
-                <Button size="small" danger onClick={() => {
-                  Modal.confirm({
-                    title: '停止这个任务的对话与计算流程？',
-                    content: '会停止 AI 输出、停止后台监控与自动准备、不再自动弹卡。'
-                      + '已经在超算上运行的作业不会被取消（我会把作业号告诉你，需要时用 scancel）。'
-                      + '想继续时说一句「继续」即可，已算完的结果会保留。',
-                    okText: '停止', cancelText: '取消',
-                    onOk: () => void handleStopAll(),
-                  });
-                }}>停止</Button>
+                <Button size="small" danger onClick={() => void handleStop()}>停止生成</Button>
                 <Button size="small" danger icon={<DeleteOutlined />} onClick={() => {
                   Modal.confirm({
                     title: "删除该计算任务？",
@@ -743,8 +720,7 @@ const AiProjectPage: React.FC = () => {
           <Alert
             type="info"
             showIcon
-            message="选定这两个工作区，就是这次任务的文件授权"
-            description="AI 可以在本地工作区与超算工作区之间互传文件（复制输入、上传、写文本、建目录），每一步都先弹确认卡给你；不需要再额外配置研究根或文件范围。想收回授权时，到同一任务的 Toolbox 页面撤销对应文件根即可；清空超算工作区同样会收回授权。"
+            message="工作区仅指定路径；文件根登记及操作授权请在 Toolbox 中确认"
           />
         </Space>
       </Modal>

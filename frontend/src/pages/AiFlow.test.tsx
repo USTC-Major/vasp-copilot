@@ -139,8 +139,7 @@ describe('AI 前端整合（M12）', () => {
     await user.click(screen.getByRole('button', { name: /新建计算任务/ }));
     expect(await screen.findByText('本地工作区（必填 · 可复用）')).toBeInTheDocument();
     expect(screen.getByText('超算工作区（可留空）')).toBeInTheDocument();
-    // 选定工作区＝授权：不再要求用户另外去配研究根/文件范围
-    expect(screen.getByText('选定这两个工作区，就是这次任务的文件授权')).toBeInTheDocument();
+    expect(screen.getByText('工作区仅指定路径；文件根登记及操作授权请在 Toolbox 中确认')).toBeInTheDocument();
   });
 
   it('项目聊天：给演示任务发消息得到回复并出现规划', async () => {
@@ -167,6 +166,35 @@ describe('AI 前端整合（M12）', () => {
     expect(await screen.findByRole('button', { name: /发送/ }, { timeout: 5000 })).toBeInTheDocument();
     const input = (await screen.findByPlaceholderText(/描述计算需求/)) as HTMLInputElement;
     expect(input).toBeEnabled();
+  });
+
+  it.each([
+    [true, '已停止生成'],
+    [false, '当前没有正在生成的回复'],
+  ])('停止生成只报告生成状态（stopped=%s），不停止 Toolbox 状态', async (stopped, expectedNotice) => {
+    let toolboxReads = 0;
+    let stopCalls = 0;
+    server.use(
+      http.get('/api/v1/toolbox/projects/:projectId/tasks/:taskId/detail', ({ params }) => {
+        toolboxReads += 1;
+        return HttpResponse.json(executionDetail(String(params.taskId), 'Real', 'Real'));
+      }),
+      http.post('/ai/v1/projects/:projectId/tasks/:taskId/messages/stop', () => {
+        stopCalls += 1;
+        return HttpResponse.json({ mode: 'ai', stopped });
+      }),
+    );
+    const user = userEvent.setup();
+    renderPath('/ai/projects/prj_001');
+    await screen.findByText('结构优化 + 静态 + DOS');
+    await waitFor(() => expect(toolboxReads).toBeGreaterThan(0));
+    const originalToolboxReads = toolboxReads;
+
+    await user.click(screen.getByRole('button', { name: '停止生成' }));
+
+    expect(await screen.findByText(expectedNotice)).toBeInTheDocument();
+    expect(stopCalls).toBe(1);
+    expect(toolboxReads).toBe(originalToolboxReads);
   });
 
   it('SSE 提前 EOF 时保留可见错误，不把断流当成成功', async () => {
@@ -218,7 +246,8 @@ describe('AI 前端整合（M12）', () => {
       expect(messagesRefreshedAfterTerminal).toBe(true);
       expect(screen.getByRole('button', { name: /发送/ })).toBeInTheDocument();
       expect(screen.getByPlaceholderText(/描述计算需求/)).toBeEnabled();
-      expect(screen.queryByRole('button', { name: /停止/ })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: '停止' })).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: '停止生成' })).toBeInTheDocument();
     }, { timeout: 5000 });
   });
 
@@ -245,7 +274,7 @@ describe('AI 前端整合（M12）', () => {
     expect(await screen.findByText('后台仍在生成回复')).toBeInTheDocument();
     expect(await screen.findByText('恢复的 INCAR 写入确认')).toBeInTheDocument();
     expect(screen.getByPlaceholderText(/描述计算需求/)).toBeDisabled();
-    expect(screen.getByRole('button', { name: /停止/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '停止生成' })).toBeInTheDocument();
   });
 
   it('旧进度地址迁移到精确 Toolbox 任务页', async () => {
@@ -401,7 +430,7 @@ describe('AI 前端整合（M12）', () => {
     );
     const user = userEvent.setup();
     renderPath('/ai/projects/prj_001');
-    // 准备阶段（复制/上传/生成 POTCAR/部署脚本）现在合并成同一组
+    // 同类文件上传仍可批量确认。
     expect(await screen.findByText('文件准备')).toBeInTheDocument();
     expect(screen.getByText('2 项待批准（可批量）')).toBeInTheDocument();
 

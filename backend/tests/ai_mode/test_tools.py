@@ -12,15 +12,12 @@ from ai_mode.tools import (
     SubmissionDraftBuilder,
     default_directives,
     make_draft_only_submitter,
-    parse_version,
-    potcar_menu_code,
     probe_and_store,
     probe_vaspkit,
     render_sbatch,
     store_path,
     submit_command,
     validate_directives,
-    vasp_input_menu_code,
 )
 from ai_mode.tools.draft import SUBMIT_BIN
 
@@ -40,52 +37,19 @@ class FakeToolRunner:
 
 
 # ---------------- vaspkit 探测 ----------------
-def test_probe_found_flat_menu():
-    """老版本：菜单扁平，POTCAR 行直接出现在同一份输出里。"""
+def test_probe_found():
     runner = FakeToolRunner([
-        (0, "/usr/bin/vaspkit\n", ""),                       # which
-        (0, "VASPKIT Standard Edition 1.3.2\n"
-            " 101) 102) 301) 401) Submit 501) 700) 711)\n"
-            " 401) Generate POTCAR file\n", ""),             # 主菜单
+        (0, "/usr/bin/vaspkit\n", ""),                 # which
+        (0, "VASPKIT 3.5.0\n", ""),                    # -v
+        (0, " 101 102 103 301 401 501 700 711 \n", ""),  # -h
     ])
     skill = probe_vaspkit(runner)
     assert skill.found is True
     assert skill.path == "/usr/bin/vaspkit"
-    assert skill.version == "1.3.2"
+    assert skill.version == "VASPKIT 3.5.0"
     assert "structure" in skill.tasks and "kpoints" in skill.tasks
-    assert skill.potcar_code == "401"
-
-
-def test_probe_found_two_level_menu_like_1_5_1():
-    """实测 1.5.1：`-v`/`-h` 是非法参数，POTCAR 在「VASP Input-Files Generator」二级菜单。"""
-    main = ("VASPKIT Standard Edition 1.5.1 (27 Jan. 2024)\n"
-            " 01) VASP Input-Files Generator    02) Mechanical Properties\n"
-            " 0)  Quit\n")
-    sub = (" ==================== VASP Input Files Options ===================\n"
-           " 101) Customize INCAR File\n"
-           " 102) Generate KPOINTS File for SCF Calculation\n"
-           " 103) Generate POTCAR File with Default Setting\n"
-           " 104) Generate POTCAR File with User Specified Potential\n")
-    runner = FakeToolRunner([(0, "/opt/vaspkit\n", ""),   # which
-                             (0, main, ""),               # printf '0\n' | vaspkit
-                             (0, sub, "")])               # printf '01\n0\n' | vaspkit
-    skill = probe_vaspkit(runner)
-    assert skill.version == "1.5.1"
-    assert skill.potcar_code == "103" and skill.potcar_only is True
-    assert skill.tasks["potcar"] == ["103"]
-    assert runner.asked[2] == "printf '01\\n0\\n' | /opt/vaspkit"
-
-
-def test_potcar_menu_code_prefers_default_setting():
-    text = (" 103) Generate POTCAR File with Default Setting\n"
-            " 104) Generate POTCAR File with User Specified Potential\n")
-    assert potcar_menu_code(text) == ("103", True)
-    assert potcar_menu_code(
-        " 104) Generate POTCAR File with User Specified Potential\n") == ("104", True)
-    assert potcar_menu_code(
-        " 103) Generate VASP input files (INCAR/KPOINTS/POTCAR)\n") == ("103", False)
-    assert parse_version("| VASPKIT Standard Edition 1.5.1 (27 Jan. 2024) |") == "1.5.1"
-    assert vasp_input_menu_code(" 01) VASP Input-Files Generator   02) Mechanical\n") == "01"
+    assert "potcar" not in skill.tasks
+    assert "103" not in skill.tasks["structure"]
 
 
 def test_probe_not_found():
@@ -96,9 +60,8 @@ def test_probe_not_found():
 
 def test_probe_found_but_version_fails():
     runner = FakeToolRunner([(0, "/opt/vaspkit/bin/vaspkit\n", ""),  # which
-                             (0, "", ""),                            # 主菜单为空
-                             (1, "", "no such option"),              # -h 失败
-                             (0, "301\n", ""),                       # -v
+                             (1, "", "no such option"),             # -v 失败
+                             (0, "301\n", ""),                       # -h
                              ])
     skill = probe_vaspkit(runner)
     assert skill.found is True
@@ -116,7 +79,7 @@ def test_probe_exception_is_not_found():
 def test_probe_and_store_roundtrip(monkeypatch, tmp_path):
     monkeypatch.setenv("VASP_AI_HOME", str(tmp_path))
     runner = FakeToolRunner([(0, "/bin/vaspkit\n", ""),
-                             (0, "VASPKIT Standard Edition 2.1.5\n 101) 401)\n", "")])
+                             (0, "2.1.5\n", ""), (0, "101 401\n", "")])
     skill = probe_and_store(runner, root=tmp_path)
     skill_path = store_path(tmp_path)
     assert skill_path.is_file()
@@ -134,8 +97,7 @@ def test_store_path_defaults_under_skills():
 
 
 def test_task_detection_ignores_when_no_numbers():
-    runner = FakeToolRunner([(0, "/bin/vaspkit\n", ""), (0, "", ""), (0, "", ""),
-                             (0, "Help info", "")])
+    runner = FakeToolRunner([(0, "/bin/vaspkit\n", ""), (0, "", ""), (0, "Help info", "")])
     skill = probe_vaspkit(runner)
     assert skill.tasks == {}
     assert "未探测到具体任务号" in skill.notes

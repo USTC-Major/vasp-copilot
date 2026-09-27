@@ -49,69 +49,6 @@ def _generation_running(store, project_id: str, task_id: str) -> bool:
         return False
 
 
-def _auto_wake_state(store, project_id: str, task_id: str) -> dict:
-    try:
-        return dict((store.generation_metadata(project_id, task_id) or {}).get("auto_wake") or {})
-    except Exception:  # noqa: BLE001
-        return {}
-
-
-def _set_auto_wake_stopped(store, project_id: str, task_id: str, stopped: bool) -> None:
-    """停止/继续的开关：停止后后台不再自动唤醒该任务；用户再说话时清掉。"""
-    try:
-        state = _auto_wake_state(store, project_id, task_id)
-        state["stopped"] = bool(stopped)
-        store.update_generation(project_id, task_id, {"auto_wake": state})
-    except Exception:  # noqa: BLE001
-        return
-
-
-def _clear_auto_wake_stop(store, project_id: str, task_id: str) -> None:
-    """用户又发消息＝要接着跑：清掉停止标记，允许后台事件再次自动唤醒。"""
-    _set_auto_wake_stopped(store, project_id, task_id, False)
-
-
-def stop_everything(store, project_id: str, task_id: str) -> dict:
-    """一个按钮停到底：停 AI 生成 + 停计算流程（监控/下游自动准备）+ 停后台自动唤醒。
-
-    返回给前端的信息里带上"仍在超算上运行的作业号"，用于提醒用户是否需要 scancel。
-    """
-    stopped_generation = bool(request_stop(project_id, task_id))
-    flow_note = ""
-    running_jobs: list[str] = []
-    try:
-        detail = store.client.request('GET', store.client.task_path(project_id, task_id) + '/detail')
-        for job in ((detail or {}).get('flow') or {}).get('jobs') or []:
-            if str(job.get('status') or '') in {'submitted', 'queued', 'running', 'unknown'}:
-                running_jobs.append(f"{job.get('key')}（作业号 {job.get('slurm_id') or '未知'}）")
-    except Exception:  # noqa: BLE001 - 详情读不到不影响停止
-        pass
-    try:
-        result = store.client.request(
-            'POST', store.client.task_path(project_id, task_id) + '/tools',
-            json={'name': 'stop_monitor', 'args': {}})
-        flow_note = str((result or {}).get('result') or '')
-    except Exception as exc:  # noqa: BLE001 - 流程已经在终态时停止会失败，不算错误
-        flow_note = f"（流程层面：{type(exc).__name__}）"
-    _set_auto_wake_stopped(store, project_id, task_id, True)
-    reminder = ["已按你的要求停止：AI 不再继续输出，后台监控与自动准备也停下了，"
-                "不会再自动弹卡或自动唤醒。"]
-    if running_jobs:
-        reminder.append("注意：这些作业**已经在超算上运行**，我无法替你取消——"
-                        "如需取消请在超算上执行 `scancel <作业号>`："
-                        + "、".join(running_jobs) + "。")
-    else:
-        reminder.append("当前没有在超算上运行的作业。")
-    reminder.append("说一句「继续」我就从当前进度接着做（已跑完的结果会保留，"
-                    "不会重复提交已完成的作业）。")
-    text = "\n".join(reminder)
-    try:
-        store.append_message(project_id, task_id, role='assistant', content=text)
-    except Exception:  # noqa: BLE001
-        pass
-    return {"stopped_generation": stopped_generation, "running_jobs": running_jobs,
-            "flow_note": flow_note, "message": text}
-
 logger = logging.getLogger("ai_mode")
 
 APP_TITLE = "VASP-Copilot 智能模式"
@@ -151,16 +88,11 @@ def _mask(config) -> dict:
 async def _lifespan(_app: FastAPI):
     ensure_layout()
     from .projects import close_project_store
-    from .auto_wake import AutoWakeLoop
-    wake_loop = AutoWakeLoop()
     if is_ai_mode_enabled():
-        store = _get_project_store()  # Acquire chat ownership at startup, without network I/O.
-        # 事件驱动自动唤醒：作业完成/卡片结果/失败时自己继续，用户只点确认卡。
-        wake_loop.start(store)
+        _get_project_store()  # Acquire chat ownership at startup, without network I/O.
     try:
         yield
     finally:
-        wake_loop.stop()
         close_project_store()
 
 
@@ -178,6 +110,11 @@ def create_ai_mode_app() -> FastAPI:
         payload['code'] = {'PROJECT_NOT_FOUND': 'AI_MODE_PROJECT_NOT_FOUND', 'TASK_NOT_FOUND': 'AI_MODE_PROJECT_NOT_FOUND', 'SSH_UNCONFIGURED': 'AI_MODE_HPC_UNCONFIGURED', 'INVALID_SETTINGS': 'AI_MODE_BAD_SETTINGS'}.get(payload['code'], payload['code'])
         return JSONResponse(status_code=exc.status, content={'mode': 'ai', 'ok': False, 'error': payload})
     app.add_exception_handler(ToolboxError, error_handler)
+    from backend.toolbox.secrets import SecretStorageError
+    async def secret_storage_error(request, exc):
+        return JSONResponse(status_code=503, content={'mode': 'ai', 'ok': False,
+            'error': {'code': 'AI_MODE_SECRET_STORAGE_FAILED', 'message': str(exc), 'retryable': False}})
+    app.add_exception_handler(SecretStorageError, secret_storage_error)
 
     @app.post('/ai/internal/reviewer/review', include_in_schema=False)
     def internal_file_review(request: Request, payload: dict):
@@ -302,6 +239,10 @@ def create_ai_mode_app() -> FastAPI:
         if model:
             try:
                 _persist_settings(_apply_settings_patch(cfg, model))
+            except SecretStorageError:
+                raise
+            except OSError as exc:
+                raise SecretStorageError('配置保存失败；凭据状态可能已改变，请重新查询') from exc
             except ValueError as exc:
                 return _bad(str(exc))
         result = get_settings()
@@ -365,6 +306,10 @@ def create_ai_mode_app() -> FastAPI:
         elif kind == 'llm':
             try:
                 _persist_settings(_update_secret(cfg, kind, action, payload.get('value')))
+            except SecretStorageError:
+                raise
+            except OSError as exc:
+                raise SecretStorageError('配置保存失败；凭据状态可能已改变，请重新查询') from exc
             except ValueError as exc:
                 return _bad(str(exc))
         else:
@@ -608,9 +553,6 @@ def create_ai_mode_app() -> FastAPI:
         except Exception:
             run.finish("", state="error")
             raise
-        _clear_auto_wake_stop(store, project_id, task_id)   # 用户又说话了→接着跑
-        # 用户又说话了＝要这条链继续：清掉"已停止"标记，让后台事件能再次自动唤醒。
-        _clear_auto_wake_stop(store, project_id, task_id)
 
         def _sync_events():
             answer = _chat.reply(store, project_id, task_id, content, should_stop=run.should_stop)
@@ -678,12 +620,13 @@ def create_ai_mode_app() -> FastAPI:
         resp = _require_enabled(cfg)
         if resp is not None:
             return resp
+        active = request_stop(project_id, task_id)
+        if active:
+            return {"mode": "ai", "stopped": True}
         store = _get_project_store()
         if store.get_task(project_id, task_id) is None:
             return _project_404("计算任务不存在或被删除")
-        # 一个按钮停到底：对话生成 + 计算流程（监控/下游自动准备）+ 后台自动唤醒。
-        result = stop_everything(store, project_id, task_id)
-        return {"mode": "ai", "stopped": True, **result}
+        return {"mode": "ai", "stopped": active}
 
     @app.post("/ai/v1/projects/{project_id}/tasks/{task_id}/messages/consent")
     def resolve_consent(project_id: str, task_id: str, payload: dict):

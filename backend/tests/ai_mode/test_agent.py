@@ -48,10 +48,7 @@ def test_execution_readiness_follows_the_toolbox_settings():
     from ai_mode.agent.tools import ToolExecutor as AgentToolExecutor
     executor = AgentToolExecutor(store=None, project_id="p", task_id="t",
                                  client=_Client(payload))
-    assert executor.execution_readiness() == {"ssh": True, "mp": True,
-                                              "potcar": True, "script_deploy": True,
-                                              "script_template": "/home/u/tpl/run.sh",
-                                              "backend_mode": "Real"}
+    assert executor.execution_readiness() == {"ssh": True, "mp": True, "backend_mode": "Real"}
     assert seen == [("GET", "/settings", {})]
 
     empty = AgentToolExecutor(store=None, project_id="p", task_id="t",
@@ -61,8 +58,6 @@ def test_execution_readiness_follows_the_toolbox_settings():
                                                            "allow_potcar_assembly": False,
                                                            "allow_script_deploy": False}}))
     assert empty.execution_readiness() == {"ssh": False, "mp": False,
-                                           "potcar": False, "script_deploy": False,
-                                           "script_template": "",
                                            "backend_mode": "None"}
 
     # 查询失败/响应异常一律返回 {}，让提示词退回原判定，不影响对话

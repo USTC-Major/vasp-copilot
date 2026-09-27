@@ -145,28 +145,6 @@ def _project_settings_text(store: ProjectStore, project_id: str) -> str:
 
 def _phase_guidance(phase: str) -> str:
     """按当前流程阶段注入针对性引导（仅「待确认」阶段需要额外行为约束）。"""
-    if phase == "monitoring":
-        return (
-            "\n\n【当前处于「监控中」阶段】\n"
-            "作业进度由系统后台推进，你不需要（也不应该）自己反复查；只有用户明确要求看进度时才查。\n"
-            "- 系统在**上游完成时会自动把下游准备好**（带入上游产物 → 硬预检 → 提交草稿 → 弹出提交确认卡），"
-            "这条链只差用户点确认，所以回执里出现「X 已完成」+「Y 已自动准备就绪…提交确认卡已弹出」时，"
-            "请直接告诉用户：上游 X 已完成，Y 的提交卡已经就绪、确认后即提交；"
-            "**不要**只说「正在持续观察／自动跟进」，也不要让他手工搬上游文件或自己去点预检。\n"
-            "- 若回执说「上游已完成并解锁，但预检未通过：…」，才需要告诉用户缺什么（例如 POTCAR 没有"
-            "上游可继承、或目录里已有与上游不一致的文件）。\n"
-            "- 下游作业的上游产物（POSCAR←CONTCAR、POTCAR、需要时的 CHGCAR）由系统在上游完成后的"
-            "预检里自动带入；下游还缺输入而系统提示「等待上游作业 X 完成」时，那是正常状态。\n"
-            "- 用户说「继续」而你确认没有在跑的作业时，按回执里的下一步推进（例如为已解锁的作业"
-            "调用 precheck），不要重复播报监控状态。"
-            "- **用户明确说停止/不做了/算了**（或调用了 stop_monitor）之后：不要再调用任何写入类工具、"
-            "不要再重新规划、预检、生成草稿或弹卡；已在超算运行的作业只给出 scancel 建议。"
-            "只有用户明确要求「重新开始/继续这条链」时才恢复，绝不自己把流程拉起来。"
-            "\n- **用户说「继续/接着做/继续算」就等于他已经同意**：立刻调用 resume_flow，"
-            "在**同一个任务**里把被取消/跳过的下游作业重新排上（复用已完成的上游结果，"
-            "已完成的那几步不重跑），然后继续推进到出提交卡。"
-            "**不要**再问一遍「要不要继续」，也**不要**让他新建计算任务或重新准备已完成的步骤。"
-        )
     if phase != "await_submit":
         return ""
     return (
@@ -226,14 +204,10 @@ def _readiness_flags(cfg, readiness) -> dict:
     """
     local_ssh = _ssh_configured(cfg) if cfg is not None else True
     local_mp = _mp_configured(cfg) if cfg is not None else True
-    local_potcar = bool(getattr(cfg, "allow_potcar_assembly", False)) if cfg else False
-    local_script = bool(getattr(cfg, "allow_script_deploy", False)) if cfg else False
     if not isinstance(readiness, dict):
         readiness = {}
     return {"ssh_ready": bool(readiness.get("ssh", local_ssh)),
-            "mp_ready": bool(readiness.get("mp", local_mp)),
-            "potcar_ready": bool(readiness.get("potcar", local_potcar)),
-            "script_ready": bool(readiness.get("script_deploy", local_script))}
+            "mp_ready": bool(readiness.get("mp", local_mp))}
 
 
 def build_messages(store: ProjectStore, task: dict, history: list[dict],
@@ -306,21 +280,9 @@ def build_messages(store: ProjectStore, task: dict, history: list[dict],
         "不要写绝对路径（用「relax 作业目录」这样的相对说法）、不要写英文整句或英文说明。\n"
         "- **思考过程**：用户默认看不到你的思考内容，所以不要写「让我先查看…」这类自述；"
         "直接给结论。用户追问细节再展开。\n\n"
-        "【一条链要一口气做完（重要）】\n"
-        "用户的目标是「提交需求后只点确认卡，其余全自动」。因此：\n"
-        "- **开始准备文件前，先调用一次 request_file_prepare**：它只弹**一张**卡，"
-        "用户批准后，本任务的复制输入/上传/生成 POTCAR/复制脚本都由系统直接执行，"
-        "你继续调用那些工具即可、不要再让用户逐张点；已经授权过就别重复申请。\n"
-        "- 当前阶段能做的事，请在**同一条回复里连续做完**（例如：登记输入 → 带入上游产物 → 预检 → "
-        "草稿 → 生成提交卡），不要做一步就停下问用户；只有两处允许停：① 需要他点确认卡；"
-        "② 科学选择（算哪些作业、用什么参数）。\n"
-        "- 工具失败时先看回执里的「处理方式」提示：凡是可自愈的（身份变化、卡片作废、过期、忙、"
-        "缺上游产物、缺 POTCAR/脚本）就**自己重做或换路**，不要停下来让用户处理，也不要让他去超算"
-        "上敲命令或再输入内容。\n"
-        "- 回执只进你的上下文，不逐条播报给用户；用户只需要知道三件事：现在到哪一步、需要他点什么、"
-        "结果在哪里（报告在任务的 Toolbox 页面）。\n\n"
-        "- **同一张待确认卡只提醒一次**：卡会常驻在页面上（提交卡有效期 24 小时、过期还会自动续），"
-        "用户什么时候点由他决定；没有新进展时不要再重复「请点确认」这类话。\n\n"
+        "【人工批准边界】\n"
+        "文件写入和上传必须逐卡批准；不得把选定工作区视作授权。POTCAR 只能由用户自行提供合法文件，"
+        "禁止调用 VASPKIT 生成或拼接，也禁止通过提交脚本或其他工具绕过。\n\n"
         "【工具调用纪律（必须遵守）】\n"
         "- 需要 artifact_id 的工具（copy_inputs、hpc_upload）必须先 get_state（或读 detail 的 "
         "flow.artifacts）拿到真实 ID，再原样传入；绝不允许凭记忆猜测或留空调用——空参数只会得到 "
@@ -335,18 +297,7 @@ def build_messages(store: ProjectStore, task: dict, history: list[dict],
         "预检摘要或提交草稿，让用户手里的卡当场作废（症状是「点确认一直失败／已作废」）。"
         "此时只需告诉用户「提交卡已就绪，点确认即提交」；如果确实改了输入文件，才重新预检并在回执里"
         "说明旧卡已作废。\n"
-        "- 依赖链的下游作业（requires 指向上游）：下游要用的 POSCAR（＝上游 CONTCAR）、POTCAR、"
-        "以及需要电荷密度时的 CHGCAR，由系统在**上游完成之后**的预检里自动从上游目录带入，"
-        "不会覆盖用户自己放的文件。所以上游没跑完时预检里出现「等待上游作业 X 完成」是正常状态，"
-        "不要据此让用户手工搬文件、也不要上传占位 POSCAR；只有系统报「与上游产物不一致，未覆盖」时，"
-        "才需要用户决定那份文件如何处理。\n"
-        "- 任务里选定的工作区本身就是授权：本地工作区、超算工作区在**建任务时选定**，"
-        "系统会据此登记文件根，并在每次规划落地后自动为每个待准备作业派生文件范围"
-        "（remote_file_context 的 file_scopes 里，job_key/attempt_id 与你当前作业一致的那条就是）。"
-        "所以**不要**让用户去配置「研究根」「文件范围」；上传（hpc_upload）只需要 SSH 已配置 + "
-        "文件已登记，同样不需要研究根。只有当 file_scopes 里确实没有匹配当前 job_key/attempt_id 的"
-        "范围时才说明情况（通常是超算暂时连不上，或该作业还没规划），并如实引用回执原文，"
-        "不要自行要求用户做多余配置。\n\n"
+        "- 下游输入须经人工准备与精确批准，系统不自动继承上游文件。\n"
         "可用工具：\n"
         + tool_schema_text(**ready)
         + "\n\n【红线（不可逾越）】\n"
@@ -355,10 +306,7 @@ def build_messages(store: ProjectStore, task: dict, history: list[dict],
         "2. 每步都基于真实工具回执如实汇报，绝不编造已完成的操作；操作失败如实说明。\n"
         "3. 不接触任何密钥/口令：SSH 密码、API key 等不会出现在你的上下文里，"
         "也不要向用户索要。\n"
-        "4. 你不得生成、修改或写入提交脚本。脚本来源只有两条：① 用户在智能设置里配好模板并"
-        "打开复制开关时，用 deploy_submit_script 把它复制/登记到作业目录——**与模板逐字节一致的"
-        "脚本由系统自动视为已认领**，不要因为回执写「未认领」就把用户赶去 Toolbox 手工点；"
-        "② 用户自己手工放的脚本，才需要他显式认领。\n"
+        "4. 不得生成、修改或部署提交脚本；用户自行提供脚本，必须明确认领并绑定真实内容。\n"
         "5. 从 Materials Project 获取结构必须使用 mp_search / mp_import_poscar；"
         "连通测试成功不等于已下载。用户给出材料 ID 时可直接提出导入确认；只给化学式且有"
         "多个晶相候选时先展示候选并让用户选择，禁止编造 ID、坐标或假称已保存。"

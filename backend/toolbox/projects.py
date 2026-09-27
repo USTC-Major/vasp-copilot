@@ -234,30 +234,12 @@ class ProjectStore:
 
     # ---- 对话消息 ----
     def monitoring_tasks(self) -> list[tuple[str, str]]:
-        """扫描后台需要盯着的任务：在跑的（monitoring）**以及准备好了、只等用户点提交卡的
-        （await_submit）**。后者也要盯着，因为提交卡有有效期——过期后必须能自动补一张，
-        否则用户会看到"AI 说有卡、页面上却没有卡"。"""
+        """M55：扫描所有处于 monitoring 阶段的任务（后台监控线程用）。"""
         with self._lock:
             out: list[tuple[str, str]] = []
             for t in self._data.get("tasks", []):
                 flow = t.get("flow") or {}
-                if not isinstance(flow, dict):
-                    continue
-                phase = flow.get("phase")
-                if phase in {"monitoring", "await_submit"}:
-                    out.append((t.get("project_id") or "", t.get("id") or ""))
-                    continue
-                # 已判"完成"但还有被取消/阻断、且上游已完成的作业：也要扫，
-                # 交给 pump 自动接回来（否则 static 跑完 dos 会永远停在那里）。
-                jobs = (flow.get("plan") or {}).get("jobs") or []
-                statuses = {j.get("key"): (j.get("status") or "draft") for j in jobs}
-                resumable = any(
-                    j.get("status") in {"canceled", "blocked"}
-                    and not j.get("slurm_id") and not j.get("submission_state")
-                    and all(statuses.get(k) == "completed"
-                            for k in (j.get("requires") or []))
-                    for j in jobs)
-                if resumable:
+                if isinstance(flow, dict) and flow.get("phase") == "monitoring":
                     out.append((t.get("project_id") or "", t.get("id") or ""))
             return out
 

@@ -64,7 +64,7 @@ def test_history_without_current_message_still_appended(ctx):
 def test_system_prompt_uses_current_product_name(ctx):
     system = build(ctx, [], "你好")[0]["content"]
     assert "VASP-Copilot" in system
-    assert "VASP-Doctor" not in system
+    assert system.startswith("你是 VASP-Copilot 智能模式的中枢 AI。")
 
 
 def test_system_prompt_forbids_engineering_jargon(ctx):
@@ -84,8 +84,8 @@ def test_system_prompt_enforces_tool_call_discipline(ctx):
     assert "工具调用纪律" in system
     assert "必须" in system and "AI_ARTIFACT_REQUIRED" in system
     assert "不得自行推测原因" in system
-    assert "工作区本身就是授权" in system        # 工作区=授权，不必手配
-    assert "不要**让用户去配置" in system       # 明确禁止多要一步配置
+    assert "不得把选定工作区视作授权" in system
+    assert "精确批准" in system
 
 
 def test_tools_are_trimmed_when_hpc_and_mp_are_unconfigured(ctx):
@@ -132,24 +132,12 @@ def test_readiness_comes_from_the_execution_side_not_the_ai_config(ctx):
     assert "尚未配置超算" in fallback
 
 
-def test_potcar_and_script_tools_follow_their_switches(ctx):
-    """POTCAR 生成与脚本复制是**开关型**能力：没开时连工具说明都不给模型。"""
-    names = ("generate_potcar", "deploy_submit_script")
-    off = build_with_readiness(ctx, {"ssh": True, "mp": True},
-                               cfg=AiModeConfig())[0]["content"]
-    for name in names:
-        assert f"- {name}：" not in off
-    assert "POTCAR 自动生成未开启" in off
-    assert "提交脚本复制未开启" in off
-
-    on = build_with_readiness(ctx, {"ssh": True, "mp": True,
-                                    "potcar": True, "script_deploy": True},
-                              cfg=AiModeConfig())[0]["content"]
-    for name in names:
-        assert f"- {name}：" in on
-    assert "POTCAR 自动生成未开启" not in on
-    assert "永不自动批准" in on          # POTCAR 属科学输入，逐次确认
-    assert "逐字节复制" in on            # 脚本只复制、不修改
+def test_retired_tools_stay_absent_with_legacy_readiness(ctx):
+    for flags in ({}, {"ssh": True, "mp": True, "potcar": True, "script_deploy": True}):
+        text = build_with_readiness(ctx, flags, cfg=AiModeConfig())[0]["content"]
+        for name in ("generate_potcar", "deploy_submit_script", "request_file_prepare", "resume_flow"):
+            assert f"- {name}：" not in text
+        assert "禁止调用 VASPKIT" in text
 
 
 def test_long_current_message_is_marked_not_silently_cut(ctx):

@@ -50,6 +50,20 @@ def normalize(flow):
     return flow
 
 
+def missing_submission_identity(flow, job, *, current_action_id=None):
+    """A completed/uncertain submission record cannot become a fresh empty job."""
+    if job.get('slurm_id') or job.get('submission_state'):
+        return False
+    return any(
+        action.get('kind') == 'submit'
+        and (not current_action_id or action.get('action_id') != current_action_id)
+        and action.get('state') in {'executing', 'executed', 'unknown'}
+        and (action.get('binding') or {}).get('job_key') == job.get('key')
+        and ((action.get('binding') or {}).get('attempt_id') == job.get('attempt_id')
+             or (not (action.get('binding') or {}).get('attempt_id') and not job.get('attempt_history')))
+        for action in ((flow.get('consent') or {}).get('actions') or {}).values())
+
+
 def select_job(flow, args, *, preparing=True):
     jobs = (flow.get("plan") or {}).get("jobs") or []
     key, attempt = args.get("job_key"), args.get("attempt_id")
@@ -63,6 +77,8 @@ def select_job(flow, args, *, preparing=True):
     if not attempt and job.get("attempt_history"):
         raise ToolboxError("ATTEMPT_STALE", "重试后的操作必须明确当前 attempt_id", 409)
     if preparing:
+        if missing_submission_identity(flow, job):
+            raise ToolboxError('SUBMISSION_UNKNOWN', '历史提交记录存在但作业身份缺失；请人工核对，禁止重新提交', 409)
         if job.get("submission_state") in {"unknown", "executing"} or job.get("status") == "unknown":
             raise ToolboxError("SUBMISSION_UNKNOWN", "提交结果未知；不得重新提交", 409)
         if job.get("slurm_id") or job.get("submission_state") or job.get("status", "draft") not in {"draft", "waiting"}:
@@ -94,6 +110,9 @@ def scope_valid(flow, action, *, active=True):
     from .consent import _expired
     expected_state = {"active"} if active else {"proposed", "active"}
     return (scope.get("state") in expected_state and not _expired(scope)
+            and not missing_submission_identity(flow, job, current_action_id=action.get('action_id'))
+            and ((flow.get("script_attestations") or {}).get(job.get("key")) or {}).get("claimed_by")
+            not in {"template_match", "script_deploy"}
             and scope.get("version") == binding.get("scope_version")
             and scope.get("approval_mode") == "human" and scope.get("submit_limit") == 1
             and scope.get("allowed_operations") == ["submit"]

@@ -10,7 +10,6 @@ from __future__ import annotations
 import json
 import logging
 import re
-import shlex
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -26,16 +25,11 @@ Run = Callable[..., tuple[int, str, str]]
 #: vaspkit 任务族 → 菜单号（已知编号；探测时以其出现来推断能力是否存在）。
 #: 编号随 VASPKIT 版本有差异，探测可覆盖；仅作为「技能记录」内容，不改动作。
 VASPKIT_TASKS: dict[str, tuple[str, ...]] = {
-    "structure": ("101", "102", "103", "111"),
+    "structure": ("101", "102", "111"),
     "kpoints": ("301", "303", "351"),
-    "potcar": ("401",),
     "submit": ("501", "511", "521"),
     "post": ("600", "601", "602", "700", "701", "702", "711"),
 }
-
-#: 菜单行里出现这些词，说明该任务不止生成 POTCAR（可能连 INCAR/KPOINTS 一起改）；
-#: 只有在菜单里找不到「只针对 POTCAR」的项时才退而求其次，并在卡片里说清楚。
-_BROAD_TASK_HINTS = ("input file", "input files", "incar", "kpoints", "all")
 
 
 def _now_iso() -> str:
@@ -54,8 +48,6 @@ class VaspkitSkill:
     :param version: 版本号（尽力解析，可能为空）。
     :param path: 超算上 vaspkit 可执行文件路径。
     :param tasks: family -> 已探测到可用的任务号列表。
-    :param potcar_code: 从菜单里读到的 POTCAR 任务号；空字符串表示没读出来。
-    :param potcar_only: 该 POTCAR 任务是否只生成 POTCAR（不连带改 INCAR/KPOINTS）。
     :param notes: 探测小结（给 LLM 的文字说明）。
     :param detected_at: ISO 时间戳。
     """
@@ -64,15 +56,12 @@ class VaspkitSkill:
     version: str = ""
     path: str = ""
     tasks: dict[str, list[str]] = field(default_factory=dict)
-    potcar_code: str = ""
-    potcar_only: bool = False
     notes: str = ""
     detected_at: str = field(default_factory=_now_iso)
 
     def to_dict(self) -> dict:
         return {"found": self.found, "version": self.version, "path": self.path,
-                "tasks": self.tasks, "potcar_code": self.potcar_code,
-                "potcar_only": self.potcar_only, "notes": self.notes,
+                "tasks": self.tasks, "notes": self.notes,
                 "detected_at": self.detected_at}
 
     @classmethod
@@ -80,10 +69,9 @@ class VaspkitSkill:
         return cls(found=bool(data.get("found")),
                    version=str(data.get("version", "")),
                    path=str(data.get("path", "")),
-                   tasks={str(k): [str(x) for x in v] for k, v in (data.get("tasks") or {}).items()},
-                   potcar_code=str(data.get("potcar_code", "")),
-                   potcar_only=bool(data.get("potcar_only", False)),
-                   notes=str(data.get("notes", "")),
+                   tasks={str(k): [str(x) for x in v if str(x) in VASPKIT_TASKS[k]]
+                          for k, v in (data.get("tasks") or {}).items() if k in VASPKIT_TASKS},
+                   notes="只读探测记录；禁止 VASPKIT 生成或拼接 POTCAR",
                    detected_at=str(data.get("detected_at", _now_iso())))
 
 
@@ -112,87 +100,10 @@ def _run_ok(code: int) -> bool:
     return code == 0
 
 
-def potcar_menu_code(menu_text: str) -> tuple[str, bool]:
-    """从 vaspkit 菜单文本里读 POTCAR 任务号（不猜编号，按菜单自己写的）。
-
-    返回 ``(code, 是否只针对 POTCAR)``：优先选描述里只有 POTCAR、不含
-    INCAR/KPOINTS/"input files" 的那一行；找不到就退回「提到 POTCAR 的任意一行」，
-    并标记为可能连带改动其他输入文件（卡片上会写明）。
-    """
-    broad = ""
-    fallback = ""
-    for line in (menu_text or "").splitlines():
-        upper = line.upper()
-        if "POTCAR" not in upper:
-            continue
-        numbers = _extract_numbers(line)
-        if not numbers:
-            continue
-        low = line.lower()
-        if "user specified" in low or "specified potential" in low:
-            # 让用户指定赝势的那种：也只会生成 POTCAR，但不是"听默认的"，留作保底
-            fallback = fallback or numbers[0]
-            continue
-        if "default" in low:
-            return numbers[0], True
-        if any(hint in low for hint in _BROAD_TASK_HINTS):
-            broad = broad or numbers[0]
-            continue
-        return numbers[0], True
-    if broad:
-        return broad, False
-    return fallback, True
-
-
-def vasp_input_menu_code(menu_text: str) -> str:
-    """主菜单里「VASP Input-Files Generator」那一项的两位菜单号（1.5.x 是两级菜单）。"""
-    for line in (menu_text or "").splitlines():
-        low = line.lower()
-        if "vasp input" not in low or "generator" not in low:
-            continue
-        found = re.search(r"^\s*([0-9]{2})\)", line)
-        if found:
-            return found.group(1)
-    return ""
-
-
-_VERSION_RE = re.compile(r"VASPKIT\s+[A-Za-z ]*Edition\s+([0-9][0-9.]*)")
-
-
-def parse_version(text: str) -> str:
-    """从 banner 里读版本号（1.5.x 的 `-v` 是非法参数，只能从 banner 读）。"""
-    found = _VERSION_RE.search(text or "")
-    return found.group(1) if found else ""
-
-
-def _run_text(run: Run, command: str, timeout: float) -> str:
-    """跑一条只读探测命令，返回 stdout（失败/为空都返回空串）。"""
-    try:
-        code, out, _err = run(command, timeout=timeout)
-    except Exception:  # noqa: BLE001 - 探测命令失败按"读不到"处理
-        return ""
-    return (out or "") if code == 0 or (out or "").strip() else ""
-
-
-def read_menu(run: Run, path: str, *, timeout: float = 30.0) -> str:
-    """拿菜单文本：1.5.x 靠 `printf '0\\n' | vaspkit`（主菜单 + 版本 banner），
-    老版本退回 `-h` / `-v`。全部失败返回空串。"""
-    quoted = shlex.quote(path)
-    for command in (f"printf '0\\n' | {quoted}", f"{quoted} -h", f"{quoted} -v"):
-        text = _run_text(run, command, timeout)
-        if (text or "").strip():
-            return text
-    return ""
-
-
 def probe_vaspkit(run: Run, *, timeout: int = 30) -> VaspkitSkill:
-    """在超算侧探测 vaspkit：定位可执行文件、读版本、读 POTCAR 菜单号。
+    """在超算侧探测 vaspkit：先定位可执行文件，再尽力读版本/能力信息。
 
-    兼容两种风格：
-    - 1.5.x：`-v`/`-h` 是非法参数，版本在 banner 里，POTCAR 在「VASP Input-Files
-      Generator」二级菜单里（实测 1.5.1 是 `103) Generate POTCAR File with Default Setting`）；
-    - 老版本：扁平菜单，POTCAR 行直接出现在 `-h` 输出里。
-    探测失败一律返回 ``found=False`` / 空字段，不抛异常。
+    探测失败一律返回 ``found=False``，不抛异常（保证集成可用性）。
     """
     skill = VaspkitSkill()
     try:
@@ -202,30 +113,24 @@ def probe_vaspkit(run: Run, *, timeout: int = 30) -> VaspkitSkill:
             return skill
         skill.path = _safe_path(lines[0])
         skill.found = True
-        cap_text = read_menu(run, skill.path, timeout=timeout)
-        if not cap_text.strip():
-            _sync_notes(skill)
-            return skill
-        skill.version = parse_version(cap_text)
-        direct, direct_only = potcar_menu_code(cap_text)
-        if direct:
-            skill.potcar_code, skill.potcar_only = direct, direct_only
-        else:
-            parent = vasp_input_menu_code(cap_text)
-            if parent:
-                quoted = shlex.quote(skill.path)
-                sub = _run_text(run, f"printf '{parent}\\n0\\n' | {quoted}", timeout)
-                if sub.strip():
-                    cap_text = f"{cap_text}\n{sub}"
-                    found, only = potcar_menu_code(sub)
-                    if found:
-                        skill.potcar_code, skill.potcar_only = found, only
+        try:
+            vc, vout, _ = run(f"{skill.path} -v", timeout=timeout)
+            if _run_ok(vc) and (vout or "").strip():
+                skill.version = (vout or "").strip().splitlines()[0][:80]
+        except Exception:  # noqa: BLE001
+            pass
+        cap_text = ""
+        for cmd in (f"{skill.path} -h", f"echo 0 | {skill.path}"):
+            try:
+                hc, hout, _ = run(cmd, timeout=timeout)
+                if _run_ok(hc) and (hout or "").strip():
+                    cap_text = hout
+                    break
+            except Exception:  # noqa: BLE001
+                continue
         skill.tasks = _detect_tasks(cap_text)
-        if skill.potcar_code:
-            skill.tasks.setdefault("potcar", [skill.potcar_code])
         _sync_notes(skill)
-        logger.info("vaspkit 探测完成: found=%s path=%s version=%s potcar=%s",
-                    skill.found, skill.path, skill.version, skill.potcar_code)
+        logger.info("vaspkit 探测完成: found=%s path=%s", skill.found, skill.path)
     except Exception as exc:  # noqa: BLE001
         logger.warning("vaspkit 探测异常，按未发现处理: %s", exc)
         skill.found = False

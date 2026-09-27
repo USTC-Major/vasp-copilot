@@ -140,8 +140,7 @@ def test_stream_messages_endpoint_stopped_persists(monkeypatch, tmp_path):
 
 
 def test_stop_endpoint_returns_stopped(monkeypatch, tmp_path):
-    """停止端点＝一个按钮停到底：无论当时有没有在生成，都返回 stopped=true，
-    并附带给用户的收尾说明（含"仍在超算上运行的作业号"提醒）。"""
+    """停止只影响当前生成；不声称监控或远端作业已停止。"""
     monkeypatch.setenv("VASP_AI_HOME", str(tmp_path))
     monkeypatch.setenv("ENABLE_AI_MODE", "true")
     import ai_mode.server as server_module
@@ -149,17 +148,50 @@ def test_stop_endpoint_returns_stopped(monkeypatch, tmp_path):
     with TestClient(app) as client:
         pid, tid = _make_project_and_task(client, tmp_path)
         server_module._ACTIVE_STOPS[(pid, tid)] = False
+        store=server_module._get_project_store()
+        original_request=store.client.request
+        calls=[]
+        def disconnected_tools(method,path,**kwargs):
+            calls.append((method,path))
+            if path.endswith('/tools') or path.endswith('/detail'):
+                raise RuntimeError('Toolbox disconnected')
+            return original_request(method,path,**kwargs)
+        monkeypatch.setattr(store.client,'request',disconnected_tools)
         r = client.post(
             f"/ai/v1/projects/{pid}/tasks/{tid}/messages/stop")
         assert r.status_code == 200
         assert r.json()["stopped"] is True
-        assert isinstance(r.json()["running_jobs"], list)
-        assert "已按你的要求停止" in r.json()["message"]
+        assert set(r.json())=={'mode','stopped'}
+        assert not any(path.endswith(('/tools','/detail')) for _,path in calls)
         server_module._ACTIVE_STOPS.pop((pid, tid), None)
+        monkeypatch.setattr(store.client,'request',original_request)
         r2 = client.post(
             f"/ai/v1/projects/{pid}/tasks/{tid}/messages/stop")
         assert r2.status_code == 200
-        assert r2.json()["stopped"] is True          # 幂等：再点一次仍然是一切停止
+        assert r2.json()["stopped"] is False
+
+def test_stop_does_not_stop_other_task_or_guess_when_owner_is_disconnected(monkeypatch,tmp_path):
+    import ai_mode.server as server_module
+    from backend.toolbox.contracts import ToolboxError
+    monkeypatch.setenv('ENABLE_AI_MODE','true')
+    monkeypatch.setenv('VASP_AI_HOME',str(tmp_path))
+    with TestClient(create_ai_mode_app()) as client:
+        pid,tid=_make_project_and_task(client,tmp_path)
+        server_module._ACTIVE_STOPS[(pid,'other-task')]=False
+        try:
+            missing=client.post(f'/ai/v1/projects/{pid}/tasks/not-present/messages/stop')
+            assert missing.status_code==404
+            assert server_module._ACTIVE_STOPS[(pid,'other-task')] is False
+            def unavailable(*args,**kwargs):
+                raise ToolboxError('TOOLBOX_UNAVAILABLE','执行服务不可达；状态未知',503)
+            monkeypatch.setattr(server_module._get_project_store().client,'request',unavailable)
+            failed=client.post(f'/ai/v1/projects/{pid}/tasks/{tid}/messages/stop')
+            assert failed.status_code==503
+            assert 'stopped' not in failed.json()
+            assert failed.json()['error']['code']=='TOOLBOX_UNAVAILABLE'
+            assert server_module._ACTIVE_STOPS[(pid,'other-task')] is False
+        finally:
+            server_module._ACTIVE_STOPS.pop((pid,'other-task'),None)
 
 
 def test_task_detail_empty_flow(monkeypatch, tmp_path):

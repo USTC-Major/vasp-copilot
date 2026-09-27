@@ -1,4 +1,4 @@
-"""上传免批范围：开启后由 Toolbox 直接执行并留回执，关闭时照旧逐项弹卡。"""
+"""旧全局免批配置不能绕过逐项上传卡。"""
 from __future__ import annotations
 
 from contextlib import contextmanager
@@ -35,26 +35,24 @@ def _upload_setup(tmp_path, *, kinds):
         yield client, api, hpc, project_id, task_id, artifact_id
 
 
-def test_upload_runs_without_a_card_when_in_scope(tmp_path):
+def test_legacy_upload_auto_approval_still_requires_card(tmp_path):
     with _upload_setup(tmp_path, kinds=("hpc_upload",)) as setup:
         client, api, hpc, project_id, task_id, artifact_id = setup
         result = call_tool(api, project_id, task_id, "hpc_upload",
                            {"artifact_id": artifact_id, "job_key": "relax"})
-        assert result["pending"] is None
+        assert result["pending"] and result["pending"]["kind"]=='hpc_upload'
         assert result["ok"] is True
-        assert "[AUTO_APPROVED]" in result["result"], result["result"]
-        assert hpc.write_calls == ["/review/calc/relax/INCAR"]
-        assert hpc.files["/review/calc/relax/INCAR"] == b"SYSTEM = si\n"
+        assert "[AUTO_APPROVED]" not in result["result"]
+        assert hpc.write_calls == []
+        assert "/review/calc/relax/INCAR" not in hpc.files
         # 决议与回执都留在任务记录里，事后可审计
         flow = api.app.state.toolbox.require_task(project_id, task_id)["flow"]
         actions = list(flow["consent"]["actions"].values())
-        assert actions and actions[0]["state"] == "executed"
-        assert actions[0]["note"].startswith("按智能设置中开启的免批范围自动批准")
-        assert "已把这份输入上传到超算工作区" in actions[0]["result"]
+        assert actions and actions[0]["state"] == "pending"
         events = client.get(
             f"/api/v1/toolbox/projects/{project_id}/tasks/{task_id}/events?after=0"
         ).json()["events"]
-        assert any(event["kind"] == "tool.hpc_upload"
+        assert not any(event["kind"] == "tool.hpc_upload"
                    and "AUTO_APPROVED" in (event.get("message") or "")
                    for event in events)
 

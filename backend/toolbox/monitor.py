@@ -139,22 +139,7 @@ class MonitorLoop:
                     continue
                 with task_lock(project_id, task_id):
                     task = store.get_task(project_id, task_id)
-                    if task is None:
-                        continue
-                    phase = (task.get('flow') or {}).get('phase')
-                    if phase == 'done' and not (task.get('flow') or {}).get('_resumable'):
-                        # 已完成的旧任务若还有可接回的取消作业，仍要继续推进（存在 _resumable 标记时）
-                        jobs = ((task.get('flow') or {}).get('plan') or {}).get('jobs') or []
-                        statuses = {j.get('key'): (j.get('status') or 'draft') for j in jobs}
-                        resumable = any(
-                            j.get('status') in {'canceled', 'blocked'}
-                            and not j.get('slurm_id') and not j.get('submission_state')
-                            and all(statuses.get(k) == 'completed'
-                                    for k in (j.get('requires') or []))
-                            for j in jobs)
-                        if not resumable:
-                            continue
-                    elif phase not in {'monitoring', 'await_submit'}:
+                    if task is None or (task.get('flow') or {}).get('phase') != 'monitoring':
                         continue
                     before = _flow_signature(task.get("flow") or {})
                     orch = self._orch_for(project_id, task_id, cfg)

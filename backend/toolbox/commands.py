@@ -18,7 +18,6 @@ import logging
 import os
 import posixpath
 import re
-import shlex
 import shutil
 import tempfile
 from datetime import datetime, timezone
@@ -36,12 +35,9 @@ from .exec.policy import check_path_in_bounds
 from .incar_draft import (IncarRoundtripMismatch, IncarUnknownTagError, build_incar_action,
                            commit_incar_action)
 from .input_checks import bounded_fingerprint, read_bound_input, validate_input_set
-from backend.input_validation import (POTCAR_LIMIT, TEXT_LIMIT,
-                                      InputValidationError, validate_poscar,
-                                      validate_potcar)
+from backend.input_validation import InputValidationError
 from .projects import ProjectStore
 from .schemas import PlanSnapshot, PlanStep
-from .tools.vaspkit import potcar_menu_code, probe_vaspkit
 from .tools.draft import (find_remote_submit_script,
                            fingerprint_local_submit_script,
                            fingerprint_remote_submit_script,
@@ -72,17 +68,13 @@ def _action_failure_text(exc: BaseException) -> str:
     return f"操作失败且未重试：{type(exc).__name__}（{detail}）"
 
 
-#: 可自愈的失败：告诉模型"自己重做/换路"，而不是停下来把错误抛给用户。
+# Hints never confer authority; replacement actions require a new exact approval.
 _SELF_HEAL_HINTS = {
-    "ROOT_CHANGED": "远端目标或主机身份已变化，重新提一次同样的操作即可（新卡会重新观察身份），不要问用户",
-    "SOURCE_CHANGED": "来源或目标在确认前后变化，重新提案一次即可，不要问用户",
-    "SCOPE_STALE": "这次准备已作废，重新走一遍预检→草稿→弹卡即可，不要问用户",
-    "SCOPE_EXPIRED": "授权过期，重新提一次即可，不要问用户",
-    "CARD_NOT_FOUND": "卡片已失效，重新提一次即可，不要问用户",
-    "UPLOAD_SESSION_EXPIRED": "旧上传卡的会话失效，直接重新提一次上传即可，不要问用户",
-    "FILE_ACTION_BUSY": "上一次文件动作还没结束，稍等片刻后重试同一个操作即可",
-    "SCRIPT_ALREADY_PRESENT": "目录里已有脚本：按模板一致规则自动认领，或换目标目录，不要问用户要脚本",
-    "REMOTE_CAPABILITY_UNAVAILABLE": "超算连接暂时不可用，稍后重试同一操作；仍然失败再如实汇报",
+    "ROOT_CHANGED": "请核对远端身份，再提出新的精确确认卡",
+    "SOURCE_CHANGED": "请核对文件变化，再提出新的精确确认卡",
+    "SCOPE_STALE": "请重新预检并由用户批准新的精确操作",
+    "SCOPE_EXPIRED": "请重新提出操作并等待用户批准",
+    "REMOTE_CAPABILITY_UNAVAILABLE": "连接不可用，请核对站点配置后重试只读查询",
 }
 
 #: flow.phase -> 任务展示状态（与 orchestrator 对齐）
@@ -97,31 +89,7 @@ _PHASE_STATUS = {
 _WS_READ_CAP = 12000             # ws_read 单文件预览上限
 _HPC_READ_CAP = 12000            # hpc_read 单文件预览上限
 _HPC_UPLOAD_CAP = 64 * 1024 * 1024   # hpc_upload 单文件大小上限（64 MB）
-_SCRIPT_LIMIT = 256 * 1024           # 提交脚本模板/副本大小上限（256 KB）
 
-
-def _snapshot_signature(snapshot: dict) -> tuple:
-    """预检快照的"内容签名"：输入/脚本的路径、大小、SHA-256 + 调度目标。
-
-    两条代码路径（监控自动准备与 AI 工具）构造快照时元数据字段不同，但只要内容一致，
-    就应当视为"没有变化"，从而不重绑、不作废用户手里的待确认提交卡。
-    """
-    def rows(key: str, fields: tuple[str, ...]) -> tuple:
-        return tuple(sorted(
-            tuple(str(item.get(field) or "") for field in fields)
-            for item in (snapshot.get(key) or []) if isinstance(item, dict)))
-
-    return (rows("inputs", ("name", "normalized_path", "size", "sha256")),
-            rows("scripts", ("script_name", "normalized_path", "size", "sha256")),
-            repr(snapshot.get("scheduler_target") or {}))
-
-
-def _draft_signature(draft) -> tuple:
-    """提交草稿的内容签名：目录、脚本名、脚本哈希/大小、提交命令。"""
-    if not isinstance(draft, dict):
-        return ()
-    return tuple(str(draft.get(field) or "") for field in
-                 ("dir", "script_name", "script_sha256", "script_size", "submit_cmd"))
 
 _SAFE_TEXT_NAMES = frozenset({
     "INCAR", "POSCAR", "CONTCAR", "KPOINTS", "OUTCAR", "OSZICAR",
@@ -453,10 +421,6 @@ class ToolExecutor:
         "hpc_list": "tool_hpc_list",
         "hpc_read": "tool_hpc_read",
         "hpc_upload": "tool_hpc_upload",
-        "request_file_prepare": "tool_request_file_prepare",
-        "resume_flow": "tool_resume_flow",
-        "generate_potcar": "tool_generate_potcar",
-        "deploy_submit_script": "tool_deploy_submit_script",
         "stop_monitor": "tool_stop_monitor",
         "plan": "tool_plan",
         "copy_inputs": "tool_copy_inputs",
@@ -517,7 +481,7 @@ class ToolExecutor:
                 return " 下一步=先诊断（diagnose_job），重试需用户确认"
             missing = [k for k in (job.get("requires") or []) if k not in completed_keys]
             if missing:
-                return f" 下一步=等上游 {'、'.join(missing)} 完成（完成后预检会自动带入上游产物）"
+                return f" 下一步=等上游 {'、'.join(missing)} 完成（需人工准备下游输入）"
             return " 下一步=可准备提交：precheck → draft → 由用户确认提交（系统不会自动补提）"
 
         job_lines = "\n".join(
@@ -620,28 +584,6 @@ class ToolExecutor:
             suffix = (f"（作业目录 {key}）" if job_dir is not None else "")
             calc = (self._remote_job_dir(hpc, remote, key)
                     if (hpc is not None and remote) else "")
-            # 依赖链的上游产物交接（POSCAR←上游 CONTCAR、CHGCAR、POTCAR）：
-            # 只在上游**已完成**时发生，且绝不覆盖与上游不一致的既有文件。
-            if hpc is not None and remote and (job.get("requires") or []):
-                from .staging import stage_upstream_inputs
-                staged = stage_upstream_inputs(flow, self.cfg, hpc, remote, job)
-                for item in staged["staged"]:
-                    rows.append(f"- [ok] 已从上游作业目录带入 {item['name']}"
-                                f"（{item.get('size') or 0} B，哈希已核对）{suffix}")
-                for conflict in staged["conflicts"]:
-                    ok = False
-                    rows.append(f"- [error] {conflict['name']} 与上游产物不一致，"
-                                f"未覆盖（上游 {str(conflict.get('source_sha256'))[:12]}… / "
-                                f"本目录 {str(conflict.get('target_sha256'))[:12]}…）{suffix}；"
-                                "请确认本目录里这份文件是你自己放的，还是删掉让系统带入")
-                    issues.append({"job": key, "file": conflict["name"], "level": "error",
-                                   "message": "与上游产物不一致，未覆盖"})
-                for skipped in staged["skipped"]:
-                    rows.append(f"- [info] 未带入 {skipped.get('name') or '上游产物'}："
-                                f"{skipped.get('reason')}{suffix}")
-                for wait in staged["waiting"]:
-                    rows.append(f"- [info] 等待上游作业 {wait} 完成后再自动带入"
-                                f"{'（' + suffix.strip('（）') + '）' if suffix else ''}")
             contents: dict[str, bytes] = {}
             for name in required:
                 name = str(name or "").strip()
@@ -730,22 +672,14 @@ class ToolExecutor:
                     issues.append({"job": key, "file": "提交脚本(*.sh)",
                                    "level": "error", "message": str(exc)})
             attestation = (flow.get("script_attestations") or {}).get(key)
+            if (attestation or {}).get("claimed_by") in {"template_match", "script_deploy"}:
+                attestation = None
             attested = (isinstance(attestation, dict)
                         and attestation.get("attempt_id") == job.get("attempt_id")
                         and isinstance(actual_script, dict)
                         and all(attestation.get(field) == actual_script.get(field)
                                 for field in ("source", "directory", "script_name",
                                               "normalized_path", "sha256", "size")))
-            if not attested and calc and isinstance(actual_script, dict):
-                # 用户在智能设置里配了模板并打开复制开关时：与模板逐字节一致的脚本
-                # 直接视为已认领（他只授权过一次，不该再被要求点一次）。
-                from .script_template import stamp_template_attestations
-                stamped = stamp_template_attestations(
-                    flow, self.cfg, hpc, [{"job_key": key, **actual_script}])
-                if stamped:
-                    attested = True
-                    rows.append(f"- [ok] 提交脚本与你在智能设置里配置的模板逐字节一致，"
-                                f"已自动认领{suffix}")
             if not attested:
                 ok = False
                 rows.append(f"- [error] 提交脚本尚未由用户认领并绑定 SHA-256{suffix}")
@@ -758,29 +692,9 @@ class ToolExecutor:
             execution_mode=mode, inputs=input_records, scripts=script_records,
             scheduler_target=target_binding(self.cfg))
         from .computation import bind_precheck
-        existing = selected.get("precheck") or {}
-        pending_before = self._pending_submit_card(flow, selected["key"])
-        # 关键：**同样内容的重复预检不要重绑**——重绑会换掉 precheck_digest，
-        # 把已经弹给用户的待确认提交卡当场作废（症状：点确认一直失败）。
-        # 判据用"内容签名"而不是摘要字符串：监控与 AI 两条路径构造的快照元数据不同，
-        # 但输入/脚本的路径+大小+哈希一致就说明内容没变。
-        same_content = bool(
-            existing.get("hard") and existing.get("ok") == ok
-            and existing.get("attempt_id") == selected.get("attempt_id")
-            and (existing.get("digest") == digest
-                 or _snapshot_signature(existing.get("snapshot") or {})
-                 == _snapshot_signature(snapshot)))
-        if same_content:
-            if pending_before:
-                rows.append("- [info] 本次硬预检与已弹出的提交卡绑定的结果一致，未改变绑定"
-                            "（那张待确认提交卡继续有效，直接点它确认即可）")
-        else:
-            bind_precheck(flow, selected, {"ok": ok, "issues": issues, "hard": True,
-                                "execution_mode": mode, "snapshot": snapshot,
-                                "digest": digest})
-            if pending_before:
-                rows.append("- [warn] 输入文件或提交脚本在确认前发生了变化："
-                            "旧的待确认提交卡已作废，请按最新那张卡确认")
+        bind_precheck(flow, selected, {"ok": ok, "issues": issues, "hard": True,
+                            "execution_mode": mode, "snapshot": snapshot,
+                            "digest": digest})
         self._save_flow(flow)
         prefix = "提交前硬检查通过：" if ok else "提交前硬检查失败（禁止提交）："
         return prefix + "\n" + "\n".join(rows)
@@ -797,176 +711,6 @@ class ToolExecutor:
                     and (action.get("binding") or {}).get("job_key") == job_key):
                 return action
         return None
-
-    #: 「文件准备」一次性授权覆盖的动作（科学参数/脚本生成/提交永不在内）。
-    FILE_PREPARE_KINDS = ("copy_inputs", "hpc_upload", "potcar_generate",
-                          "script_deploy", "generate_kpoints")
-
-    def tool_resume_flow(self, args: dict) -> str:
-        """用户说「继续」时用：在同一任务里把被取消/跳过的下游作业重新排上（复用已完成的上游结果）。
-
-        不再反问用户、也不要求新建任务：已完成的作业原样保留（不重跑），
-        被取消/跳过、且其依赖都已完成的作业重置为待准备并换新的尝试号，
-        随后由后台自动带入上游产物、预检、出提交卡。
-        """
-        del args
-        flow = self._load_flow()
-        jobs = (flow.get("plan") or {}).get("jobs") or []
-        if not jobs:
-            return ToolFailure('TOOL_PRECONDITION_FAILED', "尚未规划作业：请先 plan")
-        statuses = {j.get("key"): (j.get("status") or "draft") for j in jobs}
-        resumed: list[str] = []
-        skipped: list[dict] = []
-        for job in jobs:
-            if job.get("status") not in {"canceled", "skipped", "blocked"}:
-                continue
-            pending_upstream = [key for key in (job.get("requires") or [])
-                                if statuses.get(key) != "completed"]
-            if pending_upstream:
-                skipped.append({"job_key": job.get("key"), "waiting": pending_upstream})
-                continue
-            job.update(status="draft", slurm_id=None, submission_state=None,
-                       submission_action_id=None, queue_state=None,
-                       wait_reason="", blocked_by_dependency=False)
-            job.pop("precheck", None)
-            job.pop("draft", None)
-            job.pop("diagnosis", None)
-            resumed.append(str(job.get("key")))
-        if not resumed:
-            detail = "；".join(
-                f"{item['job_key']} 还在等 {'、'.join(item['waiting'])} 完成"
-                for item in skipped) or "没有被取消/跳过的作业需要恢复"
-            return f"无需恢复：{detail}。已完成的作业不会被重跑。"
-        from .computation import invalidate
-        invalidate(flow, resumed, "被取消的作业已重新排上，需要重新准备与确认")
-        for key in resumed:
-            (flow.get("script_attestations") or {}).pop(key, None)
-            (flow.get("staged_inputs") or {}).pop(key, None)
-        flow["phase"] = "monitoring"        # 交给后台：自动带入上游产物 → 预检 → 出提交卡
-        self._save_flow(flow)
-        note = ""
-        if skipped:
-            note = "；仍在等待上游的：" + "、".join(
-                f"{item['job_key']}（等 {'、'.join(item['waiting'])}）" for item in skipped)
-        return ("已在同一任务里重新排上：" + "、".join(resumed)
-                + "（不用新建任务、也不用重跑已完成的作业）。"
-                  "系统会按依赖自动带入上游结果、做硬预检并弹出提交确认卡，"
-                  "你只需点确认；已完成的作业原样保留。" + note)
-
-    def _file_prepare_grant_active(self, flow: dict | None = None) -> bool:
-        """本任务是否已由用户一次性批准"文件准备"权限。"""
-        record = ((flow if flow is not None else self._load_flow())
-                  .get("file_prepare_grant") or {})
-        return bool(record.get("active"))
-
-    def _file_prepare_grant_pending(self) -> bool:
-        """同一轮里是否已经申请了「文件准备」授权卡（还没批准）。"""
-        for action in ((self._load_flow().get("consent") or {})
-                       .get("actions") or {}).values():
-            if (action.get("kind") == "file_prepare_grant"
-                    and action.get("state") == "pending"):
-                return True
-        return False
-
-    def _cancel_card(self, card_id: str) -> None:
-        """撤掉一张刚建出来、又不该让用户看到的卡（不进待确认列表）。"""
-        def update(flow):
-            action = ((flow.get("consent") or {}).get("actions") or {}).get(card_id)
-            if isinstance(action, dict) and action.get("state") == "pending":
-                action.update(state="expired",
-                              result="已被「文件准备」一次性授权取代，无需确认",
-                              resolved_at=_now_iso())
-            return True
-
-        self._save_flow(update(self._load_flow()))
-
-    def tool_request_file_prepare(self, args: dict) -> str:
-        """申请**一次**文件准备授权：批准后本任务的输入放置/上传/POTCAR/脚本复制都不再逐张弹卡。"""
-        del args
-        flow = self._load_flow()
-        if self._file_prepare_grant_active(flow):
-            return ("本任务的「文件准备」权限已经批准过：直接继续准备文件即可"
-                    "（复制输入、上传、生成 POTCAR、复制脚本都不需要再弹卡；"
-                    "提交作业与科学参数仍需用户逐次确认）。")
-        binding = {
-            "operation": "file_prepare_grant",
-            "project_id": self.project_id, "task_id": self.task_id,
-            "operations": list(self.FILE_PREPARE_KINDS),
-            "execution_mode": self._execution_mode(),
-        }
-        payload = card_payload(
-            tool="request_file_prepare",
-            args={}, risk="medium",
-            reason=("批准这一次后，本任务的文件准备（把已登记输入复制/上传到各作业目录、"
-                    "用 vaspkit 生成 POTCAR、按模板复制提交脚本）由系统直接执行，不再逐张弹卡；"
-                    "每一步仍逐项复核哈希并留回执。**提交作业（sbatch）、INCAR/KPOINTS 等科学参数、"
-                    "结构导入仍然逐次请你确认**，不受本次授权影响。"),
-            batch_key=f"fileprep|{self.project_id}|{self.task_id}",
-            kind="file_prepare_grant",
-            summary=("允许 AI 在本任务准备文件（一次授权）：\n"
-                     "- 复制已登记输入到各作业目录\n- 上传已登记文件到超算工作区\n"
-                     "- 用 vaspkit 生成 POTCAR\n- 按你配置的模板复制提交脚本\n"
-                     "提交作业与科学参数仍需你逐次确认。"),
-            binding=binding,
-        )
-        saved = save_card(self.store, self.project_id, self.task_id,
-                          self._load_flow(), payload)
-        raise PendingConsentError(saved)
-
-    def _activate_file_prepare_grant(self, action: dict) -> str:
-        """批准"文件准备"授权卡：写进 flow，之后同类机械动作不再弹卡。"""
-        flow = self._load_flow()
-        flow["file_prepare_grant"] = {
-            "active": True,
-            "granted_at": _now_iso(),
-            "action_id": action.get("action_id") or "",
-            "operations": list(self.FILE_PREPARE_KINDS),
-        }
-        self._save_flow(flow)
-        return ("已获得本任务的文件准备授权：接下来复制输入、上传、生成 POTCAR、复制脚本"
-                "我都会直接做完并留回执；提交作业前仍会单独弹卡请你确认。")
-
-    def _auto_approve_kinds(self) -> set:
-        """用户显式开启的免批范围（全局执行设置；读取失败即视为未开启）。"""
-        try:
-            from .config import normalize_auto_approve_kinds
-            return set(normalize_auto_approve_kinds(
-                getattr(self.cfg, "auto_approve_kinds", None)))
-        except Exception:  # noqa: BLE001 - 读不到就退回逐项确认
-            return set()
-
-    def _auto_approve_and_execute(self, card: dict, kind: str):
-        """在用户显式授权的范围内，由 **Toolbox 自身** 批准并执行这张卡。
-
-        返回执行回执文本；若不在授权范围或批准未生效则返回 None（调用方照常
-        抛 PendingConsentError 交人工确认）。AI 进程不参与批准动作。
-        """
-        if kind in self.FILE_PREPARE_KINDS:
-            if self._file_prepare_grant_active() or kind in self._auto_approve_kinds():
-                granted = True                      # 已授权：直接执行
-            elif self._file_prepare_grant_pending():
-                # 同一轮里刚申请过授权（还没批）：撤掉这张逐文件卡，等授权批准后统一执行，
-                # 否则用户会看到"一张授权卡 + 一堆逐文件卡"。
-                self._cancel_card(card["card_id"])
-                return ("已申请「文件准备」授权（只有一张卡）：你批准后我会直接把这类文件都准备好，"
-                        "本次不再另外出卡。")
-            else:
-                return None                          # 没申请过授权：照旧逐张确认（安全兜底）
-        else:
-            granted = kind in self._auto_approve_kinds()
-        if not granted:
-            return None
-        from .consent import resolve_card
-        decision = resolve_card(
-            self.store, self.project_id, self.task_id, card["card_id"],
-            approved=True,
-            note=(f"按智能设置中开启的免批范围自动批准（{kind}；"
-                  "科学参数、结构导入、脚本生成与提交永不免批）"))
-        if decision.get("state") != "approved":
-            return None
-        receipt = self.execute_action(card["card_id"])
-        return (f"[AUTO_APPROVED] 已按你在智能设置里开启的免批范围自动批准并执行"
-                f"（{kind}，决议与环境哈希留在卡片记录里）。{receipt}")
 
     def _execute_action_locked(self, action_id: str) -> str:
         """Claim and execute one exact approved action without replaying LLM args."""
@@ -1002,12 +746,6 @@ class ToolExecutor:
                     result = self._execute_upload_action(binding)
             elif operation == "kpoints_write":
                 result = self._execute_deterministic_text_action(binding)
-            elif operation == "potcar_generate":
-                result = self._execute_potcar_action(binding)
-            elif operation == "script_deploy":
-                result = self._execute_template_action(binding)
-            elif operation == "file_prepare_grant":
-                result = self._activate_file_prepare_grant(action)
             elif operation == "mp_poscar_write":
                 if not str(self._task().get("local_workspace") or "").strip():
                     raise ValueError("local workspace is no longer selected")
@@ -1312,390 +1050,9 @@ class ToolExecutor:
                 else:
                     files.discard_legacy_candidate(hpc)
             raise
-        auto = self._auto_approve_and_execute(saved, "hpc_upload")
-        if auto is not None:
-            return auto
         raise PendingConsentError(saved)
 
     # ---------------- POTCAR：按 vaspkit 的默认选择在作业目录生成 ----------------
-    @staticmethod
-    def _remote_under(path: str, root: str) -> bool:
-        """远端路径必须落在任务工作区内（词法检查，避免越出 root）。"""
-        base = posixpath.normpath("/" + str(root or "").lstrip("/")).rstrip("/")
-        target = posixpath.normpath("/" + str(path or "").lstrip("/"))
-        return bool(base) and (target == base or target.startswith(base + "/"))
-
-    @staticmethod
-    def _remote_stat(hpc, path: str) -> dict | None:
-        """远端普通文件的 stat；不存在/是目录/查询失败都返回 None。"""
-        stat = getattr(hpc, "stat", None)
-        if stat is None:
-            return None
-        try:
-            info = stat(path)
-        except Exception:  # noqa: BLE001 - 远端 stat 失败按不存在处理
-            return None
-        return info if isinstance(info, dict) and info.get("is_dir") is not True else None
-
-    @staticmethod
-    def _remote_read(hpc, path: str, limit: int) -> bytes:
-        return bytes(hpc.read_file(path, max_bytes=limit + 1))
-
-    @staticmethod
-    def _potcar_titles(raw: bytes) -> list[str]:
-        """只取 TITEL 行里的数据集名（如 Si / Si_pv）；POTCAR 内容绝不回显。"""
-        text = raw.decode("utf-8", "replace")
-        return re.findall(
-            r"(?im)^\s*TITEL\s*=\s*\S+\s+([A-Z][a-z]?(?:_[A-Za-z0-9]+)?)\b", text)[:16]
-
-    @staticmethod
-    def _remote_sh_names(hpc, directory: str) -> list[str]:
-        """远端作业目录里的 *.sh 名字（目录不存在或列不了时返回空表）。"""
-        try:
-            infos = hpc.list_dir_info(directory)
-        except Exception:  # noqa: BLE001
-            return []
-        return sorted(str(info.get("name") or "") for info in infos
-                      if not info.get("is_dir")
-                      and str(info.get("name") or "").lower().endswith(".sh"))
-
-    def tool_generate_potcar(self, args: dict) -> str:
-        """在指定作业目录用 vaspkit 生成 POTCAR：确定性命令 + 逐次确认，永不自动批准。"""
-        from .config import as_bool
-        if not as_bool(getattr(self.cfg, "allow_potcar_assembly", False)):
-            return ToolFailure(
-                'AI_TOOL_NOT_ALLOWED',
-                "[AI_TOOL_NOT_ALLOWED] 未开启 POTCAR 自动生成：请在智能设置 → POTCAR 里打开开关"
-                "（打开时会显示风险提示与免责声明）。未执行任何远端命令。")
-        flow = self._load_flow()
-        if not ((flow.get("plan") or {}).get("jobs")):
-            return ToolFailure('TOOL_PRECONDITION_FAILED', "尚未规划作业：请先 plan，再生成 POTCAR")
-        from .computation import select_job
-        job = select_job(flow, args)
-        hpc, root, err = self._hpc_ready()
-        if err:
-            return ToolFailure('TOOL_POLICY_OR_PRECONDITION', err)
-        calc = self._remote_job_dir(hpc, root, job["key"]).rstrip("/")
-        if not self._remote_under(calc, root):
-            return ToolFailure('TOOL_POLICY_OR_PRECONDITION',
-                               "作业目录越出任务超算工作区；已拒绝，未执行任何远端命令。")
-        try:
-            skill = probe_vaspkit(lambda command, **kw: hpc.run(command, **kw))
-        except Exception as exc:  # noqa: BLE001
-            return ToolFailure('TOOL_OPERATION_FAILED',
-                               f"vaspkit 探测失败：{type(exc).__name__}（未执行生成）")
-        if not skill.found:
-            return ToolFailure(
-                'VASPKIT_NOT_FOUND',
-                "[VASPKIT_NOT_FOUND] 超算上没找到可用的 vaspkit（`which vaspkit` 无结果）；"
-                "无法生成 POTCAR。请先在超算侧装好/加载 vaspkit，或自己放好 POTCAR。")
-        code = str(skill.potcar_code or "")
-        if not code:
-            return ToolFailure(
-                'VASPKIT_MENU_UNKNOWN',
-                "[VASPKIT_MENU_UNKNOWN] 读不出 vaspkit 菜单里的 POTCAR 任务号：请把 `vaspkit` 菜单里"
-                "含 POTCAR 的那一行发我，或手工生成 POTCAR。未执行生成。")
-        poscar_path = f"{calc}/POSCAR"
-        stat = self._remote_stat(hpc, poscar_path)
-        if not stat:
-            return ToolFailure('TOOL_PRECONDITION_FAILED',
-                               f"作业目录里没有 POSCAR：{poscar_path}（vaspkit 用它定元素顺序）")
-        try:
-            poscar_raw = self._remote_read(hpc, poscar_path, TEXT_LIMIT)
-            if len(poscar_raw) != int(stat.get("size") or 0):
-                raise InputValidationError("INPUT_READ_INCOMPLETE", "POSCAR 读取长度与远端不一致")
-            info = validate_poscar(poscar_raw)
-        except InputValidationError as exc:
-            return ToolFailure('TOOL_PRECONDITION_FAILED', f"POSCAR 无法用于生成 POTCAR：{exc}")
-        except Exception as exc:  # noqa: BLE001
-            return ToolFailure('TOOL_OPERATION_FAILED',
-                               f"读取远端 POSCAR 失败：{type(exc).__name__}")
-        siblings = {}
-        for name in ("INCAR", "POSCAR", "KPOINTS"):
-            path = f"{calc}/{name}"
-            try:
-                siblings[name] = hpc.sha256_file(path) if self._remote_stat(hpc, path) else ""
-            except Exception:  # noqa: BLE001
-                siblings[name] = ""
-        elements = None if info.vasp4 else tuple(info.elements)
-        binding = {
-            "operation": "potcar_generate",
-            "project_id": self.project_id, "task_id": self.task_id,
-            "job_key": job["key"], "attempt_id": job.get("attempt_id"),
-            "execution_mode": self._execution_mode(),
-            "remote_root": root, "job_dir": calc,
-            "vaspkit_path": skill.path, "vaspkit_version": skill.version,
-            "menu_code": code, "menu_only_potcar": bool(skill.potcar_only),
-            "poscar_sha256": hashlib.sha256(poscar_raw).hexdigest(),
-            "poscar_elements": list(elements or ()),
-            "poscar_vasp4": bool(info.vasp4),
-            "sibling_hashes": siblings,
-        }
-        extra = ("" if skill.potcar_only else
-                 "；注意：vaspkit 的这个任务可能同时改动 INCAR/KPOINTS，执行后我会如实报告变化")
-        summary = (
-            f"在超算作业目录用 vaspkit 生成 POTCAR：\n"
-            f"- 作业：{job['key']}（目录 {calc}）\n"
-            f"- 按 POSCAR 的元素顺序生成：{'、'.join(info.elements) or '（无法解析）'}\n"
-            f"- 用哪套赝势（数据集）由 vaspkit 自己决定；生成后我把数据集名与哈希给你\n"
-            f"- vaspkit：{skill.path or '未定位'}"
-            f"{('（' + skill.version + '）') if skill.version else ''}，菜单号 {code}{extra}")
-        payload = card_payload(
-            tool="generate_potcar",
-            args={"job_key": job["key"], "attempt_id": job.get("attempt_id")},
-            risk="high",
-            reason=("本智能体**不提供、不分发任何 POTCAR/赝势文件**：POTCAR 始终由你（用户）自己准备，"
-                    "这里只是调用你超算账户里已装好的 vaspkit、用你自己的赝势库生成；"
-                    "赝势的版权与许可由你与 VASP 官方处理，本智能体不承担版权或科学正确性责任。"
-                    "POTCAR 直接决定计算结果：数据集由 vaspkit 按其默认规则选择，请确认元素顺序与用途；"
-                    "该命令会写入你的超算作业目录，生成后仍会做元素顺序与哈希校验。"),
-            batch_key=f"potcar|{job['key']}|{calc}",
-            kind="potcar_generate",
-            summary=summary,
-            binding=binding,
-        )
-        saved = save_card(self.store, self.project_id, self.task_id,
-                          self._load_flow(), payload)
-        auto = self._auto_approve_and_execute(saved, "potcar_generate")
-        if auto is not None:
-            return auto
-        raise PendingConsentError(saved)
-
-    def _execute_potcar_action(self, binding: dict) -> str:
-        """执行一次 POTCAR 生成：命令由系统拼装，模型不能传命令/路径/参数。"""
-        hpc, root, err = self._hpc_ready()
-        if err:
-            raise ValueError(err)
-        if root != binding.get("remote_root"):
-            raise ValueError("超算工作区在确认后发生变化")
-        calc = str(binding.get("job_dir") or "").rstrip("/")
-        if not self._remote_under(calc, root):
-            raise ValueError("作业目录越出超算工作区")
-        poscar_path = f"{calc}/POSCAR"
-        stat = self._remote_stat(hpc, poscar_path)
-        if not stat:
-            raise ValueError("POSCAR 在确认后消失")
-        poscar_raw = self._remote_read(hpc, poscar_path, TEXT_LIMIT)
-        if hashlib.sha256(poscar_raw).hexdigest() != binding.get("poscar_sha256"):
-            raise ValueError("POSCAR 在确认后发生变化，请重新提案生成 POTCAR")
-        info = validate_poscar(poscar_raw)
-        elements = None if info.vasp4 else tuple(info.elements)
-        potcar_path = f"{calc}/POTCAR"
-        code = str(binding.get("menu_code") or "")
-        vaspkit = str(binding.get("vaspkit_path") or "vaspkit")
-        attempts: list[str] = []
-        code_rc, out, errtext = hpc.run(
-            f"{shlex.quote(vaspkit)} -task {code}", cwd=calc, timeout=300)
-        attempts.append(f"vaspkit -task {code} → 退出码 {code_rc}")
-        if not self._remote_stat(hpc, potcar_path):
-            # 该版本不支持 -task：走交互式菜单，直接回车接受 vaspkit 自己的默认选择
-            command = f"printf '{code}\\n\\n\\n\\n' | {shlex.quote(vaspkit)}"
-            code_rc, out, errtext = hpc.run(command, cwd=calc, timeout=300)
-            attempts.append(f"菜单 {code} + 默认回车 → 退出码 {code_rc}")
-        stat = self._remote_stat(hpc, potcar_path)
-        if not stat:
-            detail = (out or errtext or "").strip()[-400:]
-            raise ValueError("vaspkit 没有生成 POTCAR（" + "；".join(attempts)
-                             + (f"；输出：{detail}" if detail else "") + "）")
-        size = int(stat.get("size") or 0)
-        if size <= 0 or size > POTCAR_LIMIT:
-            raise ValueError(f"生成的 POTCAR 大小异常（{size} B）")
-        raw = self._remote_read(hpc, potcar_path, POTCAR_LIMIT)
-        if len(raw) != size:
-            raise ValueError("读取到的 POTCAR 长度与远端不一致")
-        try:
-            species = validate_potcar(raw, elements)
-        except InputValidationError as exc:
-            raise ValueError(f"生成的 POTCAR 未通过校验：{exc}") from exc
-        titles = self._potcar_titles(raw)
-        digest = hashlib.sha256(raw).hexdigest()
-        changed = []
-        for name, before in (binding.get("sibling_hashes") or {}).items():
-            path = f"{calc}/{name}"
-            if before and self._remote_stat(hpc, path) and hpc.sha256_file(path) != before:
-                changed.append(name)
-        flow = self._load_flow()
-        generations = dict(flow.get("potcar_generations") or {})
-        generations[binding["job_key"]] = {
-            "job_dir": calc, "sha256": digest, "size": size,
-            "datasets": titles, "species": list(species),
-            "vaspkit_path": vaspkit, "menu_code": code,
-            "generated_at": _now_iso(),
-        }
-        flow["potcar_generations"] = generations
-        self._save_flow(flow)
-        note = ("；注意：vaspkit 还改动了 " + "、".join(changed)
-                + "（哈希已变化，请核对）") if changed else ""
-        return (f"已在作业目录 {binding['job_key']} 生成 POTCAR："
-                f"数据集 {'、'.join(titles) or '（未能解析 TITEL）'}，与 POSCAR 元素顺序一致"
-                f"（{'、'.join(species)}）。内容不会进入对话{note}。")
-
-    # ---------------- 提交脚本模板：逐字节复制（不修改、不生成） ----------------
-    def tool_deploy_submit_script(self, args: dict) -> str:
-        """把用户在全局设置里指定的模板脚本逐字复制到作业目录（一次一个作业目录）。"""
-        from .config import as_bool, normalize_submit_script_template
-        if not as_bool(getattr(self.cfg, "allow_script_deploy", False)):
-            return ToolFailure(
-                'AI_TOOL_NOT_ALLOWED',
-                "[AI_TOOL_NOT_ALLOWED] 未开启脚本复制：请在智能设置 → 提交脚本里打开开关"
-                "（打开后会有提示）。未复制任何文件。")
-        template = normalize_submit_script_template(
-            getattr(self.cfg, "submit_script_template", ""))
-        if not template:
-            return ToolFailure(
-                'SCRIPT_TEMPLATE_NOT_CONFIGURED',
-                "[SCRIPT_TEMPLATE_NOT_CONFIGURED] 还没配置提交脚本模板：请在智能设置 → 提交脚本里"
-                "填写超算上的模板路径（绝对路径、.sh 结尾）。未复制任何文件。")
-        flow = self._load_flow()
-        if not ((flow.get("plan") or {}).get("jobs")):
-            return ToolFailure('TOOL_PRECONDITION_FAILED', "尚未规划作业：请先 plan，再复制脚本")
-        from .computation import select_job
-        job = select_job(flow, args)
-        hpc, root, err = self._hpc_ready()
-        if err:
-            return ToolFailure('TOOL_POLICY_OR_PRECONDITION', err)
-        calc = self._remote_job_dir(hpc, root, job["key"]).rstrip("/")
-        if not self._remote_under(calc, root):
-            return ToolFailure('TOOL_POLICY_OR_PRECONDITION',
-                               "作业目录越出任务超算工作区；已拒绝，未复制任何文件。")
-        stat = self._remote_stat(hpc, template)
-        if not stat:
-            return ToolFailure('SCRIPT_TEMPLATE_MISSING',
-                               f"[SCRIPT_TEMPLATE_MISSING] 模板脚本不存在或不是普通文件：{template}")
-        size = int(stat.get("size") or 0)
-        if size <= 0 or size > _SCRIPT_LIMIT:
-            return ToolFailure('SCRIPT_TEMPLATE_INVALID',
-                               f"模板脚本大小异常（{size} B，上限 {_SCRIPT_LIMIT} B）")
-        data = self._remote_read(hpc, template, _SCRIPT_LIMIT)
-        if len(data) != size:
-            return ToolFailure('SCRIPT_TEMPLATE_INVALID', "模板脚本读取长度与远端不一致")
-        digest = hashlib.sha256(data).hexdigest()
-        name = template.rsplit("/", 1)[-1]
-        # 与 fingerprint_remote_submit_script 的规范化方式保持一致（认领比对要逐字相等）
-        target = posixpath.join(posixpath.normpath("/" + calc.lstrip("/")), name)
-        existing = self._remote_sh_names(hpc, calc)
-        already_identical = False
-        if existing:
-            if (len(existing) == 1 and existing[0] == name
-                    and self._remote_stat(hpc, target)
-                    and hpc.sha256_file(target) == digest):
-                # 目录里已经就是同一份副本：不再写入，但仍要一张确认卡——
-                # 用户批准这张卡即完成"认领"，之后就能直接进预检/草稿/提交。
-                already_identical = True
-            else:
-                return ToolFailure(
-                    'SCRIPT_ALREADY_PRESENT',
-                    f"[SCRIPT_ALREADY_PRESENT] 作业目录 {calc} 里已有脚本 "
-                    f"{'、'.join(existing)}；我只把模板复制进去，不覆盖、不删除已有脚本。"
-                    "请先处理该目录里的脚本（或换作业目录）后重试。")
-        binding = {
-            "operation": "script_deploy",
-            "project_id": self.project_id, "task_id": self.task_id,
-            "job_key": job["key"], "attempt_id": job.get("attempt_id"),
-            "execution_mode": self._execution_mode(),
-            "remote_root": root, "job_dir": calc,
-            "template_path": template, "template_sha256": digest,
-            "template_size": size, "script_name": name, "target_path": target,
-            "already_identical": already_identical,
-        }
-        payload = card_payload(
-            tool="deploy_submit_script",
-            args={"job_key": job["key"], "attempt_id": job.get("attempt_id")},
-            risk="medium",
-            reason=("只把你指定的模板逐字节复制进该作业目录：不修改、不改名、不执行；脚本内容我读不到。"
-                    "**批准这张卡＝同时把该脚本认领为本次提交脚本**（绑定目标文件 SHA-256，"
-                    "提交前会再次复核哈希；提交作业仍需你另外确认一次）。"),
-            batch_key=f"script|{job['key']}|{target}|{digest[:12]}",
-            kind="script_deploy",
-            summary=((f"作业目录里已经是这份模板的副本，不再写入：\n"
-                      f"- 模板：{template}（{size} B，SHA-256 {digest[:16]}…）\n"
-                      f"- 目录：{calc}\n"
-                      f"- 批准这张卡＝把该脚本认领为本次提交脚本（提交仍单独确认）。")
-                     if already_identical else
-                     (f"把提交脚本模板复制到作业目录：\n"
-                      f"- 模板：{template}（{size} B，SHA-256 {digest[:16]}…）\n"
-                      f"- 目标：{target}\n"
-                      f"- 逐字节复制，绝不修改；批准后即认领为本次提交脚本（提交仍单独确认）。")),
-            binding=binding,
-        )
-        saved = save_card(self.store, self.project_id, self.task_id,
-                          self._load_flow(), payload)
-        auto = self._auto_approve_and_execute(saved, "script_deploy")
-        if auto is not None:
-            return auto
-        raise PendingConsentError(saved)
-
-    def _execute_template_action(self, binding: dict) -> str:
-        """执行一次脚本复制：模板哈希必须与提案时一致，目标不覆盖任何已有脚本。"""
-        hpc, root, err = self._hpc_ready()
-        if err:
-            raise ValueError(err)
-        if root != binding.get("remote_root"):
-            raise ValueError("超算工作区在确认后发生变化")
-        calc = str(binding.get("job_dir") or "").rstrip("/")
-        template = str(binding.get("template_path") or "")
-        target = str(binding.get("target_path") or "")
-        if not self._remote_under(calc, root) or not self._remote_under(target, root):
-            raise ValueError("目标路径越出超算工作区")
-        if not self._remote_stat(hpc, template):
-            raise ValueError("模板脚本在确认后消失")
-        data = self._remote_read(hpc, template, _SCRIPT_LIMIT)
-        if hashlib.sha256(data).hexdigest() != binding.get("template_sha256"):
-            raise ValueError("模板脚本在确认后发生变化，请重新提案")
-        if len(data) != int(binding.get("template_size") or 0):
-            raise ValueError("模板脚本长度在确认后发生变化，请重新提案")
-        existing = self._remote_sh_names(hpc, calc)
-        if existing and not (len(existing) == 1
-                             and existing[0] == binding.get("script_name")):
-            raise ValueError("作业目录里出现了新的脚本，已拒绝覆盖：" + "、".join(existing))
-        if binding.get("already_identical"):
-            # 提案时目录里就已是同一份副本：只复核哈希，不重复写入。
-            if hpc.sha256_file(target) != binding["template_sha256"]:
-                raise ValueError("目录里的脚本与模板已不一致，请重新提案")
-            target_size = int((self._remote_stat(hpc, target) or {}).get("size") or 0)
-        else:
-            atomic_write = getattr(hpc, "atomic_write_file", None)
-            if atomic_write is None:
-                raise ValueError("HPC adapter 不支持带校验的原子写入")
-            written = atomic_write(target, data, expected_sha256=binding["template_sha256"])
-            if written != len(data) or hpc.sha256_file(target) != binding["template_sha256"]:
-                raise ValueError("远端脚本哈希与模板不一致，请核对")
-            target_size = len(data)
-        flow = self._load_flow()
-        deploys = dict(flow.get("script_deploys") or {})
-        deploys[binding["job_key"]] = {
-            "template_path": template, "target_path": target,
-            "sha256": binding["template_sha256"], "size": target_size,
-            "deployed_at": _now_iso(),
-        }
-        flow["script_deploys"] = deploys
-        # 「复制即认领」：这张卡本身就是用户对**这一份精确字节**的确认（目标哈希已复核），
-        # 所以直接把它登记为本次提交脚本，省掉再点一次"认领"；提交作业仍需单独确认。
-        attestations = dict(flow.get("script_attestations") or {})
-        attestations[binding["job_key"]] = {
-            "job_key": binding["job_key"],
-            "attempt_id": binding.get("attempt_id"),
-            "source": "remote",
-            "directory": calc,
-            "script_name": binding.get("script_name"),
-            "normalized_path": target,
-            "sha256": binding["template_sha256"],
-            "size": target_size,
-            "action_id": binding.get("action_id") or "",
-            "claimed_by": "script_deploy",
-            "claimed_at": _now_iso(),
-        }
-        flow["script_attestations"] = attestations
-        self._save_flow(flow)
-        if binding.get("already_identical"):
-            return (f"{binding['job_key']} 作业目录里已是模板的同一份副本"
-                    f"（{binding.get('script_name')}，SHA-256 {binding['template_sha256'][:16]}…），"
-                    "没有重复写入；已认领为本次提交脚本（提交前会再复核哈希）。")
-        return (f"已把模板脚本逐字复制到 {binding['job_key']} 作业目录"
-                f"（{binding.get('script_name')}，SHA-256 {binding['template_sha256'][:16]}…，"
-                "未修改任何字节），并已认领为本次提交脚本（提交前会再复核哈希）。")
-
-    # ---------------- 永久禁用的提交脚本写入兼容入口 ----------------
     def tool_hpc_write_script(self, args: dict) -> str:
         """Reject the retired AI-authored script capability."""
         del args
@@ -1992,9 +1349,6 @@ class ToolExecutor:
         )
         saved = save_card(self.store, self.project_id, self.task_id,
                           self._load_flow(), payload)
-        auto = self._auto_approve_and_execute(saved, "generate_kpoints")
-        if auto is not None:
-            return auto
         raise PendingConsentError(saved)
 
     def tool_mp_search(self, args: dict) -> str:
@@ -2142,9 +1496,6 @@ class ToolExecutor:
         )
         saved = save_card(self.store, self.project_id, self.task_id,
                           self._load_flow(), payload)
-        auto = self._auto_approve_and_execute(saved, "copy_inputs")
-        if auto is not None:
-            return auto
         raise PendingConsentError(saved)
 
     # ---------------- 提交边界（不代替用户真实提交） ----------------
@@ -2215,14 +1566,10 @@ class ToolExecutor:
                 "directory": calc_dir if source == "remote" else str(job_local),
                 "script_name": script_name, **fingerprint,
             })
-        # 与用户配置的模板逐字节一致 ⇒ 自动认领（不必再出一张"认领卡"）
-        from .script_template import stamp_template_attestations
-        stamped = stamp_template_attestations(flow, self.cfg, hpc, script_records)
-        if stamped:
-            self._save_flow(flow)
         attestations = flow.get("script_attestations") or {}
         attested = all(
             isinstance(attestations.get(item["job_key"]), dict)
+            and attestations[item["job_key"]].get("claimed_by") not in {"template_match", "script_deploy"}
             and all(attestations[item["job_key"]].get(key) == item.get(key)
                     for key in ("attempt_id", "source", "directory", "script_name",
                                 "normalized_path", "sha256", "size"))
@@ -2274,24 +1621,16 @@ class ToolExecutor:
                 "script_size": fingerprint["size"],
                 "script_path": fingerprint["normalized_path"],
                 "attestation_action_id": attestation["action_id"],
-                "attestation_binding_hash": attestation.get("binding_hash", ""),
+                "attestation_binding_hash": attestation["binding_hash"],
                 "submit_cmd": " ".join(submit_command(script_name, self.cfg.scheduler_backend)),
             })
             where = "超算作业目录" if source == "remote" else "本地计算目录"
             lines.append(f"- {job['key']}（{job.get('label') or job['key']}）"
                          f"→ 目录 `{calc_dir}`，使用{where}的提交脚本 "
-                         f"{script_name}（指纹已记入卡片记录）")
-        drafted = drafts[0]
-        drafted["scheduler_target"] = selected["precheck"]["snapshot"]["scheduler_target"]
-        drafted["resources"] = {"verification": "human_exact_script",
-                                "script_sha256": drafts[0]["script_sha256"]}
-        # 草稿内容没变、而且已经有一张待确认提交卡时不要重写草稿：
-        # 重写会换掉 binding 里的 draft，让用户手里的卡直接作废。
-        if (_draft_signature(selected.get("draft")) == _draft_signature(drafted)
-                and self._pending_submit_card(flow, selected["key"])):
-            return ("提交草稿与上次一致，且已有一张待确认的提交卡；本次不重复生成，"
-                    "请让用户直接点那张卡确认提交（重复生成会作废该卡）。")
-        selected["draft"] = drafted
+                         f"{script_name}（SHA-256 {fingerprint['sha256']}）")
+        selected["draft"] = drafts[0]
+        selected["draft"]["scheduler_target"] = selected["precheck"]["snapshot"]["scheduler_target"]
+        selected["draft"]["resources"] = {"verification": "human_exact_script", "script_sha256": drafts[0]["script_sha256"]}
         flow["phase"] = "await_submit"
         self._save_flow(flow)
         skipped = [j["key"] for j in jobs

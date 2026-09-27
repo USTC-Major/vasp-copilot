@@ -218,6 +218,12 @@ def resolve_card(store, project_id: str, task_id: str, card_id: str, *,
         action = cons[_ACTIONS_KEY].get(card_id)
         if action is None:
             return {"approved": approved, "missing": True, "card_id": card_id}
+        if (action.get("state") in {"pending", "approved"}
+                and (action.get("binding") or {}).get("operation") in {
+                    "potcar_generate", "script_deploy", "file_prepare_grant"}):
+            action.update(state="failed", result="RETIRED_CAPABILITY: 此扩展已撤出，未执行")
+            _save_flow(store, project_id, task_id, flow, cons)
+            return {"approved": False, "card_id": card_id, "state": "failed"}
         if not _valid_binding(action):
             action["state"] = "failed"
             action["result"] = "确认绑定校验失败，未执行"
@@ -362,22 +368,14 @@ def spawn_submit_card(store, project_id: str, task_id: str,
                     return dict(action)
         scope_id = uuid.uuid4().hex
         binding.update(scope_id=scope_id, scope_version=1)
-        staged_items = ((flow.get("staged_inputs") or {}).get(job["key"]) or {}).get("items") or []
-        staged_text = ""
-        if staged_items:
-            staged_text = "\n上游产物已按依赖自动带入：" + "、".join(
-                f"{item.get('name')}（来自上级 {item.get('source_name')}）"
-                for item in staged_items)
         payload = card_payload(
             tool="confirm_submit", args={"job_key": job["key"], "attempt_id": job["attempt_id"]},
             risk="high", reason="仅批准本计算当前尝试的一次提交；用户需审阅脚本及资源，系统未证明全部副作用。",
             batch_key=batch_key, kind="submit",
-            # 提交卡常驻：用户可能过一阵才回来点，不能让卡自己过期（用户明确要求）。
-            expires_seconds=24 * 3600,
             summary=(f"提交计算 {job['key']} / attempt {job['attempt_id']}？\n"
                      f"目录：`{job['draft']['dir']}`\n命令：{job['draft']['submit_cmd']}\n"
                      f"SHA-256：{job['draft']['script_sha256']}"
-                     f"{staged_text}\n仅此计算一次，不包含后继或重试。"),
+                     f"\n仅此计算一次，不包含后继或重试。"),
             options=["确认提交", "取消"], binding=binding)
         cons.setdefault("computation_scopes", {})[scope_id] = {
             **{key: binding[key] for key in ("project_id", "task_id", "job_key", "attempt_id", "endpoint_digest", "precheck_digest", "draft")},

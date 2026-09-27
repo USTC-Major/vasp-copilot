@@ -3,15 +3,19 @@ import userEvent from "@testing-library/user-event";
 import { vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 import { Modal } from "antd";
+import { useState } from "react";
 import AiSettingsPage from "./AiSettingsPage";
 
 const mocks = vi.hoisted(() => ({
   save: vi.fn().mockResolvedValue({}),
   secret: vi.fn().mockResolvedValue({}),
-  refetch: vi.fn(),
+  refetch: vi.fn().mockImplementation(() => Promise.resolve({ data: mocks.data })),
   secretError: null as Error | null,
   data: { settings: {
     max_jobs: 1, poll_interval_seconds: 60,
+    auto_approve_kinds: ["copy_inputs", "generate_kpoints", "hpc_upload"],
+    allow_potcar_assembly: true, allow_script_deploy: true,
+    submit_script_template: "/legacy/run.sh",
     llm: { base_url: "https://example.invalid/v1", model: "demo", provider: "openai" },
     ssh: { name: "demo", host: "example.invalid", port: 2222, username: "user",
       known_hosts_path: "/trusted/hosts", identity_file: "/trusted/original_key" },
@@ -19,7 +23,17 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("../hooks/useApi", () => ({
-  useAiSettings: () => ({ data: mocks.data, refetch: mocks.refetch }),
+  useAiSettings: () => {
+    const [data, setData] = useState(mocks.data);
+    return {
+      data,
+      refetch: async () => {
+        const result = await mocks.refetch();
+        if (result?.data) setData(result.data);
+        return result;
+      },
+    };
+  },
   useAiSettingsSave: () => ({ mutateAsync: mocks.save }),
   useAiSettingsTest: () => ({ mutateAsync: vi.fn() }),
   useAiSecretStatus: () => ({ data: mocks.secretError ? undefined : { secrets: { llm: false, mp: false, ssh: false } }, error: mocks.secretError, refetch: mocks.refetch }),
@@ -128,84 +142,31 @@ it("冲突时明确选择仍然覆盖，才按本页值保存", async () => {
   mocks.refetch.mockReset();
 });
 
-it("免批范围开关默认关闭，开启后随设置一起提交", async () => {
+it("旧服务即使返回扩展设置字段也不展示开关，保存时不回传这些字段", async () => {
   mocks.save.mockClear();
-  mocks.refetch.mockReset();
+  mocks.refetch.mockReset().mockResolvedValue({ data: mocks.data });
   const user = userEvent.setup();
   render(<MemoryRouter><AiSettingsPage /></MemoryRouter>);
 
-  const copySwitch = await screen.findByRole("switch", { name: /复制已登记输入到作业目录/ });
-  const kpointsSwitch = screen.getByRole("switch", { name: /确定性生成 KPOINTS 网格/ });
-  const uploadSwitch = screen.getByRole("switch", { name: /上传已登记文件到超算工作区/ });
-  expect(copySwitch).not.toBeChecked();
-  expect(kpointsSwitch).not.toBeChecked();
-  expect(uploadSwitch).not.toBeChecked();
-
-  await user.click(kpointsSwitch);
-  await user.click(uploadSwitch);
+  expect(await screen.findByRole("textbox", { name: "SSH 密钥文件路径" })).toBeInTheDocument();
+  expect(screen.queryByText("免批范围（可选）")).not.toBeInTheDocument();
+  expect(screen.queryByRole("switch", { name: /复制已登记输入|KPOINTS 网格|上传已登记文件/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("switch", { name: /POTCAR|模板脚本/ })).not.toBeInTheDocument();
+  expect(screen.queryByPlaceholderText(/templates\/run\.sh/)).not.toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "保存设置" }));
 
-  await waitFor(() => expect(mocks.save).toHaveBeenCalledWith(expect.objectContaining({
-    auto_approve_kinds: ["generate_kpoints", "hpc_upload"],
-  })));
+  await waitFor(() => expect(mocks.save).toHaveBeenCalled());
+  const payload = mocks.save.mock.calls[0][0];
+  for (const field of ["auto_copy_inputs", "auto_generate_kpoints", "auto_hpc_upload", "auto_approve_kinds", "allow_potcar_assembly", "allow_script_deploy", "submit_script_template"]) {
+    expect(payload).not.toHaveProperty(field);
+  }
 });
 
-const clearModals = () => {
-  Modal.destroyAll();
-  document.querySelectorAll(".ant-modal-root, .ant-modal-wrap, .ant-modal-mask")
-    .forEach((node) => node.remove());
-};
-
-it("POTCAR 开关默认关闭：取消免责声明不生效，确认后才生效并随设置提交", async () => {
+it("保存前无法读取最新设置时不写入", async () => {
   mocks.save.mockClear();
-  mocks.refetch.mockReset();
+  mocks.refetch.mockReset().mockResolvedValue({ isError: true, data: undefined });
   const user = userEvent.setup();
   render(<MemoryRouter><AiSettingsPage /></MemoryRouter>);
-
-  const potcar = await screen.findByRole("switch", { name: /允许用 vaspkit 在超算作业目录生成 POTCAR/ });
-  expect(potcar).not.toBeChecked();
-
-  // 取消免责声明 → 开关保持关闭
-  await user.click(potcar);
-  expect((await screen.findAllByText(/开启 POTCAR 自动生成/)).length).toBeGreaterThan(0);
-  expect((await screen.findAllByText(/版权、许可与适用性由使用者负责/)).length).toBeGreaterThan(0);
-  // 最重要的那条声明必须在：本智能体不提供任何 POTCAR（避免版权问题）
-  expect((await screen.findAllByText(/不提供、不分发任何 POTCAR/)).length).toBeGreaterThan(0);
-  await user.click(screen.getByRole("button", { name: /取\s*消/ }));
-  await waitFor(() => expect(potcar).not.toBeChecked());
-  clearModals();
-
-  // 确认后才生效
-  await user.click(potcar);
-  await user.click(await screen.findByRole("button", { name: "我已知悉，开启" }));
-  await waitFor(() => expect(potcar).toBeChecked());
-
-  await user.click(screen.getByRole("button", { name: "保存设置" }));
-  await waitFor(() => expect(mocks.save).toHaveBeenCalledWith(expect.objectContaining({
-    allow_potcar_assembly: true,
-  })));
-});
-
-it("提交脚本模板路径可填写，脚本复制开关确认后才生效", async () => {
-  mocks.save.mockClear();
-  mocks.refetch.mockReset();
-  const user = userEvent.setup();
-  render(<MemoryRouter><AiSettingsPage /></MemoryRouter>);
-
-  const script = await screen.findByRole("switch", { name: /允许 AI 把模板脚本复制到作业目录/ });
-  expect(script).not.toBeChecked();
-  await user.type(screen.getByPlaceholderText(/templates\/run\.sh/),
-                  "/home/demo/templates/run.sh");
-
-  await user.click(script);
-  expect((await screen.findAllByText(/允许 AI 复制提交脚本模板/)).length).toBeGreaterThan(0);
-  expect((await screen.findAllByText(/逐字节复制/)).length).toBeGreaterThan(0);
-  await user.click(screen.getByRole("button", { name: /开\s*启/ }));
-  await waitFor(() => expect(script).toBeChecked());
-
-  await user.click(screen.getByRole("button", { name: "保存设置" }));
-  await waitFor(() => expect(mocks.save).toHaveBeenCalledWith(expect.objectContaining({
-    allow_script_deploy: true,
-    submit_script_template: "/home/demo/templates/run.sh",
-  })));
+  await user.click(await screen.findByRole("button", { name: "保存设置" }));
+  await waitFor(() => expect(mocks.save).not.toHaveBeenCalled());
 });

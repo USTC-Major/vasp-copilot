@@ -11,11 +11,8 @@ _CONSENT_PENDING = '__CONSENT_PENDING__'
 _LEGACY_TOOLS = frozenset({
     'get_state', 'ws_list', 'ws_read', 'mp_search', 'mp_import_poscar',
     'hpc_list', 'hpc_read', 'hpc_upload', 'stop_monitor', 'plan',
-    'request_file_prepare',
-    'resume_flow',
     'copy_inputs', 'propose_incar', 'generate_kpoints', 'precheck',
     'draft', 'submit', 'select_jobs', 'diagnose_job', 'retry_job',
-    'generate_potcar', 'deploy_submit_script',
 })
 _FILE_TOOLS = frozenset({'remote_inspect', 'remote_file_plan'})
 _FIXED_TOOLS = frozenset({
@@ -289,10 +286,7 @@ class ToolExecutor:
         mp = (settings.get('materials_project')
               if isinstance(settings.get('materials_project'), dict) else {})
         readiness = {'ssh': bool(ssh.get('host') and ssh.get('username')),
-                     'mp': bool(mp.get('configured')),
-                     'potcar': bool(settings.get('allow_potcar_assembly')),
-                     'script_deploy': bool(settings.get('allow_script_deploy')),
-                     'script_template': str(settings.get('submit_script_template') or '')}
+                     'mp': bool(mp.get('configured'))}
         mode = value.get('backend_mode')
         if isinstance(mode, str) and mode:
             readiness['backend_mode'] = mode

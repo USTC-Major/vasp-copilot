@@ -1,651 +1,98 @@
-"""POTCAR（vaspkit）与提交脚本模板复制：开关、卡片、哈希校验与拒绝覆盖。"""
-from __future__ import annotations
-
-import hashlib
-from contextlib import contextmanager
-
-from fastapi.testclient import TestClient
-
-from backend.tests.toolbox_review.conftest import (
-    ApiHarness,
-    FakeHPC,
-    call_tool,
-    create_isolated_app,
-    create_project_task,
-    resolve_card,
-)
-from backend.tests.valid_vasp_inputs import FILES as VALID_INPUTS
-from backend.toolbox.config import (normalize_auto_approve_kinds,
-                                    normalize_submit_script_template)
-
-ROOT = "/review/calc"
-VASP_BIN = "/opt/vaspkit/bin/vaspkit"
-MENU = (
-    "             VASPKIT 1.5                      \n"
-    " 103) Generate POTCAR file from POSCAR (need POTCAR library)\n"
-    " 102) Generate KPOINTS file                       \n"
-    " 501) Submit VASP job                             \n"
-)
-TEMPLATE = "/review/templates/run.sh"
-TEMPLATE_BYTES = b"#!/bin/bash\n#SBATCH --job-name=demo\ncp ../CONTCAR POSCAR\n"
-
-
-class VaspkitHPC(FakeHPC):
-    """在 FakeHPC 上模拟 vaspkit：探测菜单，并按菜单号在 cwd 里写出 POTCAR。"""
-
-    def __init__(self, *, found: bool = True, menu: str = MENU,
-                 potcar: bytes = VALID_INPUTS["POTCAR"], task_supported: bool = True):
-        super().__init__()
-        self.found = found
-        self.menu = menu
-        self.potcar = potcar
-        self.task_supported = task_supported
-
-    def run(self, command, *, cwd=None, timeout=None):
-        del timeout
-        self.run_calls.append((command, cwd))
-        if "which vaspkit" in command:
-            return (0, f"{VASP_BIN}\n", "") if self.found else (1, "", "")
-        if command.startswith(f"{VASP_BIN} -v"):
-            return 0, "VASPKIT 1.5 (2023)\n", ""
-        if command.startswith(f"{VASP_BIN} -h"):
-            return 0, self.menu, ""
-        if command.startswith("echo 0 |"):
-            return 0, self.menu, ""
-        if command.startswith(f"{VASP_BIN} -task"):
-            if not self.task_supported:
-                return 1, "", "unknown option -task"
-            assert cwd, "vaspkit 必须在作业目录里运行"
-            self.files[f"{cwd}/POTCAR"] = self.potcar
-            return 0, "POTCAR generated\n", ""
-        if command.startswith("printf") and "|" in command and cwd:
-            self.files[f"{cwd}/POTCAR"] = self.potcar
-            return 0, "POTCAR generated\n", ""
-        if command.startswith("cp "):
-            # 上游产物交接走的是远端 cp；这里在内存里模拟，并支持 sha256sum
-            parts = [p.strip("'") for p in command.split(" -- ", 1)[1].split(" ")]
-            source, target = parts[0], parts[-1]
-            if source not in self.files:
-                return 1, "", f"cp: cannot stat {source}"
-            self.files[target] = self.files[source]
-            return 0, "", ""
-        if command.startswith("sha256sum"):
-            path = command.split(" -- ", 1)[1].strip().strip("'")
-            if path not in self.files:
-                return 1, "", "no such file"
-            return 0, f"{hashlib.sha256(self.files[path]).hexdigest()}  {path}\n", ""
-        if command.startswith("squeue"):
-            return 0, "\n".join(self.queue_rows), ""
-        if command.startswith("sbatch"):
-            self.job_id += 1
-            return 0, f"Submitted batch job {self.job_id}\n", ""
-        if command.startswith("mkdir -p"):
-            return 0, "", ""
-        return 0, "", ""
-
-
-@contextmanager
-def _setup(tmp_path, hpc, **config):
-    root = tmp_path / "owner"
-    workspace = tmp_path / "workspace"
-    workspace.mkdir(parents=True, exist_ok=True)
-    for name in ("INCAR", "POSCAR", "KPOINTS"):
-        (workspace / name).write_bytes(VALID_INPUTS[name])
-    app, fake = create_isolated_app(root, hpc, **config)
-    with TestClient(app) as client:
-        api = ApiHarness(client=client, app=app, root=root,
-                         workspace=workspace, hpc=fake)
-        project, task = create_project_task(api, hpc_workspace=ROOT)
-        pid, tid = project["id"], task["id"]
-        call_tool(api, pid, tid, "plan", {"strategy": "t", "jobs": [
-            {"key": "relax", "label": "结构优化", "kind": "relax", "requires": []}]})
-        yield client, api, fake, pid, tid
-
-
-def _remote_inputs(hpc, job_dir=f"{ROOT}/relax"):
-    for name in ("INCAR", "POSCAR", "KPOINTS"):
-        hpc.files[f"{job_dir}/{name}"] = VALID_INPUTS[name]
-
-
-# ---------------- POTCAR：开关与前置条件 ----------------
-def test_potcar_tool_requires_the_global_switch(tmp_path):
-    hpc = VaspkitHPC()
-    with _setup(tmp_path, hpc) as (_client, api, hpc, pid, tid):
-        _remote_inputs(hpc)
-        out = call_tool(api, pid, tid, "generate_potcar", {"job_key": "relax"})
-        assert out["ok"] is False and out["pending"] is None
-        assert out["error"]["code"] == "AI_TOOL_NOT_ALLOWED"
-        assert hpc.run_calls == []
-
-
-def test_potcar_tool_reports_missing_vaspkit(tmp_path):
-    hpc = VaspkitHPC(found=False)
-    with _setup(tmp_path, hpc, allow_potcar_assembly=True) as (_c, api, hpc, pid, tid):
-        _remote_inputs(hpc)
-        out = call_tool(api, pid, tid, "generate_potcar", {"job_key": "relax"})
-        assert out["ok"] is False
-        assert out["error"]["code"] == "VASPKIT_NOT_FOUND"
-        assert not [command for command, _cwd in hpc.run_calls if "-task" in command]
-
-
-def test_potcar_tool_reports_unreadable_menu(tmp_path):
-    hpc = VaspkitHPC(menu="no numbered menu here\n")
-    with _setup(tmp_path, hpc, allow_potcar_assembly=True) as (_c, api, hpc, pid, tid):
-        _remote_inputs(hpc)
-        out = call_tool(api, pid, tid, "generate_potcar", {"job_key": "relax"})
-        assert out["ok"] is False
-        assert out["error"]["code"] == "VASPKIT_MENU_UNKNOWN"
-
-
-# ---------------- POTCAR：卡片与执行 ----------------
-def test_potcar_card_then_generation_records_datasets_and_hash(tmp_path):
-    hpc = VaspkitHPC()
-    with _setup(tmp_path, hpc, allow_potcar_assembly=True) as (client, api, hpc, pid, tid):
-        _remote_inputs(hpc)
-        card = call_tool(api, pid, tid, "generate_potcar", {"job_key": "relax"})["pending"]
-        assert card and card["kind"] == "potcar_generate"
-        assert "菜单号 103" in card["summary"]
-        assert "Si" in card["summary"] and "vaspkit 自己决定" in card["summary"]
-        # 最重要的那条声明：本智能体不提供任何 POTCAR（避免版权问题）
-        assert "不提供、不分发任何 POTCAR" in card["reason"]
-        assert card["risk"] == "high"
-        assert f"{ROOT}/relax/POTCAR" not in hpc.files  # 确认前不生成
-
-        saved = resolve_card(api, pid, tid, card["card_id"], True)["card"]
-        assert saved["state"] == "executed", saved
-        assert f"{ROOT}/relax/POTCAR" in hpc.files
-        assert "数据集 Si" in saved["result"]
-        # 面向用户的回执要短：不带哈希、不带绝对路径（细节留在卡片与 flow 记录里）
-        assert "SHA-256" not in saved["result"] and "/review/" not in saved["result"]
-        assert "Synthetic test metadata" not in saved["result"]  # 不回显 POTCAR 内容
-        flow = api.app.state.toolbox.require_task(pid, tid)["flow"]
-        record = flow["potcar_generations"]["relax"]
-        assert record["datasets"] == ["Si"] and record["species"] == ["Si"]
-        assert record["sha256"] == hashlib.sha256(VALID_INPUTS["POTCAR"]).hexdigest()
-        assert client.app is not None
-
-
-def test_potcar_generation_falls_back_to_the_interactive_menu(tmp_path):
-    """老版本 vaspkit 不支持 -task 时，退回「菜单号 + 默认回车」，产物仍要校验。"""
-    hpc = VaspkitHPC(task_supported=False)
-    with _setup(tmp_path, hpc, allow_potcar_assembly=True) as (_c, api, hpc, pid, tid):
-        _remote_inputs(hpc)
-        card = call_tool(api, pid, tid, "generate_potcar",
-                         {"job_key": "relax"})["pending"]
-        saved = resolve_card(api, pid, tid, card["card_id"], True)["card"]
-        assert saved["state"] == "executed", saved
-        assert f"{ROOT}/relax/POTCAR" in hpc.files
-        # 用交互式菜单兜底：回执不含命令细节，但调用记录里能看到走了哪条路径
-        assert any(command.startswith("printf") and "POTCAR" not in command
-                   for command, _cwd in hpc.run_calls)
-
-
-def test_potcar_generation_refuses_when_poscar_changed(tmp_path):
-    hpc = VaspkitHPC()
-    with _setup(tmp_path, hpc, allow_potcar_assembly=True) as (_c, api, hpc, pid, tid):
-        _remote_inputs(hpc)
-        card = call_tool(api, pid, tid, "generate_potcar",
-                         {"job_key": "relax"})["pending"]
-        hpc.files[f"{ROOT}/relax/POSCAR"] = VALID_INPUTS["POSCAR"].replace(b"Si", b"Ge")
-        saved = resolve_card(api, pid, tid, card["card_id"], True)["card"]
-        assert saved["state"] == "failed"
-        assert "POSCAR 在确认后发生变化" in saved["result"]
-        assert f"{ROOT}/relax/POTCAR" not in hpc.files
-
-
-def test_potcar_generation_rejects_mismatched_potcar(tmp_path):
-    """vaspkit 产物与 POSCAR 元素不一致时必须失败，不能当成功上报。"""
-    bad = b"TITEL = PAW_PBE Ge\nVRHFIN =Ge:\nx\nEnd of Dataset\n"
-    hpc = VaspkitHPC(potcar=bad)
-    with _setup(tmp_path, hpc, allow_potcar_assembly=True) as (_c, api, hpc, pid, tid):
-        _remote_inputs(hpc)
-        card = call_tool(api, pid, tid, "generate_potcar",
-                         {"job_key": "relax"})["pending"]
-        saved = resolve_card(api, pid, tid, card["card_id"], True)["card"]
-        assert saved["state"] == "failed"
-        assert "未通过校验" in saved["result"]
-
-
-def test_potcar_is_never_auto_approved(tmp_path):
-    """POTCAR 属科学输入：免批开关写满也必须逐次确认（白名单根本不接收它）。"""
-    hpc = VaspkitHPC()
-    with _setup(tmp_path, hpc, allow_potcar_assembly=True,
-                auto_approve_kinds=("copy_inputs", "generate_kpoints", "hpc_upload",
-                                    "potcar_generate")) as (_c, api, hpc, pid, tid):
-        _remote_inputs(hpc)
-        out = call_tool(api, pid, tid, "generate_potcar", {"job_key": "relax"})
-        assert out["pending"] and out["pending"]["kind"] == "potcar_generate"
-        assert f"{ROOT}/relax/POTCAR" not in hpc.files
-    assert normalize_auto_approve_kinds(["potcar_generate", "script_deploy"]) == []
-
-
-def test_remote_path_bounds_helper():
-    from backend.toolbox.commands import ToolExecutor
-
-    assert ToolExecutor._remote_under("/a/b/c", "/a/b") is True
-    assert ToolExecutor._remote_under("/a/b", "/a/b") is True
-    assert ToolExecutor._remote_under("/a/bc", "/a/b") is False
-    assert ToolExecutor._remote_under("/x/y", "/a/b") is False
-
-
-# ---------------- 提交脚本模板 ----------------
-def test_script_deploy_requires_switch(tmp_path):
-    hpc = VaspkitHPC()
-    with _setup(tmp_path, hpc, submit_script_template=TEMPLATE) as (_c, api, hpc, pid, tid):
-        hpc.files[TEMPLATE] = TEMPLATE_BYTES
-        out = call_tool(api, pid, tid, "deploy_submit_script", {"job_key": "relax"})
-        assert out["ok"] is False and out["error"]["code"] == "AI_TOOL_NOT_ALLOWED"
-        assert hpc.files.get(f"{ROOT}/relax/run.sh") is None
-
-
-def test_script_deploy_requires_a_configured_template(tmp_path):
-    hpc = VaspkitHPC()
-    with _setup(tmp_path, hpc, allow_script_deploy=True) as (_c, api, hpc, pid, tid):
-        out = call_tool(api, pid, tid, "deploy_submit_script", {"job_key": "relax"})
-        assert out["ok"] is False
-        assert out["error"]["code"] == "SCRIPT_TEMPLATE_NOT_CONFIGURED"
-
-
-def test_script_template_must_exist_on_the_remote(tmp_path):
-    hpc = VaspkitHPC()
-    with _setup(tmp_path, hpc, allow_script_deploy=True,
-                submit_script_template=TEMPLATE) as (_c, api, hpc, pid, tid):
-        out = call_tool(api, pid, tid, "deploy_submit_script", {"job_key": "relax"})
-        assert out["ok"] is False
-        assert out["error"]["code"] == "SCRIPT_TEMPLATE_MISSING"
-
-
-def test_script_deploy_card_copies_bytes_verbatim(tmp_path):
-    hpc = VaspkitHPC()
-    with _setup(tmp_path, hpc, allow_script_deploy=True,
-                submit_script_template=TEMPLATE) as (_c, api, hpc, pid, tid):
-        _remote_inputs(hpc)
-        hpc.files[TEMPLATE] = TEMPLATE_BYTES
-        card = call_tool(api, pid, tid, "deploy_submit_script",
-                         {"job_key": "relax"})["pending"]
-        assert card["kind"] == "script_deploy"
-        assert "逐字节复制" in card["summary"] and TEMPLATE in card["summary"]
-        assert f"{ROOT}/relax/run.sh" not in hpc.files  # 确认前不写
-
-        saved = resolve_card(api, pid, tid, card["card_id"], True)["card"]
-        assert saved["state"] == "executed", saved
-        assert hpc.files[f"{ROOT}/relax/run.sh"] == TEMPLATE_BYTES
-        digest = hashlib.sha256(TEMPLATE_BYTES).hexdigest()
-        assert digest[:16] in saved["result"]
-        flow = api.app.state.toolbox.require_task(pid, tid)["flow"]
-        assert flow["script_deploys"]["relax"]["sha256"] == digest
-        # 「复制即认领」：批准复制卡本身就把该脚本登记为本次提交脚本（不再需要额外认领）
-        attestation = flow["script_attestations"]["relax"]
-        assert attestation["sha256"] == digest
-        assert attestation["claimed_by"] == "script_deploy"
-        assert attestation["script_name"] == "run.sh"
-        assert attestation["directory"] == f"{ROOT}/relax"
-        assert attestation["source"] == "remote"
-
-
-def test_script_deploy_never_overwrites_an_existing_script(tmp_path):
-    hpc = VaspkitHPC()
-    with _setup(tmp_path, hpc, allow_script_deploy=True,
-                submit_script_template=TEMPLATE) as (_c, api, hpc, pid, tid):
-        _remote_inputs(hpc)
-        hpc.files[TEMPLATE] = TEMPLATE_BYTES
-        hpc.files[f"{ROOT}/relax/user.sh"] = b"#!/bin/bash\necho user\n"
-        out = call_tool(api, pid, tid, "deploy_submit_script", {"job_key": "relax"})
-        assert out["ok"] is False and out["pending"] is None
-        assert out["error"]["code"] == "SCRIPT_ALREADY_PRESENT"
-        assert hpc.files[f"{ROOT}/relax/user.sh"] == b"#!/bin/bash\necho user\n"
-
-
-def test_script_deploy_is_idempotent_for_the_same_copy(tmp_path):
-    """目录里已是同一份副本：不再写入，但照样出一张卡——批准即完成认领。"""
-    hpc = VaspkitHPC()
-    with _setup(tmp_path, hpc, allow_script_deploy=True,
-                submit_script_template=TEMPLATE) as (_c, api, hpc, pid, tid):
-        _remote_inputs(hpc)
-        hpc.files[TEMPLATE] = TEMPLATE_BYTES
-        hpc.files[f"{ROOT}/relax/run.sh"] = TEMPLATE_BYTES
-        out = call_tool(api, pid, tid, "deploy_submit_script", {"job_key": "relax"})
-        card = out["pending"]
-        assert card and "不再写入" in card["summary"]
-        writes_before = list(hpc.write_calls)
-        saved = resolve_card(api, pid, tid, card["card_id"], True)["card"]
-        assert saved["state"] == "executed", saved
-        assert hpc.write_calls == writes_before          # 没有重复写入
-        assert "没有重复写入" in saved["result"]
-        flow = api.app.state.toolbox.require_task(pid, tid)["flow"]
-        assert flow["script_attestations"]["relax"]["claimed_by"] == "script_deploy"
-
-
-def test_deploy_card_attests_so_precheck_needs_no_extra_claim(tmp_path):
-    """复制即认领：批准复制卡后，预检不该再要求用户额外认领一次。"""
-    hpc = VaspkitHPC()
-    with _setup(tmp_path, hpc, allow_script_deploy=True,
-                submit_script_template=TEMPLATE) as (_c, api, hpc, pid, tid):
-        _remote_inputs(hpc)
-        hpc.files[f"{ROOT}/relax/POTCAR"] = VALID_INPUTS["POTCAR"]
-        hpc.files[TEMPLATE] = TEMPLATE_BYTES
-        card = call_tool(api, pid, tid, "deploy_submit_script",
-                         {"job_key": "relax"})["pending"]
-        resolve_card(api, pid, tid, card["card_id"], True)
-        out = call_tool(api, pid, tid, "precheck", {"job_key": "relax"})
-        assert out["ok"] is True, out.get("result")
-        assert "尚未由用户认领" not in str(out.get("result"))
-
-
-def test_script_deploy_refuses_when_template_changed(tmp_path):
-    hpc = VaspkitHPC()
-    with _setup(tmp_path, hpc, allow_script_deploy=True,
-                submit_script_template=TEMPLATE) as (_c, api, hpc, pid, tid):
-        _remote_inputs(hpc)
-        hpc.files[TEMPLATE] = TEMPLATE_BYTES
-        card = call_tool(api, pid, tid, "deploy_submit_script",
-                         {"job_key": "relax"})["pending"]
-        hpc.files[TEMPLATE] = TEMPLATE_BYTES + b"# changed\n"
-        saved = resolve_card(api, pid, tid, card["card_id"], True)["card"]
-        assert saved["state"] == "failed"
-        assert "模板脚本在确认后发生变化" in saved["result"]
-        assert f"{ROOT}/relax/run.sh" not in hpc.files
-
-
-def test_template_identical_script_is_auto_attested_by_precheck(tmp_path):
-    """用户在设置里配了模板 → 与模板逐字节一致的脚本**直接算已认领**，
-    预检不该再让用户去手工点认领（用户已明确：开关打开＝默认认领）。"""
-    hpc = VaspkitHPC()
-    with _setup(tmp_path, hpc, allow_script_deploy=True,
-                submit_script_template=TEMPLATE) as (_c, api, hpc, pid, tid):
-        _remote_inputs(hpc)
-        hpc.files[f"{ROOT}/relax/POTCAR"] = VALID_INPUTS["POTCAR"]
-        hpc.files[TEMPLATE] = TEMPLATE_BYTES
-        # 用户此前已经自己复制过（脚本就在作业目录里，没有任何认领记录）
-        hpc.files[f"{ROOT}/relax/run.sh"] = TEMPLATE_BYTES
-        out = call_tool(api, pid, tid, "precheck", {"job_key": "relax"})
-        assert out["ok"] is True, out.get("result")
-        assert "已自动认领" in str(out.get("result"))
-        assert "尚未" not in str(out.get("result"))
-        flow = api.app.state.toolbox.require_task(pid, tid)["flow"]
-        attestation = flow["script_attestations"]["relax"]
-        assert attestation["claimed_by"] == "template_match"
-        assert attestation["sha256"] == hashlib.sha256(TEMPLATE_BYTES).hexdigest()
-
-
-def test_template_auto_attest_requires_switch_and_matching_bytes(tmp_path):
-    """开关没开、模板没配、或脚本与模板不一致 → 一律不自动认领。"""
-    # ① 开关没开：即使脚本与模板一致也不认领
-    hpc = VaspkitHPC()
-    with _setup(tmp_path, hpc, submit_script_template=TEMPLATE) as (_c, api, hpc, pid, tid):
-        _remote_inputs(hpc)
-        hpc.files[f"{ROOT}/relax/POTCAR"] = VALID_INPUTS["POTCAR"]
-        hpc.files[TEMPLATE] = TEMPLATE_BYTES
-        hpc.files[f"{ROOT}/relax/run.sh"] = TEMPLATE_BYTES
-        out = call_tool(api, pid, tid, "precheck", {"job_key": "relax"})
-        assert out["ok"] is False
-        flow = api.app.state.toolbox.require_task(pid, tid)["flow"]
-        assert not (flow.get("script_attestations") or {}).get("relax")
-
-    # ② 开关打开但脚本与模板不一致：同样不认领
-    hpc = VaspkitHPC()
-    with _setup(tmp_path / "b", hpc, allow_script_deploy=True,
-                submit_script_template=TEMPLATE) as (_c, api, hpc, pid, tid):
-        _remote_inputs(hpc)
-        hpc.files[f"{ROOT}/relax/POTCAR"] = VALID_INPUTS["POTCAR"]
-        hpc.files[TEMPLATE] = TEMPLATE_BYTES
-        hpc.files[f"{ROOT}/relax/run.sh"] = b"#!/bin/bash\necho someone-else\n"
-        out = call_tool(api, pid, tid, "precheck", {"job_key": "relax"})
-        assert out["ok"] is False
-        flow = api.app.state.toolbox.require_task(pid, tid)["flow"]
-        assert not (flow.get("script_attestations") or {}).get("relax")
-
-
-def test_precheck_draft_no_longer_asks_user_to_claim_when_template_matches(tmp_path):
-    """draft 也不该再出「认领卡」：模板一致的脚本已由系统自动认领。"""
-    hpc = VaspkitHPC()
-    with _setup(tmp_path, hpc, allow_script_deploy=True,
-                submit_script_template=TEMPLATE) as (_c, api, hpc, pid, tid):
-        _remote_inputs(hpc)
-        hpc.files[f"{ROOT}/relax/POTCAR"] = VALID_INPUTS["POTCAR"]
-        hpc.files[TEMPLATE] = TEMPLATE_BYTES
-        hpc.files[f"{ROOT}/relax/run.sh"] = TEMPLATE_BYTES
-        out = call_tool(api, pid, tid, "draft", {"job_key": "relax"})
-        assert out["pending"] is None or out["pending"].get("kind") != "script_attestation"
-        flow = api.app.state.toolbox.require_task(pid, tid)["flow"]
-        assert flow["script_attestations"]["relax"]["claimed_by"] == "template_match"
-
-
-def test_script_template_normalization():
-    assert normalize_submit_script_template("/home/u/tpl/run.sh") == "/home/u/tpl/run.sh"
-    for bad in ("", "run.sh", "C:/tpl/run.sh", "/home/u/run.txt",
-                "/home/u/../run.sh", "/home/u/tpl/", "/home/u/.hidden.sh"):
-        assert normalize_submit_script_template(bad) == ""
-
-
-# ---------------- 依赖链：上游产物自动交接 ----------------
-def _attempt(api, pid, tid, key):
-    flow = api.app.state.toolbox.require_task(pid, tid)["flow"]
-    return next(j["attempt_id"] for j in flow["plan"]["jobs"] if j["key"] == key)
-
-
-def _chain(tmp_path, *, upstream_status="completed", with_density=False,
-           static_poscar=None, **config):
-    """relax → relax/static 两级链：上游 relax 已完成，下游缺 POSCAR/POTCAR。"""
-    hpc = VaspkitHPC()
-    ctx = _setup(tmp_path, hpc, **config)
-    client, api, hpc, pid, tid = ctx.__enter__()
-    call_tool(api, pid, tid, "plan", {"strategy": "链", "jobs": [
-        {"key": "relax", "label": "结构优化", "kind": "relax", "requires": []},
-        {"key": "relax/static", "label": "静态自洽", "kind": "static",
-         "requires": ["relax"]}]})
-    flow = api.app.state.toolbox.require_task(pid, tid)["flow"]
-    for job in flow["plan"]["jobs"]:
-        job["status"] = upstream_status if job["key"] == "relax" else "waiting"
-    api.app.state.toolbox.store.update_task(pid, tid, flow=flow)
-    # 上游 relax 的产物
-    for name, payload in (("INCAR", VALID_INPUTS["INCAR"]),
-                          ("POSCAR", VALID_INPUTS["POSCAR"]),
-                          ("KPOINTS", VALID_INPUTS["KPOINTS"]),
-                          ("POTCAR", VALID_INPUTS["POTCAR"]),
-                          ("CONTCAR", VALID_INPUTS["POSCAR"]),
-                          ("CHGCAR", b"synthetic charge density\n")):
-        hpc.files[f"{ROOT}/relax/{name}"] = payload
-    # 下游目录：输入 + 脚本都在，只缺 POSCAR / POTCAR
-    incar = b"SYSTEM = si\nICHARG = 11\n" if with_density else VALID_INPUTS["INCAR"]
-    for name, payload in (("INCAR", incar), ("KPOINTS", VALID_INPUTS["KPOINTS"])):
-        hpc.files[f"{ROOT}/relax/static/{name}"] = payload
-    if static_poscar is not None:
-        hpc.files[f"{ROOT}/relax/static/POSCAR"] = static_poscar
-    return ctx, client, api, hpc, pid, tid
-
-
-def test_upstream_products_are_staged_for_dependent_job(tmp_path):
-    ctx, client, api, hpc, pid, tid = _chain(
-        tmp_path, allow_script_deploy=True, submit_script_template=TEMPLATE)
-    try:
-        hpc.files[TEMPLATE] = TEMPLATE_BYTES
-        hpc.files[f"{ROOT}/relax/static/run.sh"] = TEMPLATE_BYTES
-        out = call_tool(api, pid, tid, "precheck", {"job_key": "relax/static", "attempt_id": _attempt(api, pid, tid, "relax/static")})
-        assert out["ok"] is True, out.get("result")
-        # POSCAR 来自上游 CONTCAR、POTCAR 来自上游 POTCAR（逐字节一致）
-        assert hpc.files[f"{ROOT}/relax/static/POSCAR"] == VALID_INPUTS["POSCAR"]
-        assert hpc.files[f"{ROOT}/relax/static/POTCAR"] == VALID_INPUTS["POTCAR"]
-        # ICHARG=2 的作业不需要电荷密度，不搬 CHGCAR
-        assert f"{ROOT}/relax/static/CHGCAR" not in hpc.files
-        flow = api.app.state.toolbox.require_task(pid, tid)["flow"]
-        names = [item["name"] for item in flow["staged_inputs"]["relax/static"]["items"]]
-        assert names == ["POTCAR", "POSCAR"]
-        assert "已从上游作业目录带入" in str(out.get("result"))
-    finally:
-        ctx.__exit__(None, None, None)
-
-
-def test_density_job_also_gets_chgcar(tmp_path):
-    ctx, client, api, hpc, pid, tid = _chain(
-        tmp_path, with_density=True, allow_script_deploy=True,
-        submit_script_template=TEMPLATE)
-    try:
-        hpc.files[TEMPLATE] = TEMPLATE_BYTES
-        hpc.files[f"{ROOT}/relax/static/run.sh"] = TEMPLATE_BYTES
-        out = call_tool(api, pid, tid, "precheck", {"job_key": "relax/static", "attempt_id": _attempt(api, pid, tid, "relax/static")})
-        assert out["ok"] is True, out.get("result")
-        assert hpc.files[f"{ROOT}/relax/static/CHGCAR"] == b"synthetic charge density\n"
-        flow = api.app.state.toolbox.require_task(pid, tid)["flow"]
-        names = [item["name"] for item in flow["staged_inputs"]["relax/static"]["items"]]
-        assert names == ["POTCAR", "POSCAR", "CHGCAR"]
-    finally:
-        ctx.__exit__(None, None, None)
-
-
-def test_no_staging_before_upstream_completes(tmp_path):
-    ctx, client, api, hpc, pid, tid = _chain(tmp_path, upstream_status="running")
-    try:
-        out = call_tool(api, pid, tid, "precheck", {"job_key": "relax/static", "attempt_id": _attempt(api, pid, tid, "relax/static")})
-        assert out["ok"] is False
-        assert "等待上游作业 relax 完成" in str(out.get("result"))
-        assert f"{ROOT}/relax/static/POSCAR" not in hpc.files
-        assert f"{ROOT}/relax/static/POTCAR" not in hpc.files
-    finally:
-        ctx.__exit__(None, None, None)
-
-
-def test_staging_never_overwrites_foreign_file(tmp_path):
-    """下游目录里已有一份**不是系统带入**的 POSCAR 且与上游不一致 → 不覆盖、报冲突。"""
-    mine = b"my own placeholder\n"
-    ctx, client, api, hpc, pid, tid = _chain(tmp_path, static_poscar=mine)
-    try:
-        out = call_tool(api, pid, tid, "precheck", {"job_key": "relax/static", "attempt_id": _attempt(api, pid, tid, "relax/static")})
-        assert out["ok"] is False
-        assert "与上游产物不一致，未覆盖" in str(out.get("result"))
-        assert hpc.files[f"{ROOT}/relax/static/POSCAR"] == mine          # 原样保留
-        assert f"{ROOT}/relax/static/POTCAR" in hpc.files                # 其它产物照常带入
-    finally:
-        ctx.__exit__(None, None, None)
-
-
-def test_staged_file_is_refreshed_when_upstream_changes(tmp_path):
-    """系统自己带进来的产物、之后没被动过 → 上游更新时可以刷新（不会误伤用户文件）。"""
-    ctx, client, api, hpc, pid, tid = _chain(tmp_path)
-    try:
-        call_tool(api, pid, tid, "precheck", {"job_key": "relax/static", "attempt_id": _attempt(api, pid, tid, "relax/static")})
-        assert hpc.files[f"{ROOT}/relax/static/POSCAR"] == VALID_INPUTS["POSCAR"]
-        new_contcar = b"Synthetic Si relaxed\n1.0\n3 0 0\n0 3 0\n0 0 3\nSi\n1\nDirect\n0.26 0.26 0.26\n"
-        hpc.files[f"{ROOT}/relax/CONTCAR"] = new_contcar
-        out = call_tool(api, pid, tid, "precheck", {"job_key": "relax/static", "attempt_id": _attempt(api, pid, tid, "relax/static")})
-        assert hpc.files[f"{ROOT}/relax/static/POSCAR"] == new_contcar
-        flow = api.app.state.toolbox.require_task(pid, tid)["flow"]
-        record = next(item for item in flow["staged_inputs"]["relax/static"]["items"]
-                      if item["name"] == "POSCAR")
-        assert record["sha256"] == hashlib.sha256(new_contcar).hexdigest()
-        assert "已从上游作业目录带入 POSCAR" in str(out.get("result"))
-    finally:
-        ctx.__exit__(None, None, None)
-
-
-# ---------------- 上游完成后要明确告诉用户"下一步在你这边" ----------------
-def test_get_state_tells_which_jobs_can_be_prepared(tmp_path):
-    ctx, client, api, hpc, pid, tid = _chain(tmp_path)
-    try:
-        out = call_tool(api, pid, tid, "get_state", {})
-        text = str(out.get("result"))
-        assert "relax/static" in text and "可准备提交" in text
-        assert "下一步=已完成" in text          # relax 已完成
-    finally:
-        ctx.__exit__(None, None, None)
-
-
-def test_monitor_reports_next_step_without_querying_the_queue(tmp_path):
-    """没有在飞的作业时不打 squeue；已解锁但缺输入时如实说明缺什么。"""
-    ctx, client, api, hpc, pid, tid = _chain(tmp_path)
-    try:
-        svc = api.app.state.toolbox
-        before = list(hpc.run_calls)
-        text = svc.orchestrator().monitor(svc.store, pid, tid, None)
-        assert "上游已完成并解锁，但预检未通过" in text
-        assert "relax/static" in text
-        assert not [c for c, _cwd in hpc.run_calls[len(before):]
-                    if c.startswith("squeue")]
-    finally:
-        ctx.__exit__(None, None, None)
-
-
-def test_monitor_auto_prepares_unlocked_job_and_spawns_submit_card(tmp_path):
-    """监控只是"等"：上游一结束就自动把下游准备好（交接→预检→草稿→提交卡），不自动提交。"""
-    ctx, client, api, hpc, pid, tid = _chain(
-        tmp_path, allow_script_deploy=True, submit_script_template=TEMPLATE)
-    try:
-        hpc.files[TEMPLATE] = TEMPLATE_BYTES
-        hpc.files[f"{ROOT}/relax/static/run.sh"] = TEMPLATE_BYTES
-        svc = api.app.state.toolbox
-        text = svc.orchestrator().monitor(svc.store, pid, tid, None)
-        assert "已自动准备就绪" in text, text
-        flow = svc.require_task(pid, tid)["flow"]
-        job = next(j for j in flow["plan"]["jobs"] if j["key"] == "relax/static")
-        assert (job.get("precheck") or {}).get("ok") is True
-        assert job.get("draft"), job
-        assert hpc.files[f"{ROOT}/relax/static/POSCAR"] == VALID_INPUTS["POSCAR"]
-        assert hpc.files[f"{ROOT}/relax/static/POTCAR"] == VALID_INPUTS["POTCAR"]
-        cards = [a for a in (flow.get("consent") or {}).get("actions", {}).values()
-                 if a.get("kind") == "submit" and a.get("state") == "pending"]
-        assert len(cards) == 1, cards
-        assert cards[0]["binding"]["job_key"] == "relax/static"
-        assert "上游产物已按依赖自动带入" in cards[0]["summary"]
-        assert hpc.submit_count == 0          # 绝不自动提交
-        # 再跑一轮不会重复出卡/重复准备
-        again = svc.orchestrator().monitor(svc.store, pid, tid, None)
-        flow2 = svc.require_task(pid, tid)["flow"]
-        cards2 = [a for a in (flow2.get("consent") or {}).get("actions", {}).values()
-                  if a.get("kind") == "submit" and a.get("state") == "pending"]
-        assert len(cards2) == 1
-        assert "已自动准备就绪" not in again
-    finally:
-        ctx.__exit__(None, None, None)
-
-
-def test_repeated_precheck_and_draft_keep_the_pending_submit_card_valid(tmp_path):
-    """用户实测过的坑：卡片弹出后 AI 又跑一遍 precheck/draft，把卡当场作废。
-
-    现在重复检查/草稿只要结果一致就不重绑，卡片继续有效、点确认能真的提交。
-    """
-    ctx, client, api, hpc, pid, tid = _chain(
-        tmp_path, allow_script_deploy=True, submit_script_template=TEMPLATE)
-    try:
-        hpc.files[TEMPLATE] = TEMPLATE_BYTES
-        hpc.files[f"{ROOT}/relax/static/run.sh"] = TEMPLATE_BYTES
-        svc = api.app.state.toolbox
-        svc.orchestrator().monitor(svc.store, pid, tid, None)
-        flow = svc.require_task(pid, tid)["flow"]
-        card = next(a for a in (flow.get("consent") or {}).get("actions", {}).values()
-                    if a.get("kind") == "submit" and a.get("state") == "pending")
-        aid = _attempt(api, pid, tid, "relax/static")
-        pre = call_tool(api, pid, tid, "precheck",
-                        {"job_key": "relax/static", "attempt_id": aid})
-        assert "未改变绑定" in str(pre.get("result"))
-        call_tool(api, pid, tid, "draft", {"job_key": "relax/static", "attempt_id": aid})
-        flow = svc.require_task(pid, tid)["flow"]
-        assert flow["consent"]["actions"][card["card_id"]]["state"] == "pending"
-        resolved = resolve_card(api, pid, tid, card["card_id"], True)
-        assert resolved["card"]["state"] == "executed", resolved["card"]
-        assert hpc.submit_count == 1
-    finally:
-        ctx.__exit__(None, None, None)
-
-
-def test_stale_submit_card_gives_a_human_readable_reason(tmp_path):
-    """作业已经提交后再点旧卡：要说清"已经提交过了"，不再只丢一个 SCOPE_STALE。"""
-    ctx, client, api, hpc, pid, tid = _chain(
-        tmp_path, allow_script_deploy=True, submit_script_template=TEMPLATE)
-    try:
-        hpc.files[TEMPLATE] = TEMPLATE_BYTES
-        hpc.files[f"{ROOT}/relax/static/run.sh"] = TEMPLATE_BYTES
-        svc = api.app.state.toolbox
-        svc.orchestrator().monitor(svc.store, pid, tid, None)
-        flow = svc.require_task(pid, tid)["flow"]
-        card = next(a for a in (flow.get("consent") or {}).get("actions", {}).values()
-                    if a.get("kind") == "submit" and a.get("state") == "pending")
-        job = next(j for j in flow["plan"]["jobs"] if j["key"] == "relax/static")
-        job["slurm_id"] = 7990978
-        job["submission_state"] = "submitted"
-        svc.store.update_task(pid, tid, flow=flow)
-        saved = resolve_card(api, pid, tid, card["card_id"], True)["card"]
-        assert saved["state"] == "failed"
-        assert "已经提交过了" in saved["result"]
-        assert "SCOPE_STALE" not in saved["result"]
-    finally:
-        ctx.__exit__(None, None, None)
+"""Retired expansions reject tools and old cards without side effects."""
+import copy
+import pytest
+from .conftest import call_tool, create_project_task
+from backend.toolbox.consent import card_payload, save_card
+
+@pytest.mark.parametrize('name', ['generate_potcar', 'deploy_submit_script', 'request_file_prepare', 'resume_flow', 'run_exec', 'hpc_exec', 'hpc_write_script'])
+def test_retired_tools_cannot_run_with_legacy_arguments(api, name):
+    p, t = create_project_task(api)
+    before = dict(api.hpc.files)
+    response = api.client.post(f"/api/v1/toolbox/projects/{p['id']}/tasks/{t['id']}/tools",
+        json={'name': name, 'args': {'command': 'vaspkit -task 103', 'job_key': 'relax'}})
+    assert response.status_code == 400
+    assert response.json()['error']['code'] == 'AI_TOOL_NOT_ALLOWED'
+    assert api.hpc.files == before
+    assert api.hpc.run_calls == api.hpc.write_calls == []
+
+@pytest.mark.parametrize('operation', ['potcar_generate', 'script_deploy', 'file_prepare_grant'])
+@pytest.mark.parametrize('state', ['pending', 'approved'])
+def test_old_extension_card_cannot_execute(api, operation, state):
+    p, t = create_project_task(api); svc=api.app.state.toolbox
+    flow=svc.store.get_task(p['id'],t['id']).get('flow') or {}
+    binding={'operation': operation, 'execution_mode': 'Fake', 'project_id': p['id'], 'task_id': t['id']}
+    card=save_card(svc.store,p['id'],t['id'],flow,card_payload(tool=operation,args={},kind=operation,risk='high',reason='legacy',summary='legacy',batch_key='legacy',binding=binding))
+    card=card['card_id']
+    if state=='approved':
+        flow=svc.store.get_task(p['id'],t['id'])['flow']
+        flow['consent']['actions'][card]['state']='approved'
+        svc.store.update_task(p['id'],t['id'],flow=flow)
+    response=api.client.post(f"/api/v1/toolbox/projects/{p['id']}/tasks/{t['id']}/consents/{card}",json={'approved':True})
+    assert response.status_code==200
+    assert response.json()['card']['state']=='failed'
+    assert api.hpc.run_calls==api.hpc.write_calls==[]
+
+def test_stop_removed_resume_preserve_live_job_identity(api):
+    p,t=create_project_task(api); svc=api.app.state.toolbox
+    job={'key':'relax','status':'running','attempt_id':'old-attempt','slurm_id':1234,
+         'submission_state':'submitted','submission_action_id':'old-card','requires':[]}
+    svc.store.update_task(p['id'],t['id'],flow={'phase':'monitoring','local_dir':str(api.workspace),
+        'hpc_dir':'/review/calc','execution_mode':'Fake','plan':{'jobs':[job]}})
+    call_tool(api,p['id'],t['id'],'stop_monitor',{})
+    response=api.client.post(f"/api/v1/toolbox/projects/{p['id']}/tasks/{t['id']}/tools",json={'name':'resume_flow','args':{}})
+    assert response.status_code==400
+    after=svc.store.get_task(p['id'],t['id'])['flow']['plan']['jobs'][0]
+    for key in ('attempt_id','slurm_id','submission_state','submission_action_id'): assert after[key]==job[key]
+    assert after['stop_note']=='用户终止'
+    assert svc.store.monitoring_tasks()==[]
+    assert not any(command.startswith('sbatch') for command,_ in api.hpc.run_calls)
+    # The generic selection route cannot reset the stopped live submission.
+    call_tool(api,p['id'],t['id'],'select_jobs',{'submit':['relax']})
+    refused=call_tool(api,p['id'],t['id'],'precheck',{'job_key':'relax','attempt_id':'old-attempt'})
+    assert refused['ok'] is False
+    assert refused['error']['code']=='JOB_NOT_READY'
+
+@pytest.mark.parametrize('source', ['matching', 'changed', 'missing_subdirectory', 'old_root_only'])
+def test_precheck_never_stages_dependency_files(api, source):
+    p,t=create_project_task(api); svc=api.app.state.toolbox
+    call_tool(api,p['id'],t['id'],'plan',{'strategy':'chain','jobs':[{'key':'relax'},{'key':'relax/static','requires':['relax']}]})
+    flow=svc.store.get_task(p['id'],t['id'])['flow']; jobs=flow['plan']['jobs']; jobs[0]['status']='completed'
+    flow['staged_inputs']={'relax/static':{'items':[{'name':'POSCAR','verified_only':True}]}}
+    flow['file_prepare_grant']={'active':True}; svc.store.update_task(p['id'],t['id'],flow=flow)
+    target='/review/calc/relax/static/POSCAR'; api.hpc.files[target]=b'user-owned'
+    if source in {'matching','changed'}: api.hpc.files['/review/calc/relax/CONTCAR']=b'user-owned' if source=='matching' else b'changed'
+    if source=='old_root_only': api.hpc.files['/review/calc/CONTCAR']=b'old root'
+    before=copy.deepcopy(api.hpc.files)
+    call_tool(api,p['id'],t['id'],'precheck',{'job_key':jobs[1]['key'],'attempt_id':jobs[1]['attempt_id']})
+    assert api.hpc.files==before
+    assert api.hpc.write_calls==[]
+    assert not any(command.startswith('cp ') for command,_ in api.hpc.run_calls)
+
+def test_old_vaspkit_skill_cannot_advertise_potcar_capability():
+    from backend.toolbox.tools.vaspkit import VaspkitSkill
+    skill=VaspkitSkill.from_dict({'found':True,'tasks':{'potcar':['103','401'],'structure':['103','111']},
+        'notes':'generate POTCAR task 103'})
+    assert 'potcar' not in skill.tasks
+    assert '103' not in skill.tasks['structure']
+    assert 'generate POTCAR' not in skill.notes
+
+def test_legacy_resume_damage_cannot_authorize_same_attempt_again(api):
+    p,t=create_project_task(api); svc=api.app.state.toolbox
+    job={'key':'relax','status':'draft','attempt_id':'old-attempt','slurm_id':None,
+         'submission_state':None,'stop_note':'用户终止','requires':[]}
+    original={'kind':'submit','state':'executed','binding':{'job_key':'relax','attempt_id':'old-attempt'}}
+    svc.store.update_task(p['id'],t['id'],flow={'phase':'monitoring','local_dir':str(api.workspace),
+        'hpc_dir':'/review/calc','execution_mode':'Fake','plan':{'jobs':[job]},
+        'consent':{'actions':{'historical':original},'computation_scopes':{}}})
+    before=svc.store.get_task(p['id'],t['id'])['flow']
+    out=call_tool(api,p['id'],t['id'],'precheck',{'job_key':'relax','attempt_id':'old-attempt'})
+    assert out['ok'] is False and out['error']['code']=='SUBMISSION_UNKNOWN'
+    assert svc.store.get_task(p['id'],t['id'])['flow']==before
+    assert api.hpc.run_calls==api.hpc.write_calls==[]
+
+def test_new_attempt_after_explicit_retry_is_not_old_submission():
+    from backend.toolbox.computation import select_job
+    job={'key':'relax','status':'draft','attempt_id':'new-attempt','attempt_history':[{'job':{'attempt_id':'old-attempt','slurm_id':1234}}]}
+    flow={'plan':{'jobs':[job]},'consent':{'actions':{'original':{'kind':'submit','state':'executed',
+        'binding':{'job_key':'relax','attempt_id':'old-attempt'}}}}}
+    assert select_job(flow,{'job_key':'relax','attempt_id':'new-attempt'}) is job

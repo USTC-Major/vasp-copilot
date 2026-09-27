@@ -243,20 +243,6 @@ class Orchestrator:
                                       "canceled", "skipped", "blocked",
                                       "unknown"):
                 continue
-            # 依赖链的上游产物交接（与 commands.tool_precheck 同一规则）：
-            # 只在上游已完成时发生，绝不覆盖与上游不一致的既有文件。
-            if (remote_ok and self.hpc is not None and remote
-                    and (job.get("requires") or [])):
-                from .staging import stage_upstream_inputs
-                staged = stage_upstream_inputs(flow, self.cfg, self.hpc, remote, job)
-                for item in staged["staged"]:
-                    logs.append(f"[ok] 已从上游作业目录带入 {item['name']}（哈希已核对）")
-                for conflict in staged["conflicts"]:
-                    issues.append({"job": job["key"], "file": conflict["name"],
-                                   "level": "error",
-                                   "message": "与上游产物不一致，未覆盖"})
-                for wait in staged["waiting"]:
-                    logs.append(f"[info] 等待上游作业 {wait} 完成后再自动带入")
             contents: dict[str, bytes] = {}
             for name in ("INCAR", "POSCAR", "KPOINTS", "POTCAR"):
                 try:
@@ -321,17 +307,13 @@ class Orchestrator:
             issues.append({"job": job["key"], "file": "提交脚本(*.sh)",
                            "level": level, "message": msg})
             attestation = (flow.get("script_attestations") or {}).get(job["key"])
+            if (attestation or {}).get("claimed_by") in {"template_match", "script_deploy"}:
+                attestation = None
             attested = (isinstance(attestation, dict) and isinstance(actual, dict)
                         and attestation.get("attempt_id") == job.get("attempt_id")
                         and all(attestation.get(key) == actual.get(key)
                                 for key in ("source", "directory", "script_name",
                                             "normalized_path", "sha256", "size")))
-            if not attested and isinstance(actual, dict):
-                # 与用户在智能设置里配置的模板逐字节一致 ⇒ 自动认领（同 commands 侧规则）
-                from .script_template import stamp_template_attestations
-                if stamp_template_attestations(
-                        flow, self.cfg, self.hpc, [{"job_key": job["key"], **actual}]):
-                    attested = True
             issues.append({"job": job["key"], "file": "提交脚本认领",
                            "level": "ok" if attested else "error",
                            "message": ("脚本已由用户认领" if attested else
@@ -395,15 +377,13 @@ class Orchestrator:
         except RuntimeError:
             return False
 
-    def _draft(self, flow: dict, job_key: str | None = None) -> str:
+    def _draft(self, flow: dict) -> str:
         remote = (flow.get("hpc_dir") or "").rstrip("/")
         base = remote or flow.get("local_dir") or ""
         local_dir = Path(flow["local_dir"])
         drafts: list[dict] = []
         lines: list[str] = []
         for job in flow["plan"]["jobs"]:
-            if job_key is not None and job["key"] != job_key:
-                continue
             if job.get("status") in ("completed", "failed", "not_converged",
                                       "canceled", "skipped", "blocked",
                                       "unknown"):
@@ -425,12 +405,8 @@ class Orchestrator:
                 script_name = script.name
                 fingerprint = fingerprint_local_submit_script(script)
             attestation = (flow.get("script_attestations") or {}).get(job["key"])
-            from .script_template import stamp_template_attestations
-            stamp_template_attestations(flow, self.cfg, self.hpc, [{
-                "job_key": job["key"], "attempt_id": job.get("attempt_id"),
-                "source": source, "directory": calc_dir,
-                "script_name": script_name, **fingerprint}])
-            attestation = (flow.get("script_attestations") or {}).get(job["key"])
+            if (attestation or {}).get("claimed_by") in {"template_match", "script_deploy"}:
+                attestation = None
             if not isinstance(attestation, dict) or any(
                     attestation.get(key) != value for key, value in {
                         "attempt_id": job.get("attempt_id"),
@@ -472,108 +448,6 @@ class Orchestrator:
         return ("当前处于「提交前检查通过，待你确认提交」环节。\n"
                 "请在绑定当前草稿的一次性确认卡中确认；「取消」→ 放弃本次；"
                 "也可以补充输入文件后再回来确认。")
-
-    def _resume_canceled_jobs(self, flow: dict) -> list[str]:
-        """上游已完成的被取消/跳过作业自动接回来（用户当时按了停止，但没要求放弃这条链）。
-
-        否则 canceled 会被当成"终态"，整个任务被判为已完成（phase=done），后台就不再推进它，
-        用户看到的正是"static 算完了，dos 却长时间没动静"。
-        """
-        jobs = (flow.get("plan") or {}).get("jobs") or []
-        statuses = {j.get("key"): (j.get("status") or "draft") for j in jobs}
-        resumed: list[str] = []
-        for job in jobs:
-            if job.get("status") not in {"canceled", "blocked"}:
-                continue
-            if any(statuses.get(key) != "completed"
-                   for key in (job.get("requires") or [])):
-                continue
-            # 只接回"确实没跑过"的（有作业号的说明真跑过，交给用户用 retry_job 决定）
-            if job.get("slurm_id") or job.get("submission_state"):
-                continue
-            job.update(status="draft", slurm_id=None, submission_state=None,
-                       submission_action_id=None, queue_state=None,
-                       wait_reason="", blocked_by_dependency=False)
-            job.pop("precheck", None)
-            job.pop("draft", None)
-            job.pop("diagnosis", None)
-            resumed.append(str(job.get("key")))
-        if resumed:
-            from .computation import invalidate
-            invalidate(flow, resumed, "被取消的作业已自动重新排上，需要重新准备与确认")
-            for key in resumed:
-                (flow.get("script_attestations") or {}).pop(key, None)
-                (flow.get("staged_inputs") or {}).pop(key, None)
-            flow["phase"] = "monitoring"     # 任务重新变为"在办"，后台继续推进到出提交卡
-        return resumed
-
-    def _advance_ready_jobs(self, store, project_id: str, task_id: str,
-                            flow: dict) -> list[str]:
-        """上游完成后自动把已解锁的下游推进到「待用户确认提交」（绝不自动提交）。
-
-        流程是一条链：提交 A → 监控等 A 跑完 → **自动**把 B 准备好（上游产物交接 → 硬预检 →
-        提交草稿 → 弹出 B 的一次性提交确认卡）→ 用户点确认 → 继续等 B → … 直到全部跑完。
-        监控只负责"等"，等待结束后由这里把工作接着往下做，而不是停在"持续观察"。
-        """
-        remote = str(flow.get("hpc_dir") or flow.get("local_dir") or "").strip()
-        if not remote or self.hpc is None:
-            return []
-        try:
-            local_dir = Path(flow["local_dir"])
-        except Exception:  # noqa: BLE001 - 没有本地目录时不做自动准备
-            return []
-        from .consent import spawn_submit_card
-        from .contracts import ToolboxError
-        from .staging import stage_upstream_inputs
-        gate = self._gate(flow)
-        notes: list[str] = []
-        for job in flow["plan"]["jobs"]:
-            key = job.get("key")
-            if key not in gate.eligible or job.get("status") not in {"draft", "waiting"}:
-                continue
-            attempt = job.get("attempt_id")
-            precheck = job.get("precheck") or {}
-            prepared = bool(precheck.get("ok") and precheck.get("hard")
-                            and precheck.get("attempt_id") == attempt and job.get("draft"))
-            waiting_card = any(
-                action.get("kind") == "submit"
-                and action.get("state") in {"pending", "approved", "executing"}
-                and (action.get("binding") or {}).get("job_key") == key
-                for action in ((flow.get("consent") or {}).get("actions") or {}).values())
-            if prepared and waiting_card:
-                continue                      # 已经准备好、在等用户点卡
-            try:
-                if not prepared:
-                    staged = stage_upstream_inputs(flow, self.cfg, self.hpc, remote, job)
-                    for item in staged["staged"]:
-                        notes.append(f"[{key}] 已从上游作业目录带入 {item['name']}（哈希已核对）")
-                    for conflict in staged["conflicts"]:
-                        notes.append(f"[{key}] {conflict['name']} 与上游产物不一致，未覆盖；"
-                                     "请你确认该目录里这份文件如何处理")
-                    self._precheck(flow, local_dir, True, remote, [], job_key=key)
-                    if not (job.get("precheck") or {}).get("ok"):
-                        details = "；".join(
-                            str(item.get("message") or "") for item in
-                            (job.get("precheck") or {}).get("issues") or [])[:240]
-                        notes.append(f"[{key}] 上游已完成并解锁，但预检未通过：{details}"
-                                     "（需要你处理后才能提交）")
-                        continue
-                    self._draft(flow, job_key=key)
-                    # spawn_submit_card 会重新从 store 读 flow，必须先把上面的交接/预检/草稿落盘
-                    self._save(store, project_id, task_id, flow)
-                card = spawn_submit_card(store, project_id, task_id, key, attempt)
-                # spawn_submit_card 自己写了一遍 store；把最新 flow 收回来，
-                # 否则本函数结尾的 _save 会用旧内存副本把刚生成的卡覆盖掉。
-                fresh = (store.get_task(project_id, task_id) or {}).get("flow") or {}
-                flow.clear()
-                flow.update(fresh)
-                notes.append(f"[{key}] 已自动准备就绪（上游产物已带入、硬预检与提交草稿完成）："
-                             f"提交确认卡已弹出，你确认后即提交；系统不会自动提交")
-            except (ToolboxError, RuntimeError, ValueError, OSError) as exc:
-                notes.append(f"[{key}] 自动准备未完成：{exc}")
-            except Exception as exc:  # noqa: BLE001 - 单个作业失败不影响其它作业
-                notes.append(f"[{key}] 自动准备异常：{type(exc).__name__}")
-        return notes
 
     def _cascade_blocks(self, flow: dict) -> list[str]:
         """M52：前置终态失败/已阻断的等待作业级联置 blocked（移出等待队列）。"""
@@ -765,11 +639,7 @@ class Orchestrator:
             flow["phase"] = "monitoring"
         self._save(store, project_id, task_id, flow)
         out = logs_note + "\n" + "\n".join(submitted)
-        # 这条是"提交时点的回执"，不会被后续改写：明确告诉用户去哪里看实时进度，
-        # 不要写成"会随后续消息刷新"让人一直盯着这条旧消息。
-        return (out + "\n实时进度请看页面上方的任务状态（后台每 60 秒自动查超算），"
-                      "跑完后报告在同任务的 Toolbox 页面 REPORT 里；"
-                      "这条只是提交时的回执，不会自己更新。")
+        return out + "\n在途作业会随后续消息刷新（squeue 实况）。"
 
     def _free_slots(self, account: str) -> Optional[int]:
         try:
@@ -807,6 +677,8 @@ class Orchestrator:
             raise RuntimeError("远端作业目录缺少唯一用户脚本")
         fingerprint = fingerprint_remote_submit_script(self.hpc, calc, script_name)
         attestation = (flow.get("script_attestations") or {}).get(job["key"])
+        if (attestation or {}).get("claimed_by") in {"template_match", "script_deploy"}:
+            attestation = None
         draft = job.get("draft")
         if (not isinstance(attestation, dict) or not isinstance(draft, dict)
                 or attestation.get("attempt_id") != job.get("attempt_id")
@@ -913,25 +785,19 @@ class Orchestrator:
             return ("未连接超算，无法查询作业进度。作业在超算上照常运行；"
                     "配置 SSH 后回到本会话即可看到实况与报告。")
         account = self.cfg.ssh_username
-        # 没有"在飞"的作业时不必连超算：既省一次 SSH，也让"上游已完成、等用户确认"这条路
-        # 立刻给出下一步（此前会一直打 squeue，界面看起来像卡在"持续观察"）。
-        in_flight = [j for j in flow["plan"]["jobs"]
-                     if j.get("status") in ("submitted", "queued", "running", "unknown")]
-        states: dict = {}
-        if in_flight:
-            try:
-                current_target = target_binding(self.cfg)
-                for job in flow["plan"]["jobs"]:
-                    if job.get("slurm_id") and job.get("scheduler_target", current_target) != current_target:
-                        raise ValueError("SSH/scheduler target changed; restore original configuration")
-                code, out, err = self.hpc.run(self._squeue_command(account))
-                if code != 0 or (self.cfg.scheduler_backend == "paracloud" and (err or "").strip()):
-                    raise RuntimeError(f"squeue exit={code}: {(err or '')[:200]}")
-                states = parse_queue(self.cfg.scheduler_backend, out or "")
-            except Exception as exc:  # noqa: BLE001
-                flow["monitor_error"] = {"at": _now_iso(), "message": str(exc)[:500]}
-                self._save(store, project_id, task_id, flow)
-                return f"查询 squeue 失败（{type(exc).__name__}），进度未知；保留作业状态，稍后重查，禁止重提。"
+        try:
+            current_target = target_binding(self.cfg)
+            for job in flow["plan"]["jobs"]:
+                if job.get("slurm_id") and job.get("scheduler_target", current_target) != current_target:
+                    raise ValueError("SSH/scheduler target changed; restore original configuration")
+            code, out, err = self.hpc.run(self._squeue_command(account))
+            if code != 0 or (self.cfg.scheduler_backend == "paracloud" and (err or "").strip()):
+                raise RuntimeError(f"squeue exit={code}: {(err or '')[:200]}")
+            states = parse_queue(self.cfg.scheduler_backend, out or "")
+        except Exception as exc:  # noqa: BLE001
+            flow["monitor_error"] = {"at": _now_iso(), "message": str(exc)[:500]}
+            self._save(store, project_id, task_id, flow)
+            return f"查询 squeue 失败（{type(exc).__name__}），进度未知；保留作业状态，稍后重查，禁止重提。"
         flow.pop("monitor_error", None)
         free = max(0, self.cfg.max_jobs - occupied(states))
         progress: list[str] = []
@@ -993,28 +859,12 @@ class Orchestrator:
         # P0: monitoring is read-only with respect to submission. Dependency
         # completion never authorizes a later sbatch.
         stalled = self._cascade_blocks(flow)
-        # 上游已完成的被取消作业自动接回来（否则会被当成终态、整条链就此停滞）
-        for key in self._resume_canceled_jobs(flow):
-            progress.append(f"{key}：之前被取消，上游已完成，已自动重新排上（会带入上游结果）")
         gate = self._gate(flow)
         for job in flow["plan"]["jobs"]:
             if job.get("status") in {"waiting", "draft"}:
                 job["wait_reason"] = ("依赖已满足；需重新预检并确认提交"
                                       if job["key"] in gate.eligible else gate.blocked.get(job["key"], "等待确认"))
         flow["waiting"] = [j["key"] for j in flow["plan"]["jobs"] if j.get("status") == "waiting"]
-        # 上游刚完成、下游已解锁时，把"下一步轮到用户"说清楚：
-        # 否则界面/模型只会说"已提交、正在持续观察"，用户不知道球在自己这边。
-        ready_next = [j["key"] for j in flow["plan"]["jobs"]
-                      if j.get("key") in gate.eligible
-                      and j.get("status") in {"draft", "waiting"}]
-        # 监控只负责"等"：上游一结束就把下游**自动**准备好（交接→预检→草稿→提交卡）。
-        advanced = self._advance_ready_jobs(store, project_id, task_id, flow)
-        progress.extend(advanced)
-        if not advanced and not in_flight and ready_next:
-            progress.append(
-                "下一步需要你确认：" + "、".join(ready_next)
-                + " 可以准备提交了——重新预检（上游产物会自动带入）→ 生成草稿 → 由你确认提交；"
-                  "系统不会自动补提。")
         if flow.get("waiting"):
             progress.insert(0, "等待作业不会自动补提；条件满足后需重新预检并逐次确认")
         for note in stalled:

@@ -1,7 +1,7 @@
 """智能模式配置加载（优先级：默认值 < 本地私有 config.json < 环境变量）。
 
 - 默认值见 ``defaults()``：max_jobs=20、轮询 60s、LLM 接口默认空等。
-- 本地私有文件 ~/.vasp-ai/config.json 存用户偏好与本地密钥（仅本地，不随项目上传）。
+- 本地私有文件存用户偏好；LLM/MP 密钥迁入系统凭据管理器，兼容读取旧明文。
 - 环境变量 AI_MODE_*（含开关 ENABLE_AI_MODE）最高优先级，便于容器/测试注入。
 - SSH 密码不落本模型：M6 起接入系统凭据管理器；这里仅存连接资料。
 - enabled 一律以独立开关 ENABLE_AI_MODE 为准（本模块在此固化，禁止被文件覆盖）。
@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 
 from . import paths as _paths
 from .gate import is_ai_mode_enabled
-from backend.toolbox.secrets import get_secret, secret_value_for_file
+from backend.toolbox.secrets import SecretStorageError, get_secret, secret_value_for_file
 
 ENV_PREFIX = "AI_MODE_"
 
@@ -58,12 +58,6 @@ class AiModeConfig(BaseModel):
     max_jobs: int = 20
     poll_interval_seconds: int = 60
     billing_estimate_enabled: bool = False
-    #: 全局免批范围（真源在 Toolbox 执行设置里；这里镜像以便同一模型可承载该字段）。
-    auto_approve_kinds: list[str] = Field(default_factory=list)
-    #: 下面三项同样真源在 Toolbox 执行设置里，这里只做镜像（默认关＝不做）。
-    allow_potcar_assembly: bool = False
-    allow_script_deploy: bool = False
-    submit_script_template: str = ""
 
     llm_provider: str = "auto"   # fake|openai|auto（auto：有可用 key 走 openai，否则 fake）
     llm_base_url: str = ""
@@ -129,7 +123,10 @@ def load_settings(
     base = defaults()
     if config_path is None:
         config_path = _paths.home_dir() / "ai_config.json"
-    base.update(_read_config_file(config_path if config_path.exists() else _paths.config_path()))
+        source = config_path if config_path.exists() else _paths.config_path()
+    else:
+        source = config_path
+    base.update(_read_config_file(source))
     base.update(_env_overrides(env))
     # 密钥优先级：环境变量 > 系统凭据管理器 > 本地配置文件（旧明文值仍可读，便于迁移）。
     for field, variable in (("llm_api_key", f"{ENV_PREFIX}LLM_API_KEY"),
@@ -140,8 +137,6 @@ def load_settings(
         if stored:
             base[field] = stored
     base["enabled"] = is_ai_mode_enabled(env)
-    from backend.toolbox.config import normalize_auto_approve_kinds
-    base["auto_approve_kinds"] = normalize_auto_approve_kinds(base.get("auto_approve_kinds"))
     return AiModeConfig(**base)
 
 
@@ -149,7 +144,10 @@ def save_settings(config: AiModeConfig, config_path: Path | None = None) -> None
     """把配置写入本地私有文件（enabled 不落盘，开关永远走环境变量）。"""
     if config_path is None:
         config_path = _paths.home_dir() / "ai_config.json"
-    local_before = _read_config_file(config_path)
+    source = config_path
+    if config_path.name == 'ai_config.json' and not config_path.exists():
+        source = config_path.parent / 'config.json'
+    local_before = _read_config_file(source)
     payload = config.model_dump(mode="json")
     payload.pop("enabled", None)
     payload["data_dir"] = str(config.data_dir)
@@ -167,10 +165,16 @@ def save_settings(config: AiModeConfig, config_path: Path | None = None) -> None
             field, str(payload.get(field) or ""),
             str(local_before.get(field) or ""), os.environ.get(variable) or "")
     config_path.parent.mkdir(parents=True, exist_ok=True)
-    config_path.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    from backend.toolbox.storage import atomic_json
+    try:
+        atomic_json(config_path, payload)
+        legacy = config_path.parent / 'config.json'
+        if config_path.name == 'ai_config.json' and legacy.is_file():
+            from backend.toolbox.config import scrub_legacy_secret
+            if payload.get('llm_api_key') == '':
+                scrub_legacy_secret(legacy, 'llm_api_key')
+    except (OSError, ValueError) as exc:
+        raise SecretStorageError('配置写入或旧密钥清理失败；凭据状态可能已改变，请重新查询') from exc
 
 
 from backend.toolbox.config import execution_mode  # Compatibility value classifier.

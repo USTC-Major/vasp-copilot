@@ -1,7 +1,5 @@
 """HTTP contract shared by the Toolbox UI and optional AI service."""
 from __future__ import annotations
-import datetime as dt
-import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import APIRouter, FastAPI, Request, Query
@@ -59,64 +57,8 @@ def create_task(project_id: str, request: Request, payload: dict):
         if set(payload) - allowed or any(not isinstance(v, (str, type(None))) for v in payload.values()):
             raise ToolboxError('INVALID_TASK', '只接受任务标题、目标和工作区路径')
         task = svc.store.create_task(project_id, **payload)
-    record_task_file_grant(svc, project_id, task, payload)
-    schedule_task_file_grant_hydration(svc, project_id, task['id'])
     return envelope(task=task)
 
-
-def record_task_file_grant(svc, project_id: str, task: dict, payload: dict) -> None:
-    """「选定工作区＝授权」：把用户选定的超算目录记为任务级文件授权。
-
-    只写本地记录（不连远端），因此建任务/改任务响应不受 SSH 影响；远端登记与
-    作业级范围派生由 schedule_task_file_grant_hydration() 在后台完成，并同样
-    best-effort。授权来源始终是**用户在任务里选定工作区**这一次显式动作；
-    AI 不能给自己写这份记录。
-
-    payload 里出现 hpc_workspace 就更新这份记录：给了路径=授权（active），
-    清空路径=显式收回（active=False，从此不再自动登记根或派生范围）。
-    """
-    if 'hpc_workspace' not in payload:
-        return
-    remote = str(payload.get('hpc_workspace') or '').strip()
-    try:
-        current = svc.store.get_task(project_id, task['id']) or {}
-        flow = dict(current.get('flow') or {})
-        flow['file_grant'] = {
-            'granted_by': 'task_workspace_choice',
-            'hpc_workspace': remote,
-            'operations': ['copy', 'write_text', 'mkdir'],
-            'max_operations': 32,
-            'active': bool(remote),
-            # 下次落实授权时，按这个路径登记（或补齐）文件根——只做一次。
-            'pending_root': bool(remote),
-            'granted_at': dt.datetime.now(dt.timezone.utc).isoformat(),
-        }
-        svc.store.update_task(project_id, task['id'], flow=flow)
-    except Exception:  # noqa: BLE001 - 授权记录失败不影响任务本身
-        return
-
-
-def hydrate_task_file_grant(svc, project_id: str, task_id: str) -> dict:
-    """把上面的任务级授权落实为远端文件根 + 各作业文件范围（best-effort）。"""
-    try:
-        if svc.files is None:
-            return {}
-        return svc.files.ensure_task_file_grant(project_id, task_id)
-    except Exception:  # noqa: BLE001 - 超算暂时连不上只跳过授权
-        return {}
-
-
-def schedule_task_file_grant_hydration(svc, project_id: str, task_id: str) -> None:
-    """远端登记必须连 SSH：放到后台线程，绝不阻塞建任务/改任务响应。
-
-    失败（未配置站点、目录核对不过、断网）都被静默吞掉，用户仍可照常逐项确认。
-    """
-    threading.Thread(
-        target=hydrate_task_file_grant,
-        args=(svc, project_id, task_id),
-        name='toolbox-file-grant',
-        daemon=True,
-    ).start()
 
 @router.patch('/projects/{project_id}/tasks/{task_id}')
 def update_task(project_id: str, task_id: str, request: Request, payload: dict):
@@ -157,10 +99,6 @@ def update_task(project_id: str, task_id: str, request: Request, payload: dict):
                 payload = {**payload, 'flow': raw}
         task = svc.store.update_task(project_id, task_id, **payload)
     task.pop('flow', None)
-    if 'hpc_workspace' in payload:
-        # 换/清超算工作区是用户的显式动作：刷新任务级授权，并在后台补齐文件根。
-        record_task_file_grant(svc, project_id, task, payload)
-        schedule_task_file_grant_hydration(svc, project_id, task_id)
     return envelope(task=task)
 
 @router.delete('/projects/{project_id}/tasks/{task_id}')
@@ -282,10 +220,6 @@ def settings_payload(svc):
     cfg = svc.settings_loader()
     return envelope(settings={
         'max_jobs': cfg.max_jobs, 'poll_interval_seconds': cfg.poll_interval_seconds,
-        'auto_approve_kinds': list(cfg.auto_approve_kinds),
-        'allow_potcar_assembly': bool(cfg.allow_potcar_assembly),
-        'allow_script_deploy': bool(cfg.allow_script_deploy),
-        'submit_script_template': str(cfg.submit_script_template or ''),
         'ssh': {key: getattr(cfg, 'ssh_' + key) for key in
                 ['name', 'host', 'port', 'username', 'known_hosts_path', 'identity_file']} | {'scheduler_backend': cfg.scheduler_backend},
         'materials_project': {'configured': bool(cfg.mp_api_key)},
@@ -297,9 +231,8 @@ def settings(request: Request):
 
 @router.put('/settings')
 def update_settings(request: Request, payload: dict):
+    from .secrets import SecretStorageError
     svc = service(request)
-    from .config import (as_bool, normalize_auto_approve_kinds,
-                         normalize_submit_script_template)
     allowed = set(ExecutionConfig.model_fields) - {'data_dir', 'mp_api_key'}
     if set(payload) - allowed:
         raise ToolboxError('INVALID_SETTINGS', '未知或禁止设置字段')
@@ -309,42 +242,62 @@ def update_settings(request: Request, payload: dict):
             if (not 10 <= cfg.poll_interval_seconds <= 3600 or cfg.max_jobs < 1
                     or not 1 <= cfg.ssh_port <= 65535):
                 raise ValueError('range')
-            if len(normalize_auto_approve_kinds(cfg.auto_approve_kinds)) != len(set(cfg.auto_approve_kinds)):
-                raise ValueError('auto_approve_kinds')
+        except SecretStorageError:
+            raise
         except Exception:
             raise ToolboxError('INVALID_SETTINGS', '请检查端口、作业上限和轮询间隔（10–3600秒）') from None
-        cfg = cfg.model_copy(update={
-            'auto_approve_kinds': normalize_auto_approve_kinds(cfg.auto_approve_kinds),
-            'submit_script_template': normalize_submit_script_template(cfg.submit_script_template),
-            'allow_potcar_assembly': as_bool(cfg.allow_potcar_assembly),
-            'allow_script_deploy': as_bool(cfg.allow_script_deploy),
-        })
-        save_settings(cfg, svc.root / 'toolbox_config.json')
+        try:
+            save_settings(cfg, svc.root / 'toolbox_config.json')
+        except SecretStorageError:
+            raise
+        except (OSError, ValueError) as exc:
+            raise SecretStorageError('配置保存失败；凭据状态可能已改变，请重新查询') from exc
     return settings_payload(svc)
 
 @router.post('/settings/secrets/{kind}')
 def secret(kind: str, request: Request, payload: dict):
     svc = service(request)
+    from .secrets import SecretStorageError, delete_secret, get_secret, set_secret
     value = payload.get('value')
     if not isinstance(value, str):
         raise ToolboxError('INVALID_SECRET', 'value必须为字符串；空字符串清除')
     with svc._guard:
-        cfg = svc.settings_loader()
+        try:
+            cfg = svc.settings_loader()
+        except SecretStorageError as exc:
+            raise ToolboxError('SECRET_STORAGE_FAILED', str(exc), 503) from exc
         if kind == 'ssh':
             if not cfg.ssh_host or not cfg.ssh_username:
                 raise ToolboxError('SSH_UNCONFIGURED', '请先设置SSH主机和用户名')
             from .ssh.credentials import KeyringCredentialStore
             credentials = KeyringCredentialStore()
-            if value:
-                credentials.set_password(cfg.ssh_host, cfg.ssh_username, value)
-            else:
-                credentials.delete_password(cfg.ssh_host, cfg.ssh_username)
+            try:
+                if value:
+                    credentials.set_password(cfg.ssh_host, cfg.ssh_username, value)
+                else:
+                    credentials.delete_password(cfg.ssh_host, cfg.ssh_username)
+                stored = credentials.get_password(cfg.ssh_host, cfg.ssh_username)
+                if (stored or '') != value:
+                    raise SecretStorageError('凭据后端未确认SSH密码变更')
+            except Exception as exc:
+                raise ToolboxError('SECRET_STORAGE_FAILED', 'SSH凭据操作失败，未确认变更', 503) from exc
         elif kind == 'mp':
             import os
             if os.environ.get('TOOLBOX_MP_API_KEY') or os.environ.get('AI_MODE_MP_API_KEY'):
                 raise ToolboxError('SECRET_ENV_MANAGED', 'MP密钥由环境变量管理，不能通过页面修改')
-            cfg.mp_api_key = value
-            save_settings(cfg, svc.root / 'toolbox_config.json')
+            try:
+                if value:
+                    set_secret('mp_api_key', value)
+                else:
+                    delete_secret('mp_api_key')
+                cfg.mp_api_key = value
+                save_settings(cfg, svc.root / 'toolbox_config.json')
+                stored = get_secret('mp_api_key')
+                configured = bool(svc.settings_loader().mp_api_key)
+                if (stored or '') != value or configured != bool(value):
+                    raise SecretStorageError('密钥变更后的实际状态未通过核对')
+            except (SecretStorageError, OSError, ValueError) as exc:
+                raise ToolboxError('SECRET_STORAGE_FAILED', 'MP凭据操作失败，未确认变更；请重新查询状态', 503) from exc
         else:
             raise ToolboxError('INVALID_SECRET_KIND', '不支持的凭据类型')
     return envelope(configured=bool(value))
@@ -352,20 +305,24 @@ def secret(kind: str, request: Request, payload: dict):
 @router.get('/settings/secret-status')
 def secret_status(request: Request):
     import os
-    from .secrets import get_secret
-    cfg = service(request).settings_loader()
+    from .secrets import SecretStorageError, get_secret
     mp_env = bool(os.environ.get('TOOLBOX_MP_API_KEY') or os.environ.get('AI_MODE_MP_API_KEY'))
+    try:
+        cfg = service(request).settings_loader()
+        mp_stored = None if mp_env else get_secret('mp_api_key')
+    except SecretStorageError as exc:
+        raise ToolboxError('SECRET_STORAGE_FAILED', str(exc), 503) from exc
     ssh_configured = False
     if cfg.ssh_host and cfg.ssh_username:
         from .ssh.credentials import KeyringCredentialStore
         try:
             ssh_configured = bool(KeyringCredentialStore().get_password(cfg.ssh_host, cfg.ssh_username))
-        except Exception:
-            pass
+        except Exception as exc:
+            raise ToolboxError('SECRET_STORAGE_FAILED', 'SSH凭据状态读取失败', 503) from exc
     return envelope(secrets={
         'mp': {'configured': bool(cfg.mp_api_key),
                'source': ('environment' if mp_env else
-                          'credential_store' if get_secret('mp_api_key') else
+                          'credential_store' if mp_stored else
                           'local_config' if cfg.mp_api_key else 'none'),
                'manageable': not mp_env},
         'ssh': {'configured': ssh_configured, 'source': 'credential_store' if ssh_configured else 'none', 'manageable': True}})
@@ -442,5 +399,9 @@ def create_toolbox_app(*, root: Path | None = None, settings_loader=None, orch_f
             app.state.toolbox.close()
     app = FastAPI(lifespan=lifespan)
     app.add_exception_handler(ToolboxError, error_handler)
+    from .secrets import SecretStorageError
+    async def secret_storage_error(request, exc):
+        return await error_handler(request, ToolboxError('SECRET_STORAGE_FAILED', str(exc), 503))
+    app.add_exception_handler(SecretStorageError, secret_storage_error)
     app.include_router(router, prefix='/api/v1')
     return app

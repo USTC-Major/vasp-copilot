@@ -2,7 +2,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Card, Typography, Space, Button, Input, Col, Row, Spin, Collapse, Switch, Select, message, Alert, Modal } from "antd";
 import { Link } from "react-router-dom";
-import { LinkOutlined, SafetyCertificateOutlined, RocketOutlined, ExperimentOutlined, FileTextOutlined } from "@ant-design/icons";
+import { LinkOutlined, SafetyCertificateOutlined, RocketOutlined } from "@ant-design/icons";
 import ErrorAlert from "../components/common/ErrorAlert";
 import SecretInput from "../components/ai/SecretInput";
 import type { AiSecretState, AiSettingsOut } from "../types/ai";
@@ -24,14 +24,6 @@ interface Form {
   llm_model: string;
   llm_provider: string;
   llm_enable_thinking: boolean;
-  // 全局免批范围（仅机械操作）；科学输入/结构导入/脚本生成/提交永远逐项确认。
-  auto_copy_inputs: boolean;
-  auto_generate_kpoints: boolean;
-  auto_hpc_upload: boolean;
-  // POTCAR 自动生成（vaspkit）与提交脚本模板：默认关，打开时要看风险提示。
-  allow_potcar_assembly: boolean;
-  allow_script_deploy: boolean;
-  submit_script_template: string;
   llm_api_key: string;
   mp_api_key: string;
   ssh_name: string;
@@ -52,12 +44,6 @@ const toForm = (settings: AiSettingsOut): Form => ({
   llm_model: settings.llm.model ?? "",
   llm_provider: settings.llm.provider ?? "auto",
   llm_enable_thinking: settings.llm.enable_thinking ?? false,
-  auto_copy_inputs: (settings.auto_approve_kinds ?? []).includes("copy_inputs"),
-  auto_generate_kpoints: (settings.auto_approve_kinds ?? []).includes("generate_kpoints"),
-  auto_hpc_upload: (settings.auto_approve_kinds ?? []).includes("hpc_upload"),
-  allow_potcar_assembly: Boolean(settings.allow_potcar_assembly),
-  allow_script_deploy: Boolean(settings.allow_script_deploy),
-  submit_script_template: settings.submit_script_template ?? "",
   llm_api_key: "",
   mp_api_key: "",
   ssh_name: settings.ssh.name ?? "",
@@ -106,74 +92,6 @@ const AiSettingsPage: React.FC = () => {
     }, {});
   patchFields.llm_enable_thinking = form.llm_enable_thinking;
   patchFields.scheduler_backend = form.scheduler_backend;
-  patchFields.auto_approve_kinds = [
-    ...(form.auto_copy_inputs ? ["copy_inputs"] : []),
-    ...(form.auto_generate_kpoints ? ["generate_kpoints"] : []),
-    ...(form.auto_hpc_upload ? ["hpc_upload"] : []),
-  ];
-  patchFields.allow_potcar_assembly = form.allow_potcar_assembly;
-  patchFields.allow_script_deploy = form.allow_script_deploy;
-  patchFields.submit_script_template = form.submit_script_template;
-
-  /** 开启 POTCAR 自动生成＝让 AI 在超算上真的写文件：先看风险与免责声明，确认才生效。 */
-  const togglePotcarAssembly = async (next: boolean) => {
-    if (!next) {
-      setForm((p) => ({ ...p, allow_potcar_assembly: false }));
-      return;
-    }
-    const ok = await new Promise<boolean>((resolve) => {
-      Modal.confirm({
-        title: "开启 POTCAR 自动生成（vaspkit）",
-        width: 560,
-        content: (
-          <div style={{ fontSize: 13, lineHeight: 1.7 }}>
-            <div>开启后，缺 POTCAR 时 AI 会用超算上的 vaspkit 在指定作业目录生成它：</div>
-            <ul style={{ margin: "6px 0 6px 18px", padding: 0 }}>
-              <li>用哪套赝势（数据集）由 <b>vaspkit 自己的默认规则</b>决定；系统不替你挑选，也不保证它符合你的计算目的。</li>
-              <li><b>本智能体不提供、不分发任何 POTCAR/赝势文件</b>：这里只是调用你超算账户里已装好的 vaspkit、用你自己的赝势库生成。</li>
-              <li>生成会<b>写入你的超算作业目录</b>，且<b>每次都会单独弹确认卡</b>（永不自动批准、不进免批范围）。</li>
-              <li>VASP 赝势的<b>版权、许可与适用性由使用者负责</b>（与 VASP 官方/发行方处理）；本系统只做自动化调用与机械校验（元素顺序），不承担版权或科学正确性责任。</li>
-            </ul>
-            <div>你也可以保持关闭，自己把 POTCAR 放进作业目录（系统同样不提供 POTCAR）。</div>
-          </div>
-        ),
-        okText: "我已知悉，开启",
-        cancelText: "取消",
-        onOk: () => resolve(true),
-        onCancel: () => resolve(false),
-      });
-    });
-    setForm((p) => ({ ...p, allow_potcar_assembly: ok }));
-  };
-
-  /** 开启脚本复制＝允许 AI 搬运你指定的模板：先讲清边界，确认才生效。 */
-  const toggleScriptDeploy = async (next: boolean) => {
-    if (!next) {
-      setForm((p) => ({ ...p, allow_script_deploy: false }));
-      return;
-    }
-    const ok = await new Promise<boolean>((resolve) => {
-      Modal.confirm({
-        title: "允许 AI 复制提交脚本模板",
-        content: (
-          <div style={{ fontSize: 13, lineHeight: 1.7 }}>
-            <div>开启后，AI 只能把你配置的模板脚本<b>逐字节复制</b>到作业目录：</div>
-            <ul style={{ margin: "6px 0 6px 18px", padding: 0 }}>
-              <li>不修改、不改名、不执行；脚本内容对 AI 不可见。</li>
-              <li>作业目录里若已有其它 *.sh，会被拒绝（不覆盖、不删除）。</li>
-              <li>你批准这张复制卡＝同时把该脚本<b>认领</b>为本次提交脚本（绑定文件指纹，提交前会再复核）；提交作业仍要单独确认。</li>
-            </ul>
-          </div>
-        ),
-        okText: "开启",
-        cancelText: "取消",
-        onOk: () => resolve(true),
-        onCancel: () => resolve(false),
-      });
-    });
-    setForm((p) => ({ ...p, allow_script_deploy: ok }));
-  };
-
   const confirmOverwrite = (conflicts: string[]) =>
     new Promise<boolean>((resolve) => {
       Modal.confirm({
@@ -190,11 +108,15 @@ const AiSettingsPage: React.FC = () => {
     try {
       // 保存前对齐一次服务端：页面加载后若他处改过配置，先确认再覆盖，
       // 避免用旧表单把新的 SSH 用户名等设置写回去。
+      const snapshot = loadedRef.current;
       const latest = await settingsQuery.refetch();
       const latestSettings = latest?.data?.settings;
-      if (latestSettings) {
+      if (latest?.isError || !latestSettings) {
+        message.error("无法确认最新设置，未保存");
+        return;
+      }
+      {
         const latestForm = toForm(latestSettings);
-        const snapshot = loadedRef.current;
         const conflicts = (Object.keys(patchFields) as (keyof Form)[]).filter((key) => {
           if (!snapshot) return false;
           const serverMoved = String(latestForm[key]) !== String(snapshot[key]);
@@ -315,88 +237,6 @@ const AiSettingsPage: React.FC = () => {
           <Col span={24}><Text type="secondary" style={{ fontSize: 12 }}>最大作业数 = 同一超算账号「排队 + 运行中」总数上限，全局生效。</Text></Col>
           <Col span={12}><Text strong>监控轮询间隔（秒）</Text><Input value={form.poll_interval_seconds} onChange={set("poll_interval_seconds")} placeholder="60" /></Col>
           <Col span={24}><Text type="secondary" style={{ fontSize: 12 }}>提交后 AI 按此间隔自动检查超算作业状态（排队/运行/完成/补提后续），直到全部结束并生成报告；下限 10 秒。</Text></Col>
-        </Row>
-      ))}
-
-      {section("免批范围（可选）", <SafetyCertificateOutlined />, (
-        <Row gutter={16}>
-          <Col span={12}>
-            <Space>
-              <Switch aria-label="复制已登记输入到作业目录" checked={form.auto_copy_inputs}
-                      onChange={(v) => setForm((p) => ({ ...p, auto_copy_inputs: v }))} />
-              <Text>复制已登记输入到作业目录</Text>
-            </Space>
-          </Col>
-          <Col span={12}>
-            <Space>
-              <Switch aria-label="确定性生成 KPOINTS 网格" checked={form.auto_generate_kpoints}
-                      onChange={(v) => setForm((p) => ({ ...p, auto_generate_kpoints: v }))} />
-              <Text>确定性生成 KPOINTS 网格</Text>
-            </Space>
-          </Col>
-          <Col span={12}>
-            <Space>
-              <Switch aria-label="上传已登记文件到超算工作区" checked={form.auto_hpc_upload}
-                      onChange={(v) => setForm((p) => ({ ...p, auto_hpc_upload: v }))} />
-              <Text>上传已登记文件到超算工作区</Text>
-            </Space>
-          </Col>
-          <Col span={24}>
-            <Text type="secondary" style={{ fontSize: 12 }}>
-              开启后这类操作由 Toolbox 直接批准执行、不再逐张弹卡（全局生效，默认关闭，每个动作仍单独留执行回执）。
-              <b>不含</b> 提交计算、结构导入、脚本生成与任何科学参数修改——那些仍需你逐项确认。
-              开启「上传」后，AI 把你已登记的文件（含 POTCAR 与你自备的 run.sh）传到该任务的超算作业目录时也不再逐次弹卡；
-              上传只写入本任务自己选定的超算工作区，不会提交作业。
-            </Text>
-          </Col>
-        </Row>
-      ))}
-
-      {section("POTCAR 自动生成（可选 · 默认关闭）", <ExperimentOutlined />, (
-        <Row gutter={16}>
-          <Col span={24}>
-            <Space>
-              <Switch aria-label="允许用 vaspkit 在超算作业目录生成 POTCAR"
-                      checked={form.allow_potcar_assembly}
-                      onChange={(v) => void togglePotcarAssembly(v)} />
-              <Text>允许用 vaspkit 在超算作业目录生成 POTCAR</Text>
-            </Space>
-          </Col>
-          <Col span={24}>
-            <Text type="secondary" style={{ fontSize: 12 }}>
-              缺 POTCAR 时，AI 可用超算上的 vaspkit 生成：<b>数据集由 vaspkit 自己的默认规则决定</b>，
-              每次生成都会单独弹确认卡（<b>永不自动批准、不进免批范围</b>）。超算上需已装好 vaspkit（系统会先探测）。
-              <b>本智能体不提供、不分发任何 POTCAR/赝势文件</b>——用的是你自己超算账户里的 vaspkit 与赝势库；
-              赝势的版权、许可与适用性由你负责。
-            </Text>
-          </Col>
-        </Row>
-      ))}
-
-      {section("提交脚本模板（可选 · 默认关闭）", <FileTextOutlined />, (
-        <Row gutter={16}>
-          <Col span={24}>
-            <Text>模板路径（超算上的绝对路径，.sh 结尾；一份模板通吃所有作业）</Text>
-            <Input
-              placeholder="如 /home/你的账号/templates/run.sh（超算上的绝对路径）"
-              value={form.submit_script_template}
-              onChange={(e) => setForm((p) => ({ ...p, submit_script_template: e.target.value }))} />
-          </Col>
-          <Col span={24}>
-            <Space>
-              <Switch aria-label="允许 AI 把模板脚本复制到作业目录"
-                      checked={form.allow_script_deploy}
-                      onChange={(v) => void toggleScriptDeploy(v)} />
-              <Text>允许 AI 把模板脚本复制到作业目录</Text>
-            </Space>
-          </Col>
-          <Col span={24}>
-            <Text type="secondary" style={{ fontSize: 12 }}>
-              开启后 AI 只做<b>逐字节复制</b>：不修改、不改名、不执行；脚本内容对 AI 不可见；
-              作业目录里已有其它 *.sh 会被拒绝（不覆盖、不删除）。
-              你批准那张复制卡＝同时把脚本<b>认领</b>为本次提交脚本（绑定文件指纹），所以不用再额外点一次"认领"；提交作业仍要单独确认。
-            </Text>
-          </Col>
         </Row>
       ))}
 

@@ -2,10 +2,8 @@
 
 - 后端默认 keyring（Windows 上即 Windows 凭据管理器），服务名与 SSH 凭据一致
   （``vasp-ai-agent``），账号键用 ``secret://<name>``，与 ``ssh://user@host`` 不冲突。
-- 进程内缓存读取结果，写入/删除时失效，避免每个请求都读一次凭据管理器。
-- 凭据后端不可用（无桌面 / CI / 无 keyring）时读取返回 None、写入返回 False；
-  调用方据此回退到本地配置文件里的旧值，保证功能不因缺少凭据后端而中断，
-  也不会因为“写不进去”而把密钥从磁盘上抹掉。
+- 每次读取后端，其他应用实例的替换和删除立即可见。
+- 无 keyring 时仍可读取旧配置；后端操作失败明确报错，原配置保留。
 """
 from __future__ import annotations
 
@@ -18,6 +16,14 @@ ACCOUNTS = {
     "llm_api_key": "secret://llm_api_key",
     "mp_api_key": "secret://mp_api_key",
 }
+
+
+class SecretStorageError(ValueError):
+    """Credential operation failed; messages never include secret values."""
+
+
+class BackendUnavailable(Exception):
+    """No supported system credential provider is configured."""
 
 
 class SecretBackend(Protocol):
@@ -33,6 +39,10 @@ class KeyringBackend:
         import keyring
 
         self._keyring = keyring
+        # keyring may be installed in a headless image while its fail backend
+        # has no credential provider. This is absence, not a failed read.
+        if keyring.get_keyring().priority <= 0:
+            raise BackendUnavailable()
 
     def get(self, account: str) -> Optional[str]:
         return self._keyring.get_password(SERVICE_NAME, account)
@@ -41,10 +51,8 @@ class KeyringBackend:
         self._keyring.set_password(SERVICE_NAME, account, value)
 
     def delete(self, account: str) -> None:
-        try:
+        if self.get(account) is not None:
             self._keyring.delete_password(SERVICE_NAME, account)
-        except Exception:  # noqa: BLE001 - 各后端对“不存在”行为不一，统一幂等
-            pass
 
 
 class MemoryBackend:
@@ -64,7 +72,6 @@ class MemoryBackend:
 
 
 _backend: Optional[SecretBackend] = None
-_cache: dict[str, Optional[str]] = {}
 _backend_checked = False
 
 
@@ -73,13 +80,10 @@ def configure_backend(backend: Optional[SecretBackend]) -> None:
     global _backend, _backend_checked
     _backend = backend
     _backend_checked = backend is not None
-    _cache.clear()
 
 
 def clear_cache() -> None:
-    _cache.clear()
-    global _backend_checked
-    _backend_checked = False
+    """Compatibility hook: secret values are no longer cached."""
 
 
 def _get_backend() -> Optional[SecretBackend]:
@@ -89,8 +93,11 @@ def _get_backend() -> Optional[SecretBackend]:
     _backend_checked = True
     try:
         _backend = KeyringBackend()
-    except Exception:  # noqa: BLE001 - 无 keyring / 无桌面时明确降级
+    except (ImportError, BackendUnavailable):
         _backend = None
+    except Exception as exc:
+        _backend_checked = False
+        raise SecretStorageError('系统凭据后端初始化失败') from exc
     return _backend
 
 
@@ -99,36 +106,36 @@ def available() -> bool:
 
 
 def get_secret(name: str) -> Optional[str]:
-    """读取密钥；不存在或后端不可用返回 None（不抛异常，调用方回退文件值）。"""
+    """不存在或未安装后端返回 None；已安装后端读取失败不能伪装成空值。"""
     account = ACCOUNTS.get(name)
     if account is None:
         raise KeyError(f"未知密钥名: {name}")
-    if name in _cache:
-        return _cache[name]
     backend = _get_backend()
     value: Optional[str] = None
     if backend is not None:
         try:
             value = backend.get(account)
-        except Exception:  # noqa: BLE001
-            value = None
-    _cache[name] = value
+        except Exception as exc:
+            raise SecretStorageError("凭据后端读取失败，请检查本机凭据服务") from exc
     return value
 
 
 def set_secret(name: str, value: str) -> bool:
-    """写入密钥；返回是否成功（False 时调用方必须保留原有落盘值）。"""
+    """写入并复读确认；后端失败或未实际写入时明确报错。"""
     account = ACCOUNTS.get(name)
     if account is None:
         raise KeyError(f"未知密钥名: {name}")
     backend = _get_backend()
     if backend is None or not value:
-        return False
+        raise SecretStorageError("凭据后端不可用或密钥为空，未保存")
     try:
         backend.set(account, value)
-    except Exception:  # noqa: BLE001
-        return False
-    _cache[name] = value
+        if backend.get(account) != value:
+            raise SecretStorageError("凭据后端未确认保存，未完成替换")
+    except SecretStorageError:
+        raise
+    except Exception as exc:
+        raise SecretStorageError("凭据后端保存失败，未完成替换") from exc
     return True
 
 
@@ -137,21 +144,30 @@ def delete_secret(name: str) -> None:
     if account is None:
         raise KeyError(f"未知密钥名: {name}")
     backend = _get_backend()
-    if backend is not None:
-        try:
+    if backend is None:
+        raise SecretStorageError("凭据后端不可用，无法确认清除")
+    try:
+        if backend.get(account) is not None:
             backend.delete(account)
-        except Exception:  # noqa: BLE001
-            pass
-    _cache[name] = None
+        if backend.get(account) is not None:
+            raise SecretStorageError("凭据后端未确认删除，未完成清除")
+    except SecretStorageError:
+        raise
+    except Exception as exc:
+        raise SecretStorageError("凭据后端删除失败，未完成清除") from exc
 
 
 def secret_value_for_file(name: str, current: str, previous: str, env_value: str) -> str:
     """返回该密钥字段应写进配置文件的取值。
 
-    规则：配置文件里绝不留明文。优先把“用户自己的密钥”迁移进凭据管理器；
-    环境变量提供的密钥只参与运行、不落盘；迁移失败时返回原文，避免丢密钥。
+    普通保存只迁移未入库的旧密钥，不覆盖已有凭据。显式替换/清除先完成
+    后端操作再保存模型；空 current 不会复活 previous。环境值从不入库或落盘。
+    迁移失败抛异常，调用方尚未写文件，旧文件保持原样。
     """
-    candidate = previous or (current if current and current != env_value else "")
+    candidate = previous if env_value else current
+    if get_secret(name):
+        return ""
     if not candidate:
         return ""
-    return "" if set_secret(name, candidate) else candidate
+    set_secret(name, candidate)
+    return ""

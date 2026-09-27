@@ -1,41 +1,9 @@
-"""事件驱动自动唤醒：什么时候该替用户"催"AI，什么时候不要打扰。"""
-from backend.ai_mode.auto_wake import wake_prompt
-
-
-def _detail(jobs, *, phase="monitoring", cards=()):
-    return {"flow": {"phase": phase,
-                     "jobs": [{"key": key, "status": status} for key, status in jobs]},
-            "consents": list(cards)}
-
-
-def test_no_wake_when_nothing_meaningful_happened():
-    detail = _detail([("relax", "completed"), ("relax/static", "draft")],
-                     phase="monitoring")
-    assert wake_prompt(detail, [], phase="monitoring") is not None  # 有终态作业 → 值得唤醒
-    quiet = _detail([("relax", "running")], phase="monitoring")
-    assert wake_prompt(quiet, [], phase="monitoring") is None
-
-
-def test_pending_card_alone_does_not_wake_the_model():
-    """卡常驻在页面上就够了：只有"等待中的卡"不再是唤醒理由（否则会一段接一段提醒用户去点）。"""
-    card = {"kind": "submit", "state": "pending"}
-    detail = _detail([("relax", "running")], cards=[card])
-    assert wake_prompt(detail, [], phase="monitoring") is None
-    # 但作业状态变化/失败仍然唤醒
-    changed = _detail([("relax", "completed")], cards=[card])
-    assert wake_prompt(changed, [], phase="monitoring")
-
-
-def test_wake_on_failure():
-    failed = [{"kind": "consent.failed", "message": "[ROOT_CHANGED] 身份变化"}]
-    prompt = wake_prompt(_detail([("relax", "running")]), failed, phase="monitoring")
-    assert prompt and "刚出现失败" in prompt
-
-
-def test_wake_prompt_tells_the_model_to_self_heal_and_not_ask_the_user():
-    detail = _detail([("relax", "completed"), ("relax/static/dos", "draft")],
-                     cards=[{"kind": "submit", "state": "pending"}])
-    prompt = wake_prompt(detail, [], phase="monitoring") or ""
-    assert "自己判断下一步并直接执行到底" in prompt
-    assert "不要停下来问用户" in prompt
-    assert "点确认即可" in prompt
+"""No background waking module or server wiring remains."""
+import importlib.util
+from pathlib import Path
+def test_auto_wake_module_removed():
+    assert importlib.util.find_spec('backend.ai_mode.auto_wake') is None
+def test_server_no_wake_or_combined_stop_wiring():
+    from backend.ai_mode import server
+    text=Path(server.__file__).read_text(encoding='utf-8')
+    for symbol in ('AutoWakeLoop','stop_everything','_clear_auto_wake_stop','_set_auto_wake_stopped'): assert symbol not in text
