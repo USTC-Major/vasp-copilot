@@ -140,7 +140,8 @@ def test_stream_messages_endpoint_stopped_persists(monkeypatch, tmp_path):
 
 
 def test_stop_endpoint_returns_stopped(monkeypatch, tmp_path):
-    """停止端点：有活跃流 -> stopped=true；无活跃流 -> stopped=false。"""
+    """停止端点＝一个按钮停到底：无论当时有没有在生成，都返回 stopped=true，
+    并附带给用户的收尾说明（含"仍在超算上运行的作业号"提醒）。"""
     monkeypatch.setenv("VASP_AI_HOME", str(tmp_path))
     monkeypatch.setenv("ENABLE_AI_MODE", "true")
     import ai_mode.server as server_module
@@ -152,11 +153,13 @@ def test_stop_endpoint_returns_stopped(monkeypatch, tmp_path):
             f"/ai/v1/projects/{pid}/tasks/{tid}/messages/stop")
         assert r.status_code == 200
         assert r.json()["stopped"] is True
+        assert isinstance(r.json()["running_jobs"], list)
+        assert "已按你的要求停止" in r.json()["message"]
         server_module._ACTIVE_STOPS.pop((pid, tid), None)
         r2 = client.post(
             f"/ai/v1/projects/{pid}/tasks/{tid}/messages/stop")
         assert r2.status_code == 200
-        assert r2.json()["stopped"] is False
+        assert r2.json()["stopped"] is True          # 幂等：再点一次仍然是一切停止
 
 
 def test_task_detail_empty_flow(monkeypatch, tmp_path):

@@ -359,6 +359,20 @@ const AiProjectPage: React.FC = () => {
     }
   };
 
+  /** 顶栏「停止」：一个按钮停到底（后端负责同时停对话、监控与自动唤醒），并刷出 AI 的收尾提醒。 */
+  const handleStopAll = async () => {
+    if (!selectedTask) return;
+    try {
+      const r = await aiApi.stopMessage(projectId, selectedTask.id);
+      if (r.message) message.info('已停止：对话与计算流程都停下了（已在超算运行的作业见对话里的提示）');
+      await messagesQuery.refetch();
+      void tasksQuery.refetch();
+      void taskContextQuery.refetch();
+    } catch (err) {
+      message.warning(err instanceof Error ? err.message : '停止失败');
+    }
+  };
+
   /** 批量处理同类卡片：一次点击，但逐张提交、各自留决议记录。 */
   const handleResolveCards = async (cards: AiConsentCard[], approved: boolean) => {
     const taskId = selectedTask?.id;
@@ -509,6 +523,17 @@ const AiProjectPage: React.FC = () => {
                 {selectedTask.local_workspace && <Tag icon={<FolderOutlined />} color="geekblue" style={{ margin: 0 }}>{selectedTask.local_workspace}</Tag>}
                 {selectedTask.hpc_workspace && <Tag icon={<CloudServerOutlined />} color="purple" style={{ margin: 0 }}>{selectedTask.hpc_workspace}</Tag>}
                 <AiContextBar context={taskContextQuery.data} />
+                {/* 一个按钮停到底：对话生成 + 计算流程 + 后台自动唤醒全停；再说一句「继续」即可接上 */}
+                <Button size="small" danger onClick={() => {
+                  Modal.confirm({
+                    title: '停止这个任务的对话与计算流程？',
+                    content: '会停止 AI 输出、停止后台监控与自动准备、不再自动弹卡。'
+                      + '已经在超算上运行的作业不会被取消（我会把作业号告诉你，需要时用 scancel）。'
+                      + '想继续时说一句「继续」即可，已算完的结果会保留。',
+                    okText: '停止', cancelText: '取消',
+                    onOk: () => void handleStopAll(),
+                  });
+                }}>停止</Button>
                 <Button size="small" danger icon={<DeleteOutlined />} onClick={() => {
                   Modal.confirm({
                     title: "删除该计算任务？",
