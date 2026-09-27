@@ -765,7 +765,11 @@ class Orchestrator:
             flow["phase"] = "monitoring"
         self._save(store, project_id, task_id, flow)
         out = logs_note + "\n" + "\n".join(submitted)
-        return out + "\n在途作业会随后续消息刷新（squeue 实况）。"
+        # 这条是"提交时点的回执"，不会被后续改写：明确告诉用户去哪里看实时进度，
+        # 不要写成"会随后续消息刷新"让人一直盯着这条旧消息。
+        return (out + "\n实时进度请看页面上方的任务状态（后台每 60 秒自动查超算），"
+                      "跑完后报告在同任务的 Toolbox 页面 REPORT 里；"
+                      "这条只是提交时的回执，不会自己更新。")
 
     def _free_slots(self, account: str) -> Optional[int]:
         try:

@@ -193,6 +193,32 @@ class AutoWakeLoop:
             store.update_generation(project_id, task_id, {
                 "auto_wake": {**state, "last_event_id": newest, "last_phase": phase}})
             return False
+        # 整条链跑完：由**系统**（不是模型）追加一条完成通知——省一次模型调用，也保证一定出现。
+        if phase in _TERMINAL_PHASES and not state.get("terminal_notified"):
+            jobs = flow.get("jobs") or []
+            done = [str(j.get("key")) for j in jobs
+                    if str(j.get("status") or "") == "completed"]
+            report = str((detail.get("flow") or {}).get("report") or "")
+            lines = ["全部计算已结束（这一条由系统自动发出，不需要你再操作）。"]
+            if done:
+                lines.append("已完成：" + "、".join(done) + "。")
+            failed = [str(j.get("key")) for j in jobs
+                      if str(j.get("status") or "") in {"failed", "not_converged"}]
+            if failed:
+                lines.append("未通过：" + "、".join(failed)
+                             + "（需要的话告诉我，我用同一套证据诊断）。")
+            lines.append("结果报告在**同一任务的 Toolbox 页面**（REPORT 区块）"
+                         + ("；也可以直接问我，我按报告解释结果。" if report else "。"))
+            try:
+                store.append_message(project_id, task_id, role="assistant",
+                                     content="\n".join(lines))
+            except Exception:  # noqa: BLE001
+                pass
+            store.update_generation(project_id, task_id, {
+                "auto_wake": {**state, "last_event_id": newest, "last_phase": phase,
+                              "last_signature": signature, "terminal_notified": True,
+                              "at": time.time()}})
+            return True
         try:
             answer = run_agent(store, project_id, task_id, prompt)
         except Exception as exc:  # noqa: BLE001 - 唤醒失败不影响后台
