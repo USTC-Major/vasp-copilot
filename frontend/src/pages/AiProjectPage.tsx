@@ -66,7 +66,7 @@ const outcomeLabel: Record<ConsentOutcome, string> = {
   completed: '执行完成', refused: '拒绝已记录', failed: '执行失败/已过期', in_progress: '已接受，处理中', pending: '仍待处理', uncertain: '结果未确认',
 };
 const consentDetail = (response: AiConsentResponse) => [...new Set([
-  response.card?.result, response.result, response.card?.reason,
+  response.card?.result, response.result, response.card?.reason, response.error?.message,
   ...(consentStates(response).includes('unknown') ? ['执行结果未知，请核验任务状态；请勿重复批准或重试。'] : []),
 ].filter(Boolean))].join('\n');
 const hasResolvedApproval = (outcome: ConsentOutcome) => ['completed', 'refused', 'failed', 'in_progress'].includes(outcome);

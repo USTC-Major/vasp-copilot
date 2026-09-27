@@ -268,8 +268,9 @@ export interface AiConsentResponse {
   /** Echo of the requested decision; it is not the Toolbox execution outcome. */
   approved?: boolean;
   state?: string;
-  result?: string;
-  card?: { state?: string; result?: string; reason?: string };
+  result?: string | null;
+  card?: { state?: string; result?: string | null; reason?: string | null };
+  error?: { code?: string; message?: string; retryable?: boolean } | null;
 }
 
 export interface AiMessagesResponse {

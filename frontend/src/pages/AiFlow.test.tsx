@@ -302,6 +302,7 @@ describe('AI 前端整合（M12）', () => {
   it('结构化 INCAR 草稿在写入前生成单次授权卡片，可拒绝', async () => {
     server.use(http.post('/ai/v1/projects/:projectId/tasks/:taskId/messages/consent', () => HttpResponse.json({
       mode: 'ai', ok: true, kind: 'workspace', approved: false, state: 'rejected',
+      error: null,
       card: { state: 'rejected', result: '已拒绝，本次不执行' },
     })));
     const user = userEvent.setup();
@@ -331,6 +332,7 @@ describe('AI 前端整合（M12）', () => {
     server.use(
       http.post('/ai/v1/projects/:projectId/tasks/:taskId/messages/consent', () => { consentCalls += 1; return HttpResponse.json({
         mode: 'ai', ok: false, kind: 'workspace', approved: true, state: 'executed',
+        error: { code: 'OTHER_DIMENSION_FAILED', message: '执行已完成，其他检查未通过', retryable: false },
         card: { state: 'executed', result: '执行凭据已登记' }, result: '',
       }); }),
     );
@@ -357,6 +359,7 @@ describe('AI 前端整合（M12）', () => {
       http.post('/ai/v1/projects/:projectId/tasks/:taskId/messages/consent', () => {
         active = false;
         return HttpResponse.json({ mode: 'ai', ok: false, kind: 'workspace', approved: true, state: 'failed',
+          error: { code: 'CONSENT_FAILED', message: '操作失败且未重试：registered source changed after confirmation', retryable: false },
           card: { state: 'failed', reason: 'source changed after confirmation', result: '未执行' } });
       }),
     );
@@ -366,6 +369,7 @@ describe('AI 前端整合（M12）', () => {
     expect(await screen.findByText('执行失败/已过期')).toBeInTheDocument();
     expect(screen.getByText('未执行')).toBeInTheDocument();
     expect(screen.getByText('source changed after confirmation')).toBeInTheDocument();
+    expect(screen.getByText('操作失败且未重试：registered source changed after confirmation')).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByText('失败的操作')).not.toBeInTheDocument());
     expect(screen.queryByText(/已批准本次操作/)).not.toBeInTheDocument();
   });
@@ -380,6 +384,7 @@ describe('AI 前端整合（M12）', () => {
       http.get('/ai/v1/projects/:projectId/tasks/:taskId/messages', () => HttpResponse.json({ messages: [], pending_actions: [card] })),
       http.post('/ai/v1/projects/:projectId/tasks/:taskId/messages/consent', () => HttpResponse.json({
         mode: 'ai', ok: true, kind: 'workspace', ...outcome,
+        error: { code: 'CONSENT_RESULT_UNAVAILABLE', message: '请核验操作结果', retryable: false },
       })),
     );
     const user = userEvent.setup();
@@ -409,6 +414,8 @@ describe('AI 前端整合（M12）', () => {
       }),
       http.post('/ai/v1/projects/:projectId/tasks/:taskId/messages/consent', () => HttpResponse.json({
         mode: 'ai', ok: true, approved: true, kind: 'workspace', card: { state, result: '权威执行凭据' },
+        ...(['failed', 'expired', 'unknown'].includes(state) ? { ok: false, error: { code: `CONSENT_${state.toUpperCase()}`, message: `${state} 业务错误`, retryable: false } } : {}),
+        ...(['executed', 'rejected'].includes(state) ? { error: null, result: null } : {}),
       })),
     );
     const user = userEvent.setup();
@@ -416,6 +423,7 @@ describe('AI 前端整合（M12）', () => {
     await user.click(await screen.findByRole('button', { name: '同意本次' }));
     expect(await screen.findByText(label)).toBeInTheDocument();
     expect(screen.getByText('权威执行凭据')).toBeInTheDocument();
+    if (['failed', 'expired', 'unknown'].includes(state)) expect(screen.getByText(`${state} 业务错误`)).toBeInTheDocument();
     await waitFor(() => expect(reads).toBeGreaterThanOrEqual(2));
     await act(async () => { await queryClient.refetchQueries({ queryKey: ['aiMessages', 'prj_001', 'tsk_001'] }); });
     await waitFor(() => expect(screen.queryByRole('button', { name: /同意本次/ }) !== null).toBe(remainsPending));
@@ -474,6 +482,31 @@ describe('AI 前端整合（M12）', () => {
     expect(await screen.findByText('结果未确认')).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByRole('button', { name: /同意本次/ }) !== null).toBe(refreshFails));
     expect(screen.queryByText('执行完成')).not.toBeInTheDocument();
+  });
+
+  it.each([
+    [503, JSON.stringify({ mode: 'ai', ok: false, kind: 'workspace', state: 'failed', card: { state: 'failed', result: '不可采信的凭据' } })],
+    [200, 'not JSON'],
+    [200, JSON.stringify({ mode: 'ai', ok: false, kind: 'workspace', state: 'executed', card: 'malformed' })],
+  ])('HTTP %s 无效传输回执仅显示未确认，保留卡且不重复请求 %#', async (status, body) => {
+    const card = pendingCard({ card_id: 'invalid-receipt', kind: 'workspace', summary: '待核验传输卡' });
+    let calls = 0;
+    server.use(
+      http.get('/ai/v1/projects/:projectId/tasks/:taskId/messages', () => HttpResponse.json({ messages: [], pending_actions: [card] })),
+      http.post('/ai/v1/projects/:projectId/tasks/:taskId/messages/consent', () => {
+        calls += 1;
+        return new HttpResponse(body, { status, headers: { 'Content-Type': 'application/json' } });
+      }),
+    );
+    const user = userEvent.setup();
+    renderPath('/ai/projects/prj_001');
+    await user.click(await screen.findByRole('button', { name: '同意本次' }));
+    expect(await screen.findByText('结果未确认')).toBeInTheDocument();
+    expect(screen.getByText('待核验传输卡')).toBeInTheDocument();
+    expect(screen.queryByText('执行失败/已过期')).not.toBeInTheDocument();
+    expect(screen.queryByText('执行完成')).not.toBeInTheDocument();
+    expect(screen.queryByText('不可采信的凭据')).not.toBeInTheDocument();
+    expect(calls).toBe(1);
   });
 
   it.each([false, true])('授权请求完成前切换任务（返回原任务=%s），旧回调不污染当前选择', async (returnToOriginal) => {
@@ -615,6 +648,8 @@ describe('AI 前端整合（M12）', () => {
         attempted.add(body.card_id);
         const state = body.card_id === 'mix-failed' ? 'failed' : 'executed';
         return HttpResponse.json({ mode: 'ai', ok: state === 'executed', kind: 'hpc_upload', approved: true,
+          ...(state === 'failed' ? { error: { code: 'CONSENT_FAILED', message: '操作失败且未重试', retryable: false } } : {}),
+          ...(state === 'executed' ? { error: null } : {}),
           state, card: { state, result: state === 'failed' ? 'source changed' : 'upload finished' } });
       }),
     );
@@ -626,6 +661,7 @@ describe('AI 前端整合（M12）', () => {
     await user.click(within(dialog).getByRole('button', { name: /全部批准/ }));
     expect(await screen.findByText(/本批处理结果：执行完成 1；拒绝已记录 0；执行失败\/已过期 1；已接受，处理中 0；仍待处理 0；结果未确认 1/)).toBeInTheDocument();
     expect(screen.getByText('source changed')).toBeInTheDocument();
+    expect(screen.getByText('操作失败且未重试')).toBeInTheDocument();
     expect(screen.getByText('upload finished')).toBeInTheDocument();
     expect(await screen.findByText('HTTP 错误')).toBeInTheDocument();
     expect(screen.getByText('结果未确认')).toBeInTheDocument();
@@ -638,7 +674,9 @@ describe('AI 前端整合（M12）', () => {
       http.get('/ai/v1/projects/:projectId/tasks/:taskId/messages', () => HttpResponse.json({ messages: [], pending_actions: cards })),
       http.post('/ai/v1/projects/:projectId/tasks/:taskId/messages/consent', async ({ request }) => {
         const { card_id: state } = await request.json() as { card_id: string };
-        return HttpResponse.json({ mode: 'ai', ok: true, approved: true, kind: 'hpc_upload', state, card: { state, result: `${state} 凭据` } });
+        return HttpResponse.json({ mode: 'ai', ok: state !== 'unknown', approved: true, kind: 'hpc_upload', state, card: { state, result: `${state} 凭据` },
+          ...(state === 'unknown' ? { error: { code: 'CONSENT_UNKNOWN', message: '远端执行结果未确认', retryable: false } } : {}),
+        });
       }),
     );
     const user = userEvent.setup();
