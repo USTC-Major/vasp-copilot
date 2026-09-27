@@ -473,6 +473,39 @@ class Orchestrator:
                 "请在绑定当前草稿的一次性确认卡中确认；「取消」→ 放弃本次；"
                 "也可以补充输入文件后再回来确认。")
 
+    def _resume_canceled_jobs(self, flow: dict) -> list[str]:
+        """上游已完成的被取消/跳过作业自动接回来（用户当时按了停止，但没要求放弃这条链）。
+
+        否则 canceled 会被当成"终态"，整个任务被判为已完成（phase=done），后台就不再推进它，
+        用户看到的正是"static 算完了，dos 却长时间没动静"。
+        """
+        jobs = (flow.get("plan") or {}).get("jobs") or []
+        statuses = {j.get("key"): (j.get("status") or "draft") for j in jobs}
+        resumed: list[str] = []
+        for job in jobs:
+            if job.get("status") not in {"canceled", "blocked"}:
+                continue
+            if any(statuses.get(key) != "completed"
+                   for key in (job.get("requires") or [])):
+                continue
+            # 只接回"确实没跑过"的（有作业号的说明真跑过，交给用户用 retry_job 决定）
+            if job.get("slurm_id") or job.get("submission_state"):
+                continue
+            job.update(status="draft", slurm_id=None, submission_state=None,
+                       submission_action_id=None, queue_state=None,
+                       wait_reason="", blocked_by_dependency=False)
+            job.pop("precheck", None)
+            job.pop("draft", None)
+            job.pop("diagnosis", None)
+            resumed.append(str(job.get("key")))
+        if resumed:
+            from .computation import invalidate
+            invalidate(flow, resumed, "被取消的作业已自动重新排上，需要重新准备与确认")
+            for key in resumed:
+                (flow.get("script_attestations") or {}).pop(key, None)
+                (flow.get("staged_inputs") or {}).pop(key, None)
+        return resumed
+
     def _advance_ready_jobs(self, store, project_id: str, task_id: str,
                             flow: dict) -> list[str]:
         """上游完成后自动把已解锁的下游推进到「待用户确认提交」（绝不自动提交）。
@@ -955,6 +988,9 @@ class Orchestrator:
         # P0: monitoring is read-only with respect to submission. Dependency
         # completion never authorizes a later sbatch.
         stalled = self._cascade_blocks(flow)
+        # 上游已完成的被取消作业自动接回来（否则会被当成终态、整条链就此停滞）
+        for key in self._resume_canceled_jobs(flow):
+            progress.append(f"{key}：之前被取消，上游已完成，已自动重新排上（会带入上游结果）")
         gate = self._gate(flow)
         for job in flow["plan"]["jobs"]:
             if job.get("status") in {"waiting", "draft"}:
