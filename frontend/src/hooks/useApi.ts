@@ -375,6 +375,14 @@ export function useAiTasks(projectId: string | null) {
     queryKey: ['aiTasks', projectId],
     queryFn: () => aiApi.listTasks(projectId!),
     enabled: !!projectId,
+    // 任务状态/作业进度由系统后台推进（监控、自动准备下游），页面必须自己跟上：
+    // 只有"当前任务已到终态"时才停下轮询。查询只读本地数据，不打超算。
+    refetchInterval: (query) => {
+      const tasks = (query.state.data as { tasks?: { status?: string }[] } | undefined)?.tasks ?? [];
+      const active = tasks.some((task) =>
+        !['done', 'failed', 'canceled'].includes(String(task?.status ?? '')));
+      return active ? 10_000 : false;
+    },
   });
 }
 
