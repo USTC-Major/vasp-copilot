@@ -454,6 +454,7 @@ class ToolExecutor:
         "hpc_read": "tool_hpc_read",
         "hpc_upload": "tool_hpc_upload",
         "request_file_prepare": "tool_request_file_prepare",
+        "resume_flow": "tool_resume_flow",
         "generate_potcar": "tool_generate_potcar",
         "deploy_submit_script": "tool_deploy_submit_script",
         "stop_monitor": "tool_stop_monitor",
@@ -800,6 +801,57 @@ class ToolExecutor:
     #: 「文件准备」一次性授权覆盖的动作（科学参数/脚本生成/提交永不在内）。
     FILE_PREPARE_KINDS = ("copy_inputs", "hpc_upload", "potcar_generate",
                           "script_deploy", "generate_kpoints")
+
+    def tool_resume_flow(self, args: dict) -> str:
+        """用户说「继续」时用：在同一任务里把被取消/跳过的下游作业重新排上（复用已完成的上游结果）。
+
+        不再反问用户、也不要求新建任务：已完成的作业原样保留（不重跑），
+        被取消/跳过、且其依赖都已完成的作业重置为待准备并换新的尝试号，
+        随后由后台自动带入上游产物、预检、出提交卡。
+        """
+        del args
+        flow = self._load_flow()
+        jobs = (flow.get("plan") or {}).get("jobs") or []
+        if not jobs:
+            return ToolFailure('TOOL_PRECONDITION_FAILED', "尚未规划作业：请先 plan")
+        statuses = {j.get("key"): (j.get("status") or "draft") for j in jobs}
+        resumed: list[str] = []
+        skipped: list[dict] = []
+        for job in jobs:
+            if job.get("status") not in {"canceled", "skipped", "blocked"}:
+                continue
+            pending_upstream = [key for key in (job.get("requires") or [])
+                                if statuses.get(key) != "completed"]
+            if pending_upstream:
+                skipped.append({"job_key": job.get("key"), "waiting": pending_upstream})
+                continue
+            job.update(status="draft", slurm_id=None, submission_state=None,
+                       submission_action_id=None, queue_state=None,
+                       wait_reason="", blocked_by_dependency=False)
+            job.pop("precheck", None)
+            job.pop("draft", None)
+            job.pop("diagnosis", None)
+            resumed.append(str(job.get("key")))
+        if not resumed:
+            detail = "；".join(
+                f"{item['job_key']} 还在等 {'、'.join(item['waiting'])} 完成"
+                for item in skipped) or "没有被取消/跳过的作业需要恢复"
+            return f"无需恢复：{detail}。已完成的作业不会被重跑。"
+        from .computation import invalidate
+        invalidate(flow, resumed, "被取消的作业已重新排上，需要重新准备与确认")
+        for key in resumed:
+            (flow.get("script_attestations") or {}).pop(key, None)
+            (flow.get("staged_inputs") or {}).pop(key, None)
+        flow["phase"] = "monitoring"        # 交给后台：自动带入上游产物 → 预检 → 出提交卡
+        self._save_flow(flow)
+        note = ""
+        if skipped:
+            note = "；仍在等待上游的：" + "、".join(
+                f"{item['job_key']}（等 {'、'.join(item['waiting'])}）" for item in skipped)
+        return ("已在同一任务里重新排上：" + "、".join(resumed)
+                + "（不用新建任务、也不用重跑已完成的作业）。"
+                  "系统会按依赖自动带入上游结果、做硬预检并弹出提交确认卡，"
+                  "你只需点确认；已完成的作业原样保留。" + note)
 
     def _file_prepare_grant_active(self, flow: dict | None = None) -> bool:
         """本任务是否已由用户一次性批准"文件准备"权限。"""
