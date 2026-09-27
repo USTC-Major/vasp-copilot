@@ -61,6 +61,19 @@ class VaspkitHPC(FakeHPC):
         if command.startswith("printf") and "|" in command and cwd:
             self.files[f"{cwd}/POTCAR"] = self.potcar
             return 0, "POTCAR generated\n", ""
+        if command.startswith("cp "):
+            # 上游产物交接走的是远端 cp；这里在内存里模拟，并支持 sha256sum
+            parts = [p.strip("'") for p in command.split(" -- ", 1)[1].split(" ")]
+            source, target = parts[0], parts[-1]
+            if source not in self.files:
+                return 1, "", f"cp: cannot stat {source}"
+            self.files[target] = self.files[source]
+            return 0, "", ""
+        if command.startswith("sha256sum"):
+            path = command.split(" -- ", 1)[1].strip().strip("'")
+            if path not in self.files:
+                return 1, "", "no such file"
+            return 0, f"{hashlib.sha256(self.files[path]).hexdigest()}  {path}\n", ""
         return 0, "", ""
 
 
@@ -396,3 +409,123 @@ def test_script_template_normalization():
     for bad in ("", "run.sh", "C:/tpl/run.sh", "/home/u/run.txt",
                 "/home/u/../run.sh", "/home/u/tpl/", "/home/u/.hidden.sh"):
         assert normalize_submit_script_template(bad) == ""
+
+
+# ---------------- 依赖链：上游产物自动交接 ----------------
+def _attempt(api, pid, tid, key):
+    flow = api.app.state.toolbox.require_task(pid, tid)["flow"]
+    return next(j["attempt_id"] for j in flow["plan"]["jobs"] if j["key"] == key)
+
+
+def _chain(tmp_path, *, upstream_status="completed", with_density=False,
+           static_poscar=None, **config):
+    """relax → relax/static 两级链：上游 relax 已完成，下游缺 POSCAR/POTCAR。"""
+    hpc = VaspkitHPC()
+    ctx = _setup(tmp_path, hpc, **config)
+    client, api, hpc, pid, tid = ctx.__enter__()
+    call_tool(api, pid, tid, "plan", {"strategy": "链", "jobs": [
+        {"key": "relax", "label": "结构优化", "kind": "relax", "requires": []},
+        {"key": "relax/static", "label": "静态自洽", "kind": "static",
+         "requires": ["relax"]}]})
+    flow = api.app.state.toolbox.require_task(pid, tid)["flow"]
+    for job in flow["plan"]["jobs"]:
+        job["status"] = upstream_status if job["key"] == "relax" else "waiting"
+    api.app.state.toolbox.store.update_task(pid, tid, flow=flow)
+    # 上游 relax 的产物
+    for name, payload in (("INCAR", VALID_INPUTS["INCAR"]),
+                          ("POSCAR", VALID_INPUTS["POSCAR"]),
+                          ("KPOINTS", VALID_INPUTS["KPOINTS"]),
+                          ("POTCAR", VALID_INPUTS["POTCAR"]),
+                          ("CONTCAR", VALID_INPUTS["POSCAR"]),
+                          ("CHGCAR", b"synthetic charge density\n")):
+        hpc.files[f"{ROOT}/relax/{name}"] = payload
+    # 下游目录：输入 + 脚本都在，只缺 POSCAR / POTCAR
+    incar = b"SYSTEM = si\nICHARG = 11\n" if with_density else VALID_INPUTS["INCAR"]
+    for name, payload in (("INCAR", incar), ("KPOINTS", VALID_INPUTS["KPOINTS"])):
+        hpc.files[f"{ROOT}/relax/static/{name}"] = payload
+    if static_poscar is not None:
+        hpc.files[f"{ROOT}/relax/static/POSCAR"] = static_poscar
+    return ctx, client, api, hpc, pid, tid
+
+
+def test_upstream_products_are_staged_for_dependent_job(tmp_path):
+    ctx, client, api, hpc, pid, tid = _chain(
+        tmp_path, allow_script_deploy=True, submit_script_template=TEMPLATE)
+    try:
+        hpc.files[TEMPLATE] = TEMPLATE_BYTES
+        hpc.files[f"{ROOT}/relax/static/run.sh"] = TEMPLATE_BYTES
+        out = call_tool(api, pid, tid, "precheck", {"job_key": "relax/static", "attempt_id": _attempt(api, pid, tid, "relax/static")})
+        assert out["ok"] is True, out.get("result")
+        # POSCAR 来自上游 CONTCAR、POTCAR 来自上游 POTCAR（逐字节一致）
+        assert hpc.files[f"{ROOT}/relax/static/POSCAR"] == VALID_INPUTS["POSCAR"]
+        assert hpc.files[f"{ROOT}/relax/static/POTCAR"] == VALID_INPUTS["POTCAR"]
+        # ICHARG=2 的作业不需要电荷密度，不搬 CHGCAR
+        assert f"{ROOT}/relax/static/CHGCAR" not in hpc.files
+        flow = api.app.state.toolbox.require_task(pid, tid)["flow"]
+        names = [item["name"] for item in flow["staged_inputs"]["relax/static"]["items"]]
+        assert names == ["POTCAR", "POSCAR"]
+        assert "已从上游作业目录带入" in str(out.get("result"))
+    finally:
+        ctx.__exit__(None, None, None)
+
+
+def test_density_job_also_gets_chgcar(tmp_path):
+    ctx, client, api, hpc, pid, tid = _chain(
+        tmp_path, with_density=True, allow_script_deploy=True,
+        submit_script_template=TEMPLATE)
+    try:
+        hpc.files[TEMPLATE] = TEMPLATE_BYTES
+        hpc.files[f"{ROOT}/relax/static/run.sh"] = TEMPLATE_BYTES
+        out = call_tool(api, pid, tid, "precheck", {"job_key": "relax/static", "attempt_id": _attempt(api, pid, tid, "relax/static")})
+        assert out["ok"] is True, out.get("result")
+        assert hpc.files[f"{ROOT}/relax/static/CHGCAR"] == b"synthetic charge density\n"
+        flow = api.app.state.toolbox.require_task(pid, tid)["flow"]
+        names = [item["name"] for item in flow["staged_inputs"]["relax/static"]["items"]]
+        assert names == ["POTCAR", "POSCAR", "CHGCAR"]
+    finally:
+        ctx.__exit__(None, None, None)
+
+
+def test_no_staging_before_upstream_completes(tmp_path):
+    ctx, client, api, hpc, pid, tid = _chain(tmp_path, upstream_status="running")
+    try:
+        out = call_tool(api, pid, tid, "precheck", {"job_key": "relax/static", "attempt_id": _attempt(api, pid, tid, "relax/static")})
+        assert out["ok"] is False
+        assert "等待上游作业 relax 完成" in str(out.get("result"))
+        assert f"{ROOT}/relax/static/POSCAR" not in hpc.files
+        assert f"{ROOT}/relax/static/POTCAR" not in hpc.files
+    finally:
+        ctx.__exit__(None, None, None)
+
+
+def test_staging_never_overwrites_foreign_file(tmp_path):
+    """下游目录里已有一份**不是系统带入**的 POSCAR 且与上游不一致 → 不覆盖、报冲突。"""
+    mine = b"my own placeholder\n"
+    ctx, client, api, hpc, pid, tid = _chain(tmp_path, static_poscar=mine)
+    try:
+        out = call_tool(api, pid, tid, "precheck", {"job_key": "relax/static", "attempt_id": _attempt(api, pid, tid, "relax/static")})
+        assert out["ok"] is False
+        assert "与上游产物不一致，未覆盖" in str(out.get("result"))
+        assert hpc.files[f"{ROOT}/relax/static/POSCAR"] == mine          # 原样保留
+        assert f"{ROOT}/relax/static/POTCAR" in hpc.files                # 其它产物照常带入
+    finally:
+        ctx.__exit__(None, None, None)
+
+
+def test_staged_file_is_refreshed_when_upstream_changes(tmp_path):
+    """系统自己带进来的产物、之后没被动过 → 上游更新时可以刷新（不会误伤用户文件）。"""
+    ctx, client, api, hpc, pid, tid = _chain(tmp_path)
+    try:
+        call_tool(api, pid, tid, "precheck", {"job_key": "relax/static", "attempt_id": _attempt(api, pid, tid, "relax/static")})
+        assert hpc.files[f"{ROOT}/relax/static/POSCAR"] == VALID_INPUTS["POSCAR"]
+        new_contcar = b"Synthetic Si relaxed\n1.0\n3 0 0\n0 3 0\n0 0 3\nSi\n1\nDirect\n0.26 0.26 0.26\n"
+        hpc.files[f"{ROOT}/relax/CONTCAR"] = new_contcar
+        out = call_tool(api, pid, tid, "precheck", {"job_key": "relax/static", "attempt_id": _attempt(api, pid, tid, "relax/static")})
+        assert hpc.files[f"{ROOT}/relax/static/POSCAR"] == new_contcar
+        flow = api.app.state.toolbox.require_task(pid, tid)["flow"]
+        record = next(item for item in flow["staged_inputs"]["relax/static"]["items"]
+                      if item["name"] == "POSCAR")
+        assert record["sha256"] == hashlib.sha256(new_contcar).hexdigest()
+        assert "已从上游作业目录带入 POSCAR" in str(out.get("result"))
+    finally:
+        ctx.__exit__(None, None, None)

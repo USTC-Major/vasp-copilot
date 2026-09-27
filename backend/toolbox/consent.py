@@ -349,11 +349,20 @@ def spawn_submit_card(store, project_id: str, task_id: str,
                     return dict(action)
         scope_id = uuid.uuid4().hex
         binding.update(scope_id=scope_id, scope_version=1)
+        staged_items = ((flow.get("staged_inputs") or {}).get(job["key"]) or {}).get("items") or []
+        staged_text = ""
+        if staged_items:
+            staged_text = "\n上游产物已按依赖自动带入：" + "、".join(
+                f"{item.get('name')}（来自上级 {item.get('source_name')}）"
+                for item in staged_items)
         payload = card_payload(
             tool="confirm_submit", args={"job_key": job["key"], "attempt_id": job["attempt_id"]},
             risk="high", reason="仅批准本计算当前尝试的一次提交；用户需审阅脚本及资源，系统未证明全部副作用。",
             batch_key=batch_key, kind="submit",
-            summary=f"提交计算 {job['key']} / attempt {job['attempt_id']}？\n目录：`{job['draft']['dir']}`\n命令：{job['draft']['submit_cmd']}\nSHA-256：{job['draft']['script_sha256']}\n仅此计算一次，不包含后继或重试。",
+            summary=(f"提交计算 {job['key']} / attempt {job['attempt_id']}？\n"
+                     f"目录：`{job['draft']['dir']}`\n命令：{job['draft']['submit_cmd']}\n"
+                     f"SHA-256：{job['draft']['script_sha256']}"
+                     f"{staged_text}\n仅此计算一次，不包含后继或重试。"),
             options=["确认提交", "取消"], binding=binding)
         cons.setdefault("computation_scopes", {})[scope_id] = {
             **{key: binding[key] for key in ("project_id", "task_id", "job_key", "attempt_id", "endpoint_digest", "precheck_digest", "draft")},

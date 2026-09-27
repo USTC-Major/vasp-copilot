@@ -243,6 +243,20 @@ class Orchestrator:
                                       "canceled", "skipped", "blocked",
                                       "unknown"):
                 continue
+            # 依赖链的上游产物交接（与 commands.tool_precheck 同一规则）：
+            # 只在上游已完成时发生，绝不覆盖与上游不一致的既有文件。
+            if (remote_ok and self.hpc is not None and remote
+                    and (job.get("requires") or [])):
+                from .staging import stage_upstream_inputs
+                staged = stage_upstream_inputs(flow, self.cfg, self.hpc, remote, job)
+                for item in staged["staged"]:
+                    logs.append(f"[ok] 已从上游作业目录带入 {item['name']}（哈希已核对）")
+                for conflict in staged["conflicts"]:
+                    issues.append({"job": job["key"], "file": conflict["name"],
+                                   "level": "error",
+                                   "message": "与上游产物不一致，未覆盖"})
+                for wait in staged["waiting"]:
+                    logs.append(f"[info] 等待上游作业 {wait} 完成后再自动带入")
             contents: dict[str, bytes] = {}
             for name in ("INCAR", "POSCAR", "KPOINTS", "POTCAR"):
                 try:

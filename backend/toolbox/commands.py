@@ -561,6 +561,28 @@ class ToolExecutor:
             suffix = (f"（作业目录 {key}）" if job_dir is not None else "")
             calc = (self._remote_job_dir(hpc, remote, key)
                     if (hpc is not None and remote) else "")
+            # 依赖链的上游产物交接（POSCAR←上游 CONTCAR、CHGCAR、POTCAR）：
+            # 只在上游**已完成**时发生，且绝不覆盖与上游不一致的既有文件。
+            if hpc is not None and remote and (job.get("requires") or []):
+                from .staging import stage_upstream_inputs
+                staged = stage_upstream_inputs(flow, self.cfg, hpc, remote, job)
+                for item in staged["staged"]:
+                    rows.append(f"- [ok] 已从上游作业目录带入 {item['name']}"
+                                f"（{item.get('size') or 0} B，哈希已核对）{suffix}")
+                for conflict in staged["conflicts"]:
+                    ok = False
+                    rows.append(f"- [error] {conflict['name']} 与上游产物不一致，"
+                                f"未覆盖（上游 {str(conflict.get('source_sha256'))[:12]}… / "
+                                f"本目录 {str(conflict.get('target_sha256'))[:12]}…）{suffix}；"
+                                "请确认本目录里这份文件是你自己放的，还是删掉让系统带入")
+                    issues.append({"job": key, "file": conflict["name"], "level": "error",
+                                   "message": "与上游产物不一致，未覆盖"})
+                for skipped in staged["skipped"]:
+                    rows.append(f"- [info] 未带入 {skipped.get('name') or '上游产物'}："
+                                f"{skipped.get('reason')}{suffix}")
+                for wait in staged["waiting"]:
+                    rows.append(f"- [info] 等待上游作业 {wait} 完成后再自动带入"
+                                f"{'（' + suffix.strip('（）') + '）' if suffix else ''}")
             contents: dict[str, bytes] = {}
             for name in required:
                 name = str(name or "").strip()
