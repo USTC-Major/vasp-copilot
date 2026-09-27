@@ -401,7 +401,8 @@ describe('AI 前端整合（M12）', () => {
     );
     const user = userEvent.setup();
     renderPath('/ai/projects/prj_001');
-    expect(await screen.findByText('文件上传')).toBeInTheDocument();
+    // 准备阶段（复制/上传/生成 POTCAR/部署脚本）现在合并成同一组
+    expect(await screen.findByText('文件准备')).toBeInTheDocument();
     expect(screen.getByText('2 项待批准（可批量）')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: /全部批准本批（2 项）/ }));

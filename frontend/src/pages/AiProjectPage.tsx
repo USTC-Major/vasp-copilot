@@ -25,7 +25,10 @@ const { Text, Title } = Typography;
 
 // 可批量处理的卡片：只限“机械文件准备”。科学输入（INCAR/KPOINTS/结构导入）、
 // 脚本认领、提交与重试一律逐项确认，不做批量。
-const BATCHABLE_KINDS = new Set(['copy_inputs', 'hpc_upload']);
+// 文件准备阶段的所有机械动作（复制输入 / 上传 / 生成 POTCAR / 部署脚本）在用户眼里
+// 就是"同一件事"：并成**一组**，一次点击全部批准；科学参数、结构导入、提交仍逐项确认。
+const BATCHABLE_KINDS = new Set(['copy_inputs', 'hpc_upload', 'potcar_generate', 'script_deploy']);
+const PREPARE_GROUP_KEY = 'prepare';
 
 const CARD_LABELS: Record<string, string> = {
   workspace: '操作授权',        // 旧版/演示后端使用的泛化类型
@@ -579,9 +582,11 @@ const AiProjectPage: React.FC = () => {
                   const groups: { key: string; label: string; cards: AiConsentCard[]; batchable: boolean }[] = [];
                   for (const card of pendingCards) {
                     const batchable = BATCHABLE_KINDS.has(card.kind);
-                    const group = batchable ? groups.find((g) => g.key === card.kind) : undefined;
+                    const group = batchable ? groups.find((g) => g.batchable) : undefined;
                     if (group) group.cards.push(card);
-                    else groups.push({ key: batchable ? card.kind : card.card_id, label: cardLabel(card.kind), cards: [card], batchable });
+                    else groups.push({ key: batchable ? PREPARE_GROUP_KEY : card.card_id,
+                                       label: batchable ? '文件准备' : cardLabel(card.kind),
+                                       cards: [card], batchable });
                   }
                   return groups.map((group) => (
                     <div key={group.key} style={{ border: '1px solid #f0c36d', background: '#fffbe6', borderRadius: 10, padding: '10px 14px', marginBottom: 8 }}>
@@ -605,7 +610,23 @@ const AiProjectPage: React.FC = () => {
                           </Space>
                         )}
                       </Space>
-                      {group.cards.map((card) => (
+                      {group.batchable ? (
+                        // 准备阶段只显示"一组 + 一个全部批准"，明细默认收起，不再糊满屏幕
+                        <details style={{ marginTop: 6 }}>
+                          <summary style={{ fontSize: 12, color: '#6e6e73', cursor: 'pointer' }}>
+                            查看这 {group.cards.length} 项明细（默认收起）
+                          </summary>
+                          {group.cards.map((card) => (
+                            <PendingCardRow
+                              key={card.card_id}
+                              card={card}
+                              resolving={resolvingCardId === card.card_id || batchBusy}
+                              onResolve={(target, approved) => void handleResolveCard(target, approved)}
+                              toolboxLink={`/toolbox/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(selectedTaskId || '')}?fileAction=${encodeURIComponent(card.card_id)}#toolbox-files`}
+                            />
+                          ))}
+                        </details>
+                      ) : group.cards.map((card) => (
                         <PendingCardRow
                           key={card.card_id}
                           card={card}
