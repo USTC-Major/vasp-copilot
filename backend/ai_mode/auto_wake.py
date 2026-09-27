@@ -133,6 +133,8 @@ class AutoWakeLoop:
                 if not project_id or not task_id:
                     continue
                 state = store.generation_metadata(project_id, task_id).get("auto_wake") or {}
+                if state.get("stopped"):
+                    continue          # 用户已停止该任务：不再自动唤醒它
                 if int(state.get("count") or 0) >= MAX_WAKES_PER_TASK:
                     continue
                 if time.time() - float(state.get("at") or 0) < COOLDOWN_SECONDS:
@@ -157,6 +159,18 @@ class AutoWakeLoop:
         flow = detail.get("flow") or {}
         phase = str(flow.get("phase") or "")
         if not flow.get("jobs"):
+            return False
+        # 用户停止（stop_monitor）后，任务里会出现 canceled 作业或终态阶段：
+        # 这种情况只提醒"已停止"一次，然后彻底不再自动唤醒——否则 AI 会把流程重新拉起来，
+        # 表现为"说了停止还在不断弹卡"。
+        stopped = (phase in _TERMINAL_PHASES
+                   or any(str(job.get("status") or "") == "canceled"
+                          for job in flow.get("jobs") or []))
+        if stopped:
+            if state.get("stopped"):
+                return False
+            store.update_generation(project_id, task_id, {
+                "auto_wake": {**state, "stopped": True, "last_phase": phase}})
             return False
         last_id = int(state.get("last_event_id") or 0)
         events = _task_events(store, store.client, project_id, task_id, last_id)
