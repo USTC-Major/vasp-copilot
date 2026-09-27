@@ -1848,8 +1848,16 @@ class FileActions:
                 and same_chain(new_root["ancestors"], old_root["ancestors"])
                 and same_chain(new_root["resolution_chain"], old_root["resolution_chain"])
                 and same_chain(new_dest["parent_chain"], old_dest["parent_chain"])
-                and new_dest["missing_components"] == old_dest["missing_components"]
-                and actual["targets"] == identity["targets"],
+                # 只保留"安全相关"的不变量：主机身份、根目录与既有父目录链的 inode、
+                # 以及规范化后的目标路径必须完全一致。
+                # 不再把 missing_components（当时还缺哪些中间目录）与 targets 快照当硬条件：
+                # 系统自己（带入上游产物、生成 POTCAR、同批上传的先后顺序）会在"提案→确认"
+                # 之间创建这些目录/目标，把它们当失败条件会让完全没干预的用户每次都失败
+                # （表现为 ROOT_CHANGED「上传批准后目标或主机身份变化」）。
+                and posixpath.join(new_root["canonical_path"],
+                                   str(binding["remote_relative_path"]))
+                == posixpath.join(old_root["canonical_path"],
+                                  str(binding["remote_relative_path"])),
                 "ROOT_CHANGED", "上传批准后目标或主机身份变化", 409,
             )
             check(new_dest["target_exists"] == old_dest["target_exists"],
