@@ -1847,7 +1847,10 @@ class FileActions:
                 and h.identity_matches(new_root["identity"], old_root["identity"])
                 and same_chain(new_root["ancestors"], old_root["ancestors"])
                 and same_chain(new_root["resolution_chain"], old_root["resolution_chain"])
-                and same_chain(new_dest["parent_chain"], old_dest["parent_chain"])
+                # 父目录链按"提案时已存在的部分"逐段比对：提案后我们按计划创建了更深的
+                # 作业子目录（relax → relax/static），链会变长，这不是身份变化。
+                and same_chain(new_dest["parent_chain"][:len(old_dest["parent_chain"])],
+                               old_dest["parent_chain"])
                 # 只保留"安全相关"的不变量：主机身份、根目录与既有父目录链的 inode、
                 # 以及规范化后的目标路径必须完全一致。
                 # 不再把 missing_components（当时还缺哪些中间目录）与 targets 快照当硬条件：
