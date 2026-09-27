@@ -145,6 +145,18 @@ def _project_settings_text(store: ProjectStore, project_id: str) -> str:
 
 def _phase_guidance(phase: str) -> str:
     """按当前流程阶段注入针对性引导（仅「待确认」阶段需要额外行为约束）。"""
+    if phase == "monitoring":
+        return (
+            "\n\n【当前处于「监控中」阶段】\n"
+            "作业进度由系统后台推进，你不需要（也不应该）自己反复查；只有用户明确要求看进度时才查。\n"
+            "- 回执里出现「X 已完成」+「下一步需要你确认：Y 可以准备提交了」时，说明球在用户这边："
+            "请直接告诉他——上游 X 已完成、下一步是 Y 的预检与提交、需要他确认；"
+            "**不要**只说「正在持续观察／自动跟进」，也不要让他手工搬上游文件。\n"
+            "- 下游作业的上游产物（POSCAR←CONTCAR、POTCAR、需要时的 CHGCAR）由系统在上游完成后的"
+            "预检里自动带入；下游还缺输入而系统提示「等待上游作业 X 完成」时，那是正常状态。\n"
+            "- 用户说「继续」而你确认没有在跑的作业时，按回执里的下一步推进（例如为已解锁的作业"
+            "调用 precheck），不要重复播报监控状态。"
+        )
     if phase != "await_submit":
         return ""
     return (

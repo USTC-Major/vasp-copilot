@@ -462,11 +462,28 @@ class ToolExecutor:
         flow = self._load_flow()
         plan = flow.get("plan") or {}
         jobs = plan.get("jobs") or []
+        completed_keys = {j.get("key") for j in jobs if j.get("status") == "completed"}
+
+        def next_step(job: dict) -> str:
+            """每个作业的下一步归属：等上游 / 可准备提交（需用户确认）/ 已在跑。"""
+            status = str(job.get("status") or "draft")
+            if status in {"submitted", "queued", "running", "unknown"}:
+                return " 下一步=等待超算跑完（系统后台跟进）"
+            if status == "completed":
+                return " 下一步=已完成"
+            if status in {"failed", "not_converged"}:
+                return " 下一步=先诊断（diagnose_job），重试需用户确认"
+            missing = [k for k in (job.get("requires") or []) if k not in completed_keys]
+            if missing:
+                return f" 下一步=等上游 {'、'.join(missing)} 完成（完成后预检会自动带入上游产物）"
+            return " 下一步=可准备提交：precheck → draft → 由用户确认提交（系统不会自动补提）"
+
         job_lines = "\n".join(
             f"- {j.get('key')}（{j.get('label') or ''}，{j.get('kind') or 'vasp'}）"
             f" status={j.get('status') or 'draft'} attempt_id={j.get('attempt_id') or 'legacy'}"
             + f" precheck={'ok' if (j.get('precheck') or {}).get('ok') else 'blocked_or_unchecked'} draft={'ready' if j.get('draft') else 'none'}"
             + (f" slurm_id={j.get('slurm_id')}" if j.get("slurm_id") else "")
+            + next_step(j)
             for j in jobs) or "（暂无规划）"
         drafts = flow.get("draft") or []
         draft_names = "、".join(

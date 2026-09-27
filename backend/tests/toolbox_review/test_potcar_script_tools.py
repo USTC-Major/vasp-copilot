@@ -529,3 +529,30 @@ def test_staged_file_is_refreshed_when_upstream_changes(tmp_path):
         assert "已从上游作业目录带入 POSCAR" in str(out.get("result"))
     finally:
         ctx.__exit__(None, None, None)
+
+
+# ---------------- 上游完成后要明确告诉用户"下一步在你这边" ----------------
+def test_get_state_tells_which_jobs_can_be_prepared(tmp_path):
+    ctx, client, api, hpc, pid, tid = _chain(tmp_path)
+    try:
+        out = call_tool(api, pid, tid, "get_state", {})
+        text = str(out.get("result"))
+        assert "relax/static" in text and "可准备提交" in text
+        assert "下一步=已完成" in text          # relax 已完成
+    finally:
+        ctx.__exit__(None, None, None)
+
+
+def test_monitor_reports_next_step_without_querying_the_queue(tmp_path):
+    """没有在飞的作业时不打 squeue，并直接给出"下一步需要你确认"。"""
+    ctx, client, api, hpc, pid, tid = _chain(tmp_path)
+    try:
+        svc = api.app.state.toolbox
+        before = list(hpc.run_calls)
+        text = svc.orchestrator().monitor(svc.store, pid, tid, None)
+        assert "下一步需要你确认" in text
+        assert "relax/static" in text
+        assert not [c for c, _cwd in hpc.run_calls[len(before):]
+                    if c.startswith("squeue")]
+    finally:
+        ctx.__exit__(None, None, None)

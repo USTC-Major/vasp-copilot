@@ -805,19 +805,25 @@ class Orchestrator:
             return ("未连接超算，无法查询作业进度。作业在超算上照常运行；"
                     "配置 SSH 后回到本会话即可看到实况与报告。")
         account = self.cfg.ssh_username
-        try:
-            current_target = target_binding(self.cfg)
-            for job in flow["plan"]["jobs"]:
-                if job.get("slurm_id") and job.get("scheduler_target", current_target) != current_target:
-                    raise ValueError("SSH/scheduler target changed; restore original configuration")
-            code, out, err = self.hpc.run(self._squeue_command(account))
-            if code != 0 or (self.cfg.scheduler_backend == "paracloud" and (err or "").strip()):
-                raise RuntimeError(f"squeue exit={code}: {(err or '')[:200]}")
-            states = parse_queue(self.cfg.scheduler_backend, out or "")
-        except Exception as exc:  # noqa: BLE001
-            flow["monitor_error"] = {"at": _now_iso(), "message": str(exc)[:500]}
-            self._save(store, project_id, task_id, flow)
-            return f"查询 squeue 失败（{type(exc).__name__}），进度未知；保留作业状态，稍后重查，禁止重提。"
+        # 没有"在飞"的作业时不必连超算：既省一次 SSH，也让"上游已完成、等用户确认"这条路
+        # 立刻给出下一步（此前会一直打 squeue，界面看起来像卡在"持续观察"）。
+        in_flight = [j for j in flow["plan"]["jobs"]
+                     if j.get("status") in ("submitted", "queued", "running", "unknown")]
+        states: dict = {}
+        if in_flight:
+            try:
+                current_target = target_binding(self.cfg)
+                for job in flow["plan"]["jobs"]:
+                    if job.get("slurm_id") and job.get("scheduler_target", current_target) != current_target:
+                        raise ValueError("SSH/scheduler target changed; restore original configuration")
+                code, out, err = self.hpc.run(self._squeue_command(account))
+                if code != 0 or (self.cfg.scheduler_backend == "paracloud" and (err or "").strip()):
+                    raise RuntimeError(f"squeue exit={code}: {(err or '')[:200]}")
+                states = parse_queue(self.cfg.scheduler_backend, out or "")
+            except Exception as exc:  # noqa: BLE001
+                flow["monitor_error"] = {"at": _now_iso(), "message": str(exc)[:500]}
+                self._save(store, project_id, task_id, flow)
+                return f"查询 squeue 失败（{type(exc).__name__}），进度未知；保留作业状态，稍后重查，禁止重提。"
         flow.pop("monitor_error", None)
         free = max(0, self.cfg.max_jobs - occupied(states))
         progress: list[str] = []
@@ -885,6 +891,16 @@ class Orchestrator:
                 job["wait_reason"] = ("依赖已满足；需重新预检并确认提交"
                                       if job["key"] in gate.eligible else gate.blocked.get(job["key"], "等待确认"))
         flow["waiting"] = [j["key"] for j in flow["plan"]["jobs"] if j.get("status") == "waiting"]
+        # 上游刚完成、下游已解锁时，把"下一步轮到用户"说清楚：
+        # 否则界面/模型只会说"已提交、正在持续观察"，用户不知道球在自己这边。
+        ready_next = [j["key"] for j in flow["plan"]["jobs"]
+                      if j.get("key") in gate.eligible
+                      and j.get("status") in {"draft", "waiting"}]
+        if not in_flight and ready_next:
+            progress.append(
+                "下一步需要你确认：" + "、".join(ready_next)
+                + " 可以准备提交了——重新预检（上游产物会自动带入）→ 生成草稿 → 由你确认提交；"
+                  "系统不会自动补提。")
         if flow.get("waiting"):
             progress.insert(0, "等待作业不会自动补提；条件满足后需重新预检并逐次确认")
         for note in stalled:
