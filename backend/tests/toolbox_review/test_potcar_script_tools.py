@@ -74,6 +74,13 @@ class VaspkitHPC(FakeHPC):
             if path not in self.files:
                 return 1, "", "no such file"
             return 0, f"{hashlib.sha256(self.files[path]).hexdigest()}  {path}\n", ""
+        if command.startswith("squeue"):
+            return 0, "\n".join(self.queue_rows), ""
+        if command.startswith("sbatch"):
+            self.job_id += 1
+            return 0, f"Submitted batch job {self.job_id}\n", ""
+        if command.startswith("mkdir -p"):
+            return 0, "", ""
         return 0, "", ""
 
 
@@ -587,5 +594,58 @@ def test_monitor_auto_prepares_unlocked_job_and_spawns_submit_card(tmp_path):
                   if a.get("kind") == "submit" and a.get("state") == "pending"]
         assert len(cards2) == 1
         assert "已自动准备就绪" not in again
+    finally:
+        ctx.__exit__(None, None, None)
+
+
+def test_repeated_precheck_and_draft_keep_the_pending_submit_card_valid(tmp_path):
+    """用户实测过的坑：卡片弹出后 AI 又跑一遍 precheck/draft，把卡当场作废。
+
+    现在重复检查/草稿只要结果一致就不重绑，卡片继续有效、点确认能真的提交。
+    """
+    ctx, client, api, hpc, pid, tid = _chain(
+        tmp_path, allow_script_deploy=True, submit_script_template=TEMPLATE)
+    try:
+        hpc.files[TEMPLATE] = TEMPLATE_BYTES
+        hpc.files[f"{ROOT}/relax/static/run.sh"] = TEMPLATE_BYTES
+        svc = api.app.state.toolbox
+        svc.orchestrator().monitor(svc.store, pid, tid, None)
+        flow = svc.require_task(pid, tid)["flow"]
+        card = next(a for a in (flow.get("consent") or {}).get("actions", {}).values()
+                    if a.get("kind") == "submit" and a.get("state") == "pending")
+        aid = _attempt(api, pid, tid, "relax/static")
+        pre = call_tool(api, pid, tid, "precheck",
+                        {"job_key": "relax/static", "attempt_id": aid})
+        assert "未改变绑定" in str(pre.get("result"))
+        call_tool(api, pid, tid, "draft", {"job_key": "relax/static", "attempt_id": aid})
+        flow = svc.require_task(pid, tid)["flow"]
+        assert flow["consent"]["actions"][card["card_id"]]["state"] == "pending"
+        resolved = resolve_card(api, pid, tid, card["card_id"], True)
+        assert resolved["card"]["state"] == "executed", resolved["card"]
+        assert hpc.submit_count == 1
+    finally:
+        ctx.__exit__(None, None, None)
+
+
+def test_stale_submit_card_gives_a_human_readable_reason(tmp_path):
+    """作业已经提交后再点旧卡：要说清"已经提交过了"，不再只丢一个 SCOPE_STALE。"""
+    ctx, client, api, hpc, pid, tid = _chain(
+        tmp_path, allow_script_deploy=True, submit_script_template=TEMPLATE)
+    try:
+        hpc.files[TEMPLATE] = TEMPLATE_BYTES
+        hpc.files[f"{ROOT}/relax/static/run.sh"] = TEMPLATE_BYTES
+        svc = api.app.state.toolbox
+        svc.orchestrator().monitor(svc.store, pid, tid, None)
+        flow = svc.require_task(pid, tid)["flow"]
+        card = next(a for a in (flow.get("consent") or {}).get("actions", {}).values()
+                    if a.get("kind") == "submit" and a.get("state") == "pending")
+        job = next(j for j in flow["plan"]["jobs"] if j["key"] == "relax/static")
+        job["slurm_id"] = 7990978
+        job["submission_state"] = "submitted"
+        svc.store.update_task(pid, tid, flow=flow)
+        saved = resolve_card(api, pid, tid, card["card_id"], True)["card"]
+        assert saved["state"] == "failed"
+        assert "已经提交过了" in saved["result"]
+        assert "SCOPE_STALE" not in saved["result"]
     finally:
         ctx.__exit__(None, None, None)

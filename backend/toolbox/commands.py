@@ -83,6 +83,30 @@ _HPC_READ_CAP = 12000            # hpc_read 单文件预览上限
 _HPC_UPLOAD_CAP = 64 * 1024 * 1024   # hpc_upload 单文件大小上限（64 MB）
 _SCRIPT_LIMIT = 256 * 1024           # 提交脚本模板/副本大小上限（256 KB）
 
+
+def _snapshot_signature(snapshot: dict) -> tuple:
+    """预检快照的"内容签名"：输入/脚本的路径、大小、SHA-256 + 调度目标。
+
+    两条代码路径（监控自动准备与 AI 工具）构造快照时元数据字段不同，但只要内容一致，
+    就应当视为"没有变化"，从而不重绑、不作废用户手里的待确认提交卡。
+    """
+    def rows(key: str, fields: tuple[str, ...]) -> tuple:
+        return tuple(sorted(
+            tuple(str(item.get(field) or "") for field in fields)
+            for item in (snapshot.get(key) or []) if isinstance(item, dict)))
+
+    return (rows("inputs", ("name", "normalized_path", "size", "sha256")),
+            rows("scripts", ("script_name", "normalized_path", "size", "sha256")),
+            repr(snapshot.get("scheduler_target") or {}))
+
+
+def _draft_signature(draft) -> tuple:
+    """提交草稿的内容签名：目录、脚本名、脚本哈希/大小、提交命令。"""
+    if not isinstance(draft, dict):
+        return ()
+    return tuple(str(draft.get(field) or "") for field in
+                 ("dir", "script_name", "script_sha256", "script_size", "submit_cmd"))
+
 _SAFE_TEXT_NAMES = frozenset({
     "INCAR", "POSCAR", "CONTCAR", "KPOINTS", "OUTCAR", "OSZICAR",
     "IBZKPT", "EIGENVAL", "DOSCAR", "PROCAR", "XDATCAR", "VASPRUN.XML",
@@ -716,9 +740,29 @@ class ToolExecutor:
             execution_mode=mode, inputs=input_records, scripts=script_records,
             scheduler_target=target_binding(self.cfg))
         from .computation import bind_precheck
-        bind_precheck(flow, selected, {"ok": ok, "issues": issues, "hard": True,
-                            "execution_mode": mode, "snapshot": snapshot,
-                            "digest": digest})
+        existing = selected.get("precheck") or {}
+        pending_before = self._pending_submit_card(flow, selected["key"])
+        # 关键：**同样内容的重复预检不要重绑**——重绑会换掉 precheck_digest，
+        # 把已经弹给用户的待确认提交卡当场作废（症状：点确认一直失败）。
+        # 判据用"内容签名"而不是摘要字符串：监控与 AI 两条路径构造的快照元数据不同，
+        # 但输入/脚本的路径+大小+哈希一致就说明内容没变。
+        same_content = bool(
+            existing.get("hard") and existing.get("ok") == ok
+            and existing.get("attempt_id") == selected.get("attempt_id")
+            and (existing.get("digest") == digest
+                 or _snapshot_signature(existing.get("snapshot") or {})
+                 == _snapshot_signature(snapshot)))
+        if same_content:
+            if pending_before:
+                rows.append("- [info] 本次硬预检与已弹出的提交卡绑定的结果一致，未改变绑定"
+                            "（那张待确认提交卡继续有效，直接点它确认即可）")
+        else:
+            bind_precheck(flow, selected, {"ok": ok, "issues": issues, "hard": True,
+                                "execution_mode": mode, "snapshot": snapshot,
+                                "digest": digest})
+            if pending_before:
+                rows.append("- [warn] 输入文件或提交脚本在确认前发生了变化："
+                            "旧的待确认提交卡已作废，请按最新那张卡确认")
         self._save_flow(flow)
         prefix = "提交前硬检查通过：" if ok else "提交前硬检查失败（禁止提交）："
         return prefix + "\n" + "\n".join(rows)
@@ -727,6 +771,14 @@ class ToolExecutor:
         """Serialize one complete consent action with all task flow mutations."""
         with task_lock(self.project_id, self.task_id):
             return self._execute_action_locked(action_id)
+
+    def _pending_submit_card(self, flow: dict, job_key: str) -> dict | None:
+        """该作业是否已有一张**待确认**的提交卡（有的话就不该再重复预检/草稿）。"""
+        for action in ((flow.get("consent") or {}).get("actions") or {}).values():
+            if (action.get("kind") == "submit" and action.get("state") == "pending"
+                    and (action.get("binding") or {}).get("job_key") == job_key):
+                return action
+        return None
 
     def _auto_approve_kinds(self) -> set:
         """用户显式开启的免批范围（全局执行设置；读取失败即视为未开启）。"""
@@ -2062,9 +2114,17 @@ class ToolExecutor:
             lines.append(f"- {job['key']}（{job.get('label') or job['key']}）"
                          f"→ 目录 `{calc_dir}`，使用{where}的提交脚本 "
                          f"{script_name}（指纹已记入卡片记录）")
-        selected["draft"] = drafts[0]
-        selected["draft"]["scheduler_target"] = selected["precheck"]["snapshot"]["scheduler_target"]
-        selected["draft"]["resources"] = {"verification": "human_exact_script", "script_sha256": drafts[0]["script_sha256"]}
+        drafted = drafts[0]
+        drafted["scheduler_target"] = selected["precheck"]["snapshot"]["scheduler_target"]
+        drafted["resources"] = {"verification": "human_exact_script",
+                                "script_sha256": drafts[0]["script_sha256"]}
+        # 草稿内容没变、而且已经有一张待确认提交卡时不要重写草稿：
+        # 重写会换掉 binding 里的 draft，让用户手里的卡直接作废。
+        if (_draft_signature(selected.get("draft")) == _draft_signature(drafted)
+                and self._pending_submit_card(flow, selected["key"])):
+            return ("提交草稿与上次一致，且已有一张待确认的提交卡；本次不重复生成，"
+                    "请让用户直接点那张卡确认提交（重复生成会作废该卡）。")
+        selected["draft"] = drafted
         flow["phase"] = "await_submit"
         self._save_flow(flow)
         skipped = [j["key"] for j in jobs

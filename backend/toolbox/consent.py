@@ -236,7 +236,20 @@ def resolve_card(store, project_id: str, task_id: str, card_id: str, *,
         if action.get("kind") == "submit":
             from .computation import scope_valid
             if approved and not scope_valid(flow, action, active=False):
-                action.update(state="failed", result="SCOPE_STALE: 单计算范围或尝试已变化，未提交")
+                # 给用户看得懂的原因：是"这个作业已经提交了"，还是"输入/脚本/尝试变了"。
+                binding = action.get("binding") or {}
+                job = next((j for j in (flow.get("plan") or {}).get("jobs", [])
+                            if j.get("key") == binding.get("job_key")), {}) or {}
+                if job.get("slurm_id") or job.get("submission_state"):
+                    result = (f"这个作业已经提交过了（超算作业号 {job.get('slurm_id') or '未知'}），"
+                              "这张卡作废、无需再点；要重跑请走重试流程。")
+                elif job.get("attempt_id") and job.get("attempt_id") != binding.get("attempt_id"):
+                    result = ("这个作业的准备过程已经在确认前重新做过，这张卡作废；"
+                              "请按页面上最新那张卡确认。")
+                else:
+                    result = ("这张卡已作废：输入文件、提交脚本或预检结果在确认前发生了变化，"
+                              "需要重新准备后再确认提交。")
+                action.update(state="failed", result=result)
                 _save_flow(store, project_id, task_id, flow, cons)
                 return {"approved": False, "conflict": True, "card_id": card_id, "state": "failed"}
             scope = cons.get("computation_scopes", {}).get((action.get("binding") or {}).get("scope_id"))

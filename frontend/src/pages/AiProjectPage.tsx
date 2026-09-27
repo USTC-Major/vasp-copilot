@@ -343,7 +343,13 @@ const AiProjectPage: React.FC = () => {
       }
     } catch (err) {
       if (selectedTaskIdRef.current === taskId) {
-        message.error(err instanceof Error ? err.message : '授权处理失败');
+        const detail = err instanceof Error ? err.message : '授权处理失败';
+        message.error(detail);
+        // 这张卡可能已经作废（例如作业已提交、或准备过程被重新做过）：
+        // 失败后也刷新一次，让过期卡从页面上消失，避免用户反复点同一张废卡。
+        setPendingCards((prev) => prev.filter((c) => c.card_id !== card.card_id));
+        void messagesQuery.refetch();
+        void taskContextQuery.refetch();
       }
     } finally {
       if (selectedTaskIdRef.current === taskId) setResolvingCardId(null);
