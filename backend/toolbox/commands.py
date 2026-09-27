@@ -655,6 +655,16 @@ class ToolExecutor:
                         and all(attestation.get(field) == actual_script.get(field)
                                 for field in ("source", "directory", "script_name",
                                               "normalized_path", "sha256", "size")))
+            if not attested and calc and isinstance(actual_script, dict):
+                # 用户在智能设置里配了模板并打开复制开关时：与模板逐字节一致的脚本
+                # 直接视为已认领（他只授权过一次，不该再被要求点一次）。
+                from .script_template import stamp_template_attestations
+                stamped = stamp_template_attestations(
+                    flow, self.cfg, hpc, [{"job_key": key, **actual_script}])
+                if stamped:
+                    attested = True
+                    rows.append(f"- [ok] 提交脚本与你在智能设置里配置的模板逐字节一致，"
+                                f"已自动认领{suffix}")
             if not attested:
                 ok = False
                 rows.append(f"- [error] 提交脚本尚未由用户认领并绑定 SHA-256{suffix}")
@@ -1947,6 +1957,11 @@ class ToolExecutor:
                 "directory": calc_dir if source == "remote" else str(job_local),
                 "script_name": script_name, **fingerprint,
             })
+        # 与用户配置的模板逐字节一致 ⇒ 自动认领（不必再出一张"认领卡"）
+        from .script_template import stamp_template_attestations
+        stamped = stamp_template_attestations(flow, self.cfg, hpc, script_records)
+        if stamped:
+            self._save_flow(flow)
         attestations = flow.get("script_attestations") or {}
         attested = all(
             isinstance(attestations.get(item["job_key"]), dict)
@@ -2001,7 +2016,7 @@ class ToolExecutor:
                 "script_size": fingerprint["size"],
                 "script_path": fingerprint["normalized_path"],
                 "attestation_action_id": attestation["action_id"],
-                "attestation_binding_hash": attestation["binding_hash"],
+                "attestation_binding_hash": attestation.get("binding_hash", ""),
                 "submit_cmd": " ".join(submit_command(script_name, self.cfg.scheduler_backend)),
             })
             where = "超算作业目录" if source == "remote" else "本地计算目录"

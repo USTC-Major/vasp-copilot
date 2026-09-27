@@ -327,6 +327,70 @@ def test_script_deploy_refuses_when_template_changed(tmp_path):
         assert f"{ROOT}/relax/run.sh" not in hpc.files
 
 
+def test_template_identical_script_is_auto_attested_by_precheck(tmp_path):
+    """用户在设置里配了模板 → 与模板逐字节一致的脚本**直接算已认领**，
+    预检不该再让用户去手工点认领（用户已明确：开关打开＝默认认领）。"""
+    hpc = VaspkitHPC()
+    with _setup(tmp_path, hpc, allow_script_deploy=True,
+                submit_script_template=TEMPLATE) as (_c, api, hpc, pid, tid):
+        _remote_inputs(hpc)
+        hpc.files[f"{ROOT}/relax/POTCAR"] = VALID_INPUTS["POTCAR"]
+        hpc.files[TEMPLATE] = TEMPLATE_BYTES
+        # 用户此前已经自己复制过（脚本就在作业目录里，没有任何认领记录）
+        hpc.files[f"{ROOT}/relax/run.sh"] = TEMPLATE_BYTES
+        out = call_tool(api, pid, tid, "precheck", {"job_key": "relax"})
+        assert out["ok"] is True, out.get("result")
+        assert "已自动认领" in str(out.get("result"))
+        assert "尚未" not in str(out.get("result"))
+        flow = api.app.state.toolbox.require_task(pid, tid)["flow"]
+        attestation = flow["script_attestations"]["relax"]
+        assert attestation["claimed_by"] == "template_match"
+        assert attestation["sha256"] == hashlib.sha256(TEMPLATE_BYTES).hexdigest()
+
+
+def test_template_auto_attest_requires_switch_and_matching_bytes(tmp_path):
+    """开关没开、模板没配、或脚本与模板不一致 → 一律不自动认领。"""
+    # ① 开关没开：即使脚本与模板一致也不认领
+    hpc = VaspkitHPC()
+    with _setup(tmp_path, hpc, submit_script_template=TEMPLATE) as (_c, api, hpc, pid, tid):
+        _remote_inputs(hpc)
+        hpc.files[f"{ROOT}/relax/POTCAR"] = VALID_INPUTS["POTCAR"]
+        hpc.files[TEMPLATE] = TEMPLATE_BYTES
+        hpc.files[f"{ROOT}/relax/run.sh"] = TEMPLATE_BYTES
+        out = call_tool(api, pid, tid, "precheck", {"job_key": "relax"})
+        assert out["ok"] is False
+        flow = api.app.state.toolbox.require_task(pid, tid)["flow"]
+        assert not (flow.get("script_attestations") or {}).get("relax")
+
+    # ② 开关打开但脚本与模板不一致：同样不认领
+    hpc = VaspkitHPC()
+    with _setup(tmp_path / "b", hpc, allow_script_deploy=True,
+                submit_script_template=TEMPLATE) as (_c, api, hpc, pid, tid):
+        _remote_inputs(hpc)
+        hpc.files[f"{ROOT}/relax/POTCAR"] = VALID_INPUTS["POTCAR"]
+        hpc.files[TEMPLATE] = TEMPLATE_BYTES
+        hpc.files[f"{ROOT}/relax/run.sh"] = b"#!/bin/bash\necho someone-else\n"
+        out = call_tool(api, pid, tid, "precheck", {"job_key": "relax"})
+        assert out["ok"] is False
+        flow = api.app.state.toolbox.require_task(pid, tid)["flow"]
+        assert not (flow.get("script_attestations") or {}).get("relax")
+
+
+def test_precheck_draft_no_longer_asks_user_to_claim_when_template_matches(tmp_path):
+    """draft 也不该再出「认领卡」：模板一致的脚本已由系统自动认领。"""
+    hpc = VaspkitHPC()
+    with _setup(tmp_path, hpc, allow_script_deploy=True,
+                submit_script_template=TEMPLATE) as (_c, api, hpc, pid, tid):
+        _remote_inputs(hpc)
+        hpc.files[f"{ROOT}/relax/POTCAR"] = VALID_INPUTS["POTCAR"]
+        hpc.files[TEMPLATE] = TEMPLATE_BYTES
+        hpc.files[f"{ROOT}/relax/run.sh"] = TEMPLATE_BYTES
+        out = call_tool(api, pid, tid, "draft", {"job_key": "relax"})
+        assert out["pending"] is None or out["pending"].get("kind") != "script_attestation"
+        flow = api.app.state.toolbox.require_task(pid, tid)["flow"]
+        assert flow["script_attestations"]["relax"]["claimed_by"] == "template_match"
+
+
 def test_script_template_normalization():
     assert normalize_submit_script_template("/home/u/tpl/run.sh") == "/home/u/tpl/run.sh"
     for bad in ("", "run.sh", "C:/tpl/run.sh", "/home/u/run.txt",

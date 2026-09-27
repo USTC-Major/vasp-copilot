@@ -312,6 +312,12 @@ class Orchestrator:
                         and all(attestation.get(key) == actual.get(key)
                                 for key in ("source", "directory", "script_name",
                                             "normalized_path", "sha256", "size")))
+            if not attested and isinstance(actual, dict):
+                # 与用户在智能设置里配置的模板逐字节一致 ⇒ 自动认领（同 commands 侧规则）
+                from .script_template import stamp_template_attestations
+                if stamp_template_attestations(
+                        flow, self.cfg, self.hpc, [{"job_key": job["key"], **actual}]):
+                    attested = True
             issues.append({"job": job["key"], "file": "提交脚本认领",
                            "level": "ok" if attested else "error",
                            "message": ("脚本已由用户认领" if attested else
@@ -402,6 +408,12 @@ class Orchestrator:
                 script = resolve_user_submit_script(job_local)
                 script_name = script.name
                 fingerprint = fingerprint_local_submit_script(script)
+            attestation = (flow.get("script_attestations") or {}).get(job["key"])
+            from .script_template import stamp_template_attestations
+            stamp_template_attestations(flow, self.cfg, self.hpc, [{
+                "job_key": job["key"], "attempt_id": job.get("attempt_id"),
+                "source": source, "directory": calc_dir,
+                "script_name": script_name, **fingerprint}])
             attestation = (flow.get("script_attestations") or {}).get(job["key"])
             if not isinstance(attestation, dict) or any(
                     attestation.get(key) != value for key, value in {
