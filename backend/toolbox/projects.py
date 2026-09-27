@@ -234,12 +234,15 @@ class ProjectStore:
 
     # ---- 对话消息 ----
     def monitoring_tasks(self) -> list[tuple[str, str]]:
-        """M55：扫描所有处于 monitoring 阶段的任务（后台监控线程用）。"""
+        """扫描后台需要盯着的任务：在跑的（monitoring）**以及准备好了、只等用户点提交卡的
+        （await_submit）**。后者也要盯着，因为提交卡有有效期——过期后必须能自动补一张，
+        否则用户会看到"AI 说有卡、页面上却没有卡"。"""
         with self._lock:
             out: list[tuple[str, str]] = []
             for t in self._data.get("tasks", []):
                 flow = t.get("flow") or {}
-                if isinstance(flow, dict) and flow.get("phase") == "monitoring":
+                if isinstance(flow, dict) and flow.get("phase") in {"monitoring",
+                                                                     "await_submit"}:
                     out.append((t.get("project_id") or "", t.get("id") or ""))
             return out
 

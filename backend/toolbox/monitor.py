@@ -139,7 +139,8 @@ class MonitorLoop:
                     continue
                 with task_lock(project_id, task_id):
                     task = store.get_task(project_id, task_id)
-                    if task is None or (task.get('flow') or {}).get('phase') != 'monitoring':
+                    if task is None or (task.get('flow') or {}).get('phase') not in {
+                            'monitoring', 'await_submit'}:
                         continue
                     before = _flow_signature(task.get("flow") or {})
                     orch = self._orch_for(project_id, task_id, cfg)
