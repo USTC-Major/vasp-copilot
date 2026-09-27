@@ -544,15 +544,48 @@ def test_get_state_tells_which_jobs_can_be_prepared(tmp_path):
 
 
 def test_monitor_reports_next_step_without_querying_the_queue(tmp_path):
-    """没有在飞的作业时不打 squeue，并直接给出"下一步需要你确认"。"""
+    """没有在飞的作业时不打 squeue；已解锁但缺输入时如实说明缺什么。"""
     ctx, client, api, hpc, pid, tid = _chain(tmp_path)
     try:
         svc = api.app.state.toolbox
         before = list(hpc.run_calls)
         text = svc.orchestrator().monitor(svc.store, pid, tid, None)
-        assert "下一步需要你确认" in text
+        assert "上游已完成并解锁，但预检未通过" in text
         assert "relax/static" in text
         assert not [c for c, _cwd in hpc.run_calls[len(before):]
                     if c.startswith("squeue")]
+    finally:
+        ctx.__exit__(None, None, None)
+
+
+def test_monitor_auto_prepares_unlocked_job_and_spawns_submit_card(tmp_path):
+    """监控只是"等"：上游一结束就自动把下游准备好（交接→预检→草稿→提交卡），不自动提交。"""
+    ctx, client, api, hpc, pid, tid = _chain(
+        tmp_path, allow_script_deploy=True, submit_script_template=TEMPLATE)
+    try:
+        hpc.files[TEMPLATE] = TEMPLATE_BYTES
+        hpc.files[f"{ROOT}/relax/static/run.sh"] = TEMPLATE_BYTES
+        svc = api.app.state.toolbox
+        text = svc.orchestrator().monitor(svc.store, pid, tid, None)
+        assert "已自动准备就绪" in text, text
+        flow = svc.require_task(pid, tid)["flow"]
+        job = next(j for j in flow["plan"]["jobs"] if j["key"] == "relax/static")
+        assert (job.get("precheck") or {}).get("ok") is True
+        assert job.get("draft"), job
+        assert hpc.files[f"{ROOT}/relax/static/POSCAR"] == VALID_INPUTS["POSCAR"]
+        assert hpc.files[f"{ROOT}/relax/static/POTCAR"] == VALID_INPUTS["POTCAR"]
+        cards = [a for a in (flow.get("consent") or {}).get("actions", {}).values()
+                 if a.get("kind") == "submit" and a.get("state") == "pending"]
+        assert len(cards) == 1, cards
+        assert cards[0]["binding"]["job_key"] == "relax/static"
+        assert "上游产物已按依赖自动带入" in cards[0]["summary"]
+        assert hpc.submit_count == 0          # 绝不自动提交
+        # 再跑一轮不会重复出卡/重复准备
+        again = svc.orchestrator().monitor(svc.store, pid, tid, None)
+        flow2 = svc.require_task(pid, tid)["flow"]
+        cards2 = [a for a in (flow2.get("consent") or {}).get("actions", {}).values()
+                  if a.get("kind") == "submit" and a.get("state") == "pending"]
+        assert len(cards2) == 1
+        assert "已自动准备就绪" not in again
     finally:
         ctx.__exit__(None, None, None)

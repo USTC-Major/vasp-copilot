@@ -395,13 +395,15 @@ class Orchestrator:
         except RuntimeError:
             return False
 
-    def _draft(self, flow: dict) -> str:
+    def _draft(self, flow: dict, job_key: str | None = None) -> str:
         remote = (flow.get("hpc_dir") or "").rstrip("/")
         base = remote or flow.get("local_dir") or ""
         local_dir = Path(flow["local_dir"])
         drafts: list[dict] = []
         lines: list[str] = []
         for job in flow["plan"]["jobs"]:
+            if job_key is not None and job["key"] != job_key:
+                continue
             if job.get("status") in ("completed", "failed", "not_converged",
                                       "canceled", "skipped", "blocked",
                                       "unknown"):
@@ -470,6 +472,74 @@ class Orchestrator:
         return ("当前处于「提交前检查通过，待你确认提交」环节。\n"
                 "请在绑定当前草稿的一次性确认卡中确认；「取消」→ 放弃本次；"
                 "也可以补充输入文件后再回来确认。")
+
+    def _advance_ready_jobs(self, store, project_id: str, task_id: str,
+                            flow: dict) -> list[str]:
+        """上游完成后自动把已解锁的下游推进到「待用户确认提交」（绝不自动提交）。
+
+        流程是一条链：提交 A → 监控等 A 跑完 → **自动**把 B 准备好（上游产物交接 → 硬预检 →
+        提交草稿 → 弹出 B 的一次性提交确认卡）→ 用户点确认 → 继续等 B → … 直到全部跑完。
+        监控只负责"等"，等待结束后由这里把工作接着往下做，而不是停在"持续观察"。
+        """
+        remote = str(flow.get("hpc_dir") or flow.get("local_dir") or "").strip()
+        if not remote or self.hpc is None:
+            return []
+        try:
+            local_dir = Path(flow["local_dir"])
+        except Exception:  # noqa: BLE001 - 没有本地目录时不做自动准备
+            return []
+        from .consent import spawn_submit_card
+        from .contracts import ToolboxError
+        from .staging import stage_upstream_inputs
+        gate = self._gate(flow)
+        notes: list[str] = []
+        for job in flow["plan"]["jobs"]:
+            key = job.get("key")
+            if key not in gate.eligible or job.get("status") not in {"draft", "waiting"}:
+                continue
+            attempt = job.get("attempt_id")
+            precheck = job.get("precheck") or {}
+            prepared = bool(precheck.get("ok") and precheck.get("hard")
+                            and precheck.get("attempt_id") == attempt and job.get("draft"))
+            waiting_card = any(
+                action.get("kind") == "submit"
+                and action.get("state") in {"pending", "approved", "executing"}
+                and (action.get("binding") or {}).get("job_key") == key
+                for action in ((flow.get("consent") or {}).get("actions") or {}).values())
+            if prepared and waiting_card:
+                continue                      # 已经准备好、在等用户点卡
+            try:
+                if not prepared:
+                    staged = stage_upstream_inputs(flow, self.cfg, self.hpc, remote, job)
+                    for item in staged["staged"]:
+                        notes.append(f"[{key}] 已从上游作业目录带入 {item['name']}（哈希已核对）")
+                    for conflict in staged["conflicts"]:
+                        notes.append(f"[{key}] {conflict['name']} 与上游产物不一致，未覆盖；"
+                                     "请你确认该目录里这份文件如何处理")
+                    self._precheck(flow, local_dir, True, remote, [], job_key=key)
+                    if not (job.get("precheck") or {}).get("ok"):
+                        details = "；".join(
+                            str(item.get("message") or "") for item in
+                            (job.get("precheck") or {}).get("issues") or [])[:240]
+                        notes.append(f"[{key}] 上游已完成并解锁，但预检未通过：{details}"
+                                     "（需要你处理后才能提交）")
+                        continue
+                    self._draft(flow, job_key=key)
+                    # spawn_submit_card 会重新从 store 读 flow，必须先把上面的交接/预检/草稿落盘
+                    self._save(store, project_id, task_id, flow)
+                card = spawn_submit_card(store, project_id, task_id, key, attempt)
+                # spawn_submit_card 自己写了一遍 store；把最新 flow 收回来，
+                # 否则本函数结尾的 _save 会用旧内存副本把刚生成的卡覆盖掉。
+                fresh = (store.get_task(project_id, task_id) or {}).get("flow") or {}
+                flow.clear()
+                flow.update(fresh)
+                notes.append(f"[{key}] 已自动准备就绪（上游产物已带入、硬预检与提交草稿完成）："
+                             f"提交确认卡已弹出，你确认后即提交；系统不会自动提交")
+            except (ToolboxError, RuntimeError, ValueError, OSError) as exc:
+                notes.append(f"[{key}] 自动准备未完成：{exc}")
+            except Exception as exc:  # noqa: BLE001 - 单个作业失败不影响其它作业
+                notes.append(f"[{key}] 自动准备异常：{type(exc).__name__}")
+        return notes
 
     def _cascade_blocks(self, flow: dict) -> list[str]:
         """M52：前置终态失败/已阻断的等待作业级联置 blocked（移出等待队列）。"""
@@ -896,7 +966,10 @@ class Orchestrator:
         ready_next = [j["key"] for j in flow["plan"]["jobs"]
                       if j.get("key") in gate.eligible
                       and j.get("status") in {"draft", "waiting"}]
-        if not in_flight and ready_next:
+        # 监控只负责"等"：上游一结束就把下游**自动**准备好（交接→预检→草稿→提交卡）。
+        advanced = self._advance_ready_jobs(store, project_id, task_id, flow)
+        progress.extend(advanced)
+        if not advanced and not in_flight and ready_next:
             progress.append(
                 "下一步需要你确认：" + "、".join(ready_next)
                 + " 可以准备提交了——重新预检（上游产物会自动带入）→ 生成草稿 → 由你确认提交；"
