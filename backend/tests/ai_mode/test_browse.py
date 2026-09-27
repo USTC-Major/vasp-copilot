@@ -12,6 +12,8 @@
   覆盖成功 / 取消 / 无效路径 / 弹窗异常四类返回面。
 """
 
+import os
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -74,6 +76,7 @@ def test_browse_local_filters_hidden_and_unreadable(tmp_path, monkeypatch):
     import ai_mode.browse as browse_module
 
     (tmp_path / ".git").mkdir()
+    (tmp_path / ".hidden").mkdir()
     (tmp_path / "$Recycle.Bin").mkdir()
     (tmp_path / "blocked").mkdir()
     (tmp_path / "visible").mkdir()
@@ -85,7 +88,11 @@ def test_browse_local_filters_hidden_and_unreadable(tmp_path, monkeypatch):
     names = [e["name"] for e in browse_local(str(tmp_path))["entries"]]
     assert "visible" in names
     assert ".git" not in names
-    assert "$Recycle.Bin" not in names
+    assert ".hidden" not in names
+    if os.name == "nt":
+        assert "$Recycle.Bin" not in names
+    else:
+        assert "$Recycle.Bin" in names
     assert "blocked" not in names
 
 
