@@ -87,11 +87,16 @@ def _mask(config) -> dict:
 async def _lifespan(_app: FastAPI):
     ensure_layout()
     from .projects import close_project_store
+    from .auto_wake import AutoWakeLoop
+    wake_loop = AutoWakeLoop()
     if is_ai_mode_enabled():
-        _get_project_store()  # Acquire chat ownership at startup, without network I/O.
+        store = _get_project_store()  # Acquire chat ownership at startup, without network I/O.
+        # 事件驱动自动唤醒：作业完成/卡片结果/失败时自己继续，用户只点确认卡。
+        wake_loop.start(store)
     try:
         yield
     finally:
+        wake_loop.stop()
         close_project_store()
 
 

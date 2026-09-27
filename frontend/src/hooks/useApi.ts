@@ -412,8 +412,10 @@ export function useAiMessages(projectId: string | null, taskId: string | null) {
     queryKey: ['aiMessages', projectId, taskId],
     queryFn: () => aiApi.getMessages(projectId!, taskId!),
     enabled: !!projectId && !!taskId,
-    // 页面刷新或 SSE 断开后，只在后端仍生成时短轮询；完成后自动停止。
-    refetchInterval: (query) => query.state.data?.generation?.running ? 1500 : false,
+    // 生成中每 1.5 秒跟一次；不在生成中也保持 5 秒一次的慢轮询——
+    // 系统会在作业跑完/卡片有结果时**自动唤醒 AI**，它的汇报要能自己出现在对话里，
+    // 不需要用户再发消息来触发刷新。
+    refetchInterval: (query) => query.state.data?.generation?.running ? 1500 : 5_000,
   });
 }
 

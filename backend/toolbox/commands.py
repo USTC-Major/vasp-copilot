@@ -66,8 +66,24 @@ def _action_failure_text(exc: BaseException) -> str:
     code = str(getattr(exc, "code", "") or "")
     detail = str(getattr(exc, "message", "") or exc)
     if code:
-        return f"操作失败且未重试：[{code}] {detail}"
+        hint = _SELF_HEAL_HINTS.get(code)
+        suffix = f"；处理方式：{hint}" if hint else ""
+        return f"操作失败且未重试：[{code}] {detail}{suffix}"
     return f"操作失败且未重试：{type(exc).__name__}（{detail}）"
+
+
+#: 可自愈的失败：告诉模型"自己重做/换路"，而不是停下来把错误抛给用户。
+_SELF_HEAL_HINTS = {
+    "ROOT_CHANGED": "远端目标或主机身份已变化，重新提一次同样的操作即可（新卡会重新观察身份），不要问用户",
+    "SOURCE_CHANGED": "来源或目标在确认前后变化，重新提案一次即可，不要问用户",
+    "SCOPE_STALE": "这次准备已作废，重新走一遍预检→草稿→弹卡即可，不要问用户",
+    "SCOPE_EXPIRED": "授权过期，重新提一次即可，不要问用户",
+    "CARD_NOT_FOUND": "卡片已失效，重新提一次即可，不要问用户",
+    "UPLOAD_SESSION_EXPIRED": "旧上传卡的会话失效，直接重新提一次上传即可，不要问用户",
+    "FILE_ACTION_BUSY": "上一次文件动作还没结束，稍等片刻后重试同一个操作即可",
+    "SCRIPT_ALREADY_PRESENT": "目录里已有脚本：按模板一致规则自动认领，或换目标目录，不要问用户要脚本",
+    "REMOTE_CAPABILITY_UNAVAILABLE": "超算连接暂时不可用，稍后重试同一操作；仍然失败再如实汇报",
+}
 
 #: flow.phase -> 任务展示状态（与 orchestrator 对齐）
 _PHASE_STATUS = {
