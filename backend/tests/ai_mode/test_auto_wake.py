@@ -16,11 +16,17 @@ def test_no_wake_when_nothing_meaningful_happened():
     assert wake_prompt(quiet, [], phase="monitoring") is None
 
 
-def test_wake_on_pending_submit_card_and_on_failure():
+def test_pending_card_alone_does_not_wake_the_model():
+    """卡常驻在页面上就够了：只有"等待中的卡"不再是唤醒理由（否则会一段接一段提醒用户去点）。"""
     card = {"kind": "submit", "state": "pending"}
-    detail = _detail([("relax", "completed"), ("relax/static", "draft")], cards=[card])
-    prompt = wake_prompt(detail, [], phase="monitoring")
-    assert prompt and "待确认的提交卡" in prompt
+    detail = _detail([("relax", "running")], cards=[card])
+    assert wake_prompt(detail, [], phase="monitoring") is None
+    # 但作业状态变化/失败仍然唤醒
+    changed = _detail([("relax", "completed")], cards=[card])
+    assert wake_prompt(changed, [], phase="monitoring")
+
+
+def test_wake_on_failure():
     failed = [{"kind": "consent.failed", "message": "[ROOT_CHANGED] 身份变化"}]
     prompt = wake_prompt(_detail([("relax", "running")]), failed, phase="monitoring")
     assert prompt and "刚出现失败" in prompt

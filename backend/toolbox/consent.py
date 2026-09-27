@@ -372,6 +372,8 @@ def spawn_submit_card(store, project_id: str, task_id: str,
             tool="confirm_submit", args={"job_key": job["key"], "attempt_id": job["attempt_id"]},
             risk="high", reason="仅批准本计算当前尝试的一次提交；用户需审阅脚本及资源，系统未证明全部副作用。",
             batch_key=batch_key, kind="submit",
+            # 提交卡常驻：用户可能过一阵才回来点，不能让卡自己过期（用户明确要求）。
+            expires_seconds=24 * 3600,
             summary=(f"提交计算 {job['key']} / attempt {job['attempt_id']}？\n"
                      f"目录：`{job['draft']['dir']}`\n命令：{job['draft']['submit_cmd']}\n"
                      f"SHA-256：{job['draft']['script_sha256']}"

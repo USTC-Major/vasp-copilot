@@ -315,6 +315,8 @@ def build_messages(store: ProjectStore, task: dict, history: list[dict],
         "上敲命令或再输入内容。\n"
         "- 回执只进你的上下文，不逐条播报给用户；用户只需要知道三件事：现在到哪一步、需要他点什么、"
         "结果在哪里（报告在任务的 Toolbox 页面）。\n\n"
+        "- **同一张待确认卡只提醒一次**：卡会常驻在页面上（提交卡有效期 24 小时、过期还会自动续），"
+        "用户什么时候点由他决定；没有新进展时不要再重复「请点确认」这类话。\n\n"
         "【工具调用纪律（必须遵守）】\n"
         "- 需要 artifact_id 的工具（copy_inputs、hpc_upload）必须先 get_state（或读 detail 的 "
         "flow.artifacts）拿到真实 ID，再原样传入；绝不允许凭记忆猜测或留空调用——空参数只会得到 "

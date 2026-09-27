@@ -55,15 +55,14 @@ def wake_prompt(detail: dict, events: list[dict], *, phase: str) -> str | None:
             lines.append(f"{job.get('key')}={status}")
     failures = [event for event in events
                 if str(event.get("kind") or "") in {"consent.failed", "monitor.error"}]
-    pending = [card for card in (detail.get("consents") or [])
-               if card.get("kind") == "submit"]
-    if not lines and not failures and not pending and phase not in _TERMINAL_PHASES:
+    # 注意：**"有一张待确认卡"本身不作为唤醒理由**——卡已经在页面上常驻显示，
+    # 反复叫醒只会变成"一段接一段提醒你去点确认"（用户实测被提醒五六次）。
+    # 只在作业状态变化、失败、或流程到终态时唤醒。
+    if not lines and not failures and phase not in _TERMINAL_PHASES:
         return None
     facts = []
     if lines:
         facts.append("作业状态：" + "、".join(lines))
-    if pending:
-        facts.append("有一张待确认的提交卡在等用户点确认")
     if failures:
         facts.append("刚出现失败：" + "；".join(
             str(event.get("message") or "")[:120] for event in failures[:3]))
@@ -185,6 +184,15 @@ class AutoWakeLoop:
             store.update_generation(project_id, task_id, {
                 "auto_wake": {**state, "last_event_id": newest, "last_phase": phase}})
             return False
+        # 同一处境只唤醒一次：阶段 + 各作业状态 + 待确认卡集合完全一致时不再重复打扰。
+        signature = [phase,
+                     [[str(j.get("key")), str(j.get("status"))]
+                      for j in flow.get("jobs") or []],
+                     sorted(str(c.get("card_id")) for c in detail.get("consents") or [])]
+        if state.get("last_signature") == signature:
+            store.update_generation(project_id, task_id, {
+                "auto_wake": {**state, "last_event_id": newest, "last_phase": phase}})
+            return False
         try:
             answer = run_agent(store, project_id, task_id, prompt)
         except Exception as exc:  # noqa: BLE001 - 唤醒失败不影响后台
@@ -196,6 +204,7 @@ class AutoWakeLoop:
                                  content=str(answer))
         store.update_generation(project_id, task_id, {
             "auto_wake": {"last_event_id": newest, "last_phase": phase,
+                          "last_signature": signature,
                           "at": time.time(),
                           "count": int(state.get("count") or 0) + 1}})
         return True
