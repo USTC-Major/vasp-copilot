@@ -11,6 +11,7 @@ _CONSENT_PENDING = '__CONSENT_PENDING__'
 _LEGACY_TOOLS = frozenset({
     'get_state', 'ws_list', 'ws_read', 'mp_search', 'mp_import_poscar',
     'hpc_list', 'hpc_read', 'hpc_upload', 'stop_monitor', 'plan',
+    'request_file_prepare',
     'copy_inputs', 'propose_incar', 'generate_kpoints', 'precheck',
     'draft', 'submit', 'select_jobs', 'diagnose_job', 'retry_job',
     'generate_potcar', 'deploy_submit_script',

@@ -453,6 +453,7 @@ class ToolExecutor:
         "hpc_list": "tool_hpc_list",
         "hpc_read": "tool_hpc_read",
         "hpc_upload": "tool_hpc_upload",
+        "request_file_prepare": "tool_request_file_prepare",
         "generate_potcar": "tool_generate_potcar",
         "deploy_submit_script": "tool_deploy_submit_script",
         "stop_monitor": "tool_stop_monitor",
@@ -796,6 +797,62 @@ class ToolExecutor:
                 return action
         return None
 
+    #: 「文件准备」一次性授权覆盖的动作（科学参数/脚本生成/提交永不在内）。
+    FILE_PREPARE_KINDS = ("copy_inputs", "hpc_upload", "potcar_generate",
+                          "script_deploy", "generate_kpoints")
+
+    def _file_prepare_grant_active(self, flow: dict | None = None) -> bool:
+        """本任务是否已由用户一次性批准"文件准备"权限。"""
+        record = ((flow if flow is not None else self._load_flow())
+                  .get("file_prepare_grant") or {})
+        return bool(record.get("active"))
+
+    def tool_request_file_prepare(self, args: dict) -> str:
+        """申请**一次**文件准备授权：批准后本任务的输入放置/上传/POTCAR/脚本复制都不再逐张弹卡。"""
+        del args
+        flow = self._load_flow()
+        if self._file_prepare_grant_active(flow):
+            return ("本任务的「文件准备」权限已经批准过：直接继续准备文件即可"
+                    "（复制输入、上传、生成 POTCAR、复制脚本都不需要再弹卡；"
+                    "提交作业与科学参数仍需用户逐次确认）。")
+        binding = {
+            "operation": "file_prepare_grant",
+            "project_id": self.project_id, "task_id": self.task_id,
+            "operations": list(self.FILE_PREPARE_KINDS),
+            "execution_mode": self._execution_mode(),
+        }
+        payload = card_payload(
+            tool="request_file_prepare",
+            args={}, risk="medium",
+            reason=("批准这一次后，本任务的文件准备（把已登记输入复制/上传到各作业目录、"
+                    "用 vaspkit 生成 POTCAR、按模板复制提交脚本）由系统直接执行，不再逐张弹卡；"
+                    "每一步仍逐项复核哈希并留回执。**提交作业（sbatch）、INCAR/KPOINTS 等科学参数、"
+                    "结构导入仍然逐次请你确认**，不受本次授权影响。"),
+            batch_key=f"fileprep|{self.project_id}|{self.task_id}",
+            kind="file_prepare_grant",
+            summary=("允许 AI 在本任务准备文件（一次授权）：\n"
+                     "- 复制已登记输入到各作业目录\n- 上传已登记文件到超算工作区\n"
+                     "- 用 vaspkit 生成 POTCAR\n- 按你配置的模板复制提交脚本\n"
+                     "提交作业与科学参数仍需你逐次确认。"),
+            binding=binding,
+        )
+        saved = save_card(self.store, self.project_id, self.task_id,
+                          self._load_flow(), payload)
+        raise PendingConsentError(saved)
+
+    def _activate_file_prepare_grant(self, action: dict) -> str:
+        """批准"文件准备"授权卡：写进 flow，之后同类机械动作不再弹卡。"""
+        flow = self._load_flow()
+        flow["file_prepare_grant"] = {
+            "active": True,
+            "granted_at": _now_iso(),
+            "action_id": action.get("action_id") or "",
+            "operations": list(self.FILE_PREPARE_KINDS),
+        }
+        self._save_flow(flow)
+        return ("已获得本任务的文件准备授权：接下来复制输入、上传、生成 POTCAR、复制脚本"
+                "我都会直接做完并留回执；提交作业前仍会单独弹卡请你确认。")
+
     def _auto_approve_kinds(self) -> set:
         """用户显式开启的免批范围（全局执行设置；读取失败即视为未开启）。"""
         try:
@@ -811,7 +868,10 @@ class ToolExecutor:
         返回执行回执文本；若不在授权范围或批准未生效则返回 None（调用方照常
         抛 PendingConsentError 交人工确认）。AI 进程不参与批准动作。
         """
-        if kind not in self._auto_approve_kinds():
+        granted = (kind in self._auto_approve_kinds()
+                   or (kind in self.FILE_PREPARE_KINDS
+                       and self._file_prepare_grant_active()))
+        if not granted:
             return None
         from .consent import resolve_card
         decision = resolve_card(
@@ -863,6 +923,8 @@ class ToolExecutor:
                 result = self._execute_potcar_action(binding)
             elif operation == "script_deploy":
                 result = self._execute_template_action(binding)
+            elif operation == "file_prepare_grant":
+                result = self._activate_file_prepare_grant(action)
             elif operation == "mp_poscar_write":
                 if not str(self._task().get("local_workspace") or "").strip():
                     raise ValueError("local workspace is no longer selected")
@@ -1311,6 +1373,9 @@ class ToolExecutor:
         )
         saved = save_card(self.store, self.project_id, self.task_id,
                           self._load_flow(), payload)
+        auto = self._auto_approve_and_execute(saved, "potcar_generate")
+        if auto is not None:
+            return auto
         raise PendingConsentError(saved)
 
     def _execute_potcar_action(self, binding: dict) -> str:
@@ -1472,6 +1537,9 @@ class ToolExecutor:
         )
         saved = save_card(self.store, self.project_id, self.task_id,
                           self._load_flow(), payload)
+        auto = self._auto_approve_and_execute(saved, "script_deploy")
+        if auto is not None:
+            return auto
         raise PendingConsentError(saved)
 
     def _execute_template_action(self, binding: dict) -> str:
