@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from typing import Callable, Mapping, Optional
 
 from ..config import AiModeConfig, save_settings
-from backend.toolbox.secrets import SecretStorageError, delete_secret, get_secret, set_secret
+from backend.toolbox.secrets import SecretStorageError, delete_secret, secret_state, set_secret
 
 MASK = "<redacted>"
 SSH_PASSWORD_KEY = "ssh_password"   # 仅内部保留，永不回包
@@ -250,7 +250,7 @@ def update_secret(config: AiModeConfig, kind: str, action: str, value=None, *,
 
 
 def secret_status(config: AiModeConfig, *,
-                  credential_store=None, env=None) -> dict:
+                  credential_store=None, env=None, kinds=None) -> dict:
     """Return non-secret provenance and manageability for each credential."""
     environment = os.environ if env is None else env
     def local_state(configured: bool, source: str = "local_config") -> dict:
@@ -258,22 +258,26 @@ def secret_status(config: AiModeConfig, *,
                 "source": source if configured else "none",
                 "manageable": True}
 
-    def secret_state(name: str, env_var: str, value: str) -> dict:
+    def field_status(name: str, env_var: str, value: str) -> dict:
         if environment.get(env_var) or (name == 'mp_api_key' and environment.get('TOOLBOX_MP_API_KEY')):
             return {"configured": True, "source": "environment", "manageable": False}
-        if get_secret(name):
+        stored, legacy_allowed = secret_state(name)
+        if stored:
             return {"configured": True, "source": "credential_store", "manageable": True}
-        return local_state(bool(value))
+        return local_state(bool(value) if legacy_allowed else False)
 
-    llm = secret_state("llm_api_key", "AI_MODE_LLM_API_KEY", config.llm_api_key)
-    mp = secret_state("mp_api_key", "AI_MODE_MP_API_KEY", config.mp_api_key)
-    ssh_configured = get_ssh_password(
-        config, credential_store=credential_store) is not None
-    return {
-        "llm": llm,
-        "mp": mp,
-        "ssh": local_state(ssh_configured, "credential_store"),
-    }
+    requested = set(kinds) if kinds is not None else {"llm", "mp", "ssh"}
+    if not requested <= {"llm", "mp", "ssh"}:
+        raise ValueError("未知密钥类型（llm|mp|ssh）")
+    result = {}
+    if "llm" in requested:
+        result["llm"] = field_status("llm_api_key", "AI_MODE_LLM_API_KEY", config.llm_api_key)
+    if "mp" in requested:
+        result["mp"] = field_status("mp_api_key", "AI_MODE_MP_API_KEY", config.mp_api_key)
+    if "ssh" in requested:
+        result["ssh"] = local_state(get_ssh_password(
+            config, credential_store=credential_store) is not None, "credential_store")
+    return result
 
 
 def _llm_test(cfg: AiModeConfig) -> dict:

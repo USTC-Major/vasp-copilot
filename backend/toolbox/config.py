@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Literal, Mapping
 from pydantic import BaseModel, Field
 from . import paths
-from .secrets import SecretStorageError, get_secret, secret_value_for_file
+from .secrets import SecretStorageError, resolve_secret, secret_value_for_file
 
 class ExecutionConfig(BaseModel):
     data_dir: Path = Field(default_factory=paths.home_dir)
@@ -47,9 +47,7 @@ def load_settings(*, env: Mapping[str, str] | None = None, config_path: Path | N
             data[key] = value
     # 密钥优先级：环境变量 > 系统凭据管理器 > 本地配置文件（旧值仍能读，便于平滑迁移）。
     if not (env.get('TOOLBOX_MP_API_KEY') or env.get('AI_MODE_MP_API_KEY')):
-        stored = get_secret('mp_api_key')
-        if stored:
-            data['mp_api_key'] = stored
+        data['mp_api_key'] = resolve_secret('mp_api_key', str(data.get('mp_api_key') or ''))
     data['data_dir'] = root
     return ExecutionConfig(**data)
 

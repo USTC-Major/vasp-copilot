@@ -265,13 +265,13 @@ def create_ai_mode_app() -> FastAPI:
 
     @app.get("/ai/v1/settings/secret-status")
     def settings_secret_status():
-        cfg = load_settings()
+        cfg = load_settings(secret_fields=('llm_api_key',))
         resp = _require_enabled(cfg)
         if resp is not None:
             return resp
         # 复用统一判定：环境变量 > 系统凭据管理器 > 本地配置文件。
         # 此前这里内联硬编码 local_config，密钥迁到凭据管理器后仍会显示错误来源。
-        model = _secret_status(cfg)['llm']
+        model = _secret_status(cfg, kinds={'llm'})['llm']
         remote = _get_project_store().client.request('GET', '/settings/secret-status')['secrets']
         return {'mode': 'ai', 'enabled': True, 'secrets': {'llm': model, **remote}}
 

@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 
 from . import paths as _paths
 from .gate import is_ai_mode_enabled
-from backend.toolbox.secrets import SecretStorageError, get_secret, secret_value_for_file
+from backend.toolbox.secrets import SecretStorageError, resolve_secret, secret_value_for_file
 
 ENV_PREFIX = "AI_MODE_"
 
@@ -112,6 +112,7 @@ def _env_overrides(env: Mapping[str, str]) -> dict[str, Any]:
 def load_settings(
     *, env: Mapping[str, str] | None = None,
     config_path: Path | None = None,
+    secret_fields: tuple[str, ...] = ("llm_api_key", "mp_api_key"),
 ) -> AiModeConfig:
     """按优先级合并三来源并返回配置对象（默认 < 文件 < 环境变量）。
 
@@ -131,11 +132,11 @@ def load_settings(
     # 密钥优先级：环境变量 > 系统凭据管理器 > 本地配置文件（旧明文值仍可读，便于迁移）。
     for field, variable in (("llm_api_key", f"{ENV_PREFIX}LLM_API_KEY"),
                             ("mp_api_key", f"{ENV_PREFIX}MP_API_KEY")):
+        if field not in secret_fields:
+            continue
         if env.get(variable):
             continue
-        stored = get_secret(field)
-        if stored:
-            base[field] = stored
+        base[field] = resolve_secret(field, str(base.get(field) or ''))
     base["enabled"] = is_ai_mode_enabled(env)
     return AiModeConfig(**base)
 

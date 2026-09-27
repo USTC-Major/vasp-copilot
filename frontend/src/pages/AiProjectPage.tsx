@@ -18,7 +18,7 @@ import ToolboxTaskStatus, { ToolboxEnvironmentTags } from '../components/toolbox
 import { aiApi, toolboxApi } from '../api/client';
 import { AI_JOB_STATUS_MAP } from '../types/ai';
 import { useAiTasks, useAiTaskCreate, useAiMessages, useAiTaskContext, useAiTaskUpdate, useAiTaskDelete, useToolboxTaskDetail, useAiSettings } from '../hooks/useApi';
-import type { AiMessage as AiMsg, AiTask, AiConsentCard } from '../types/ai';
+import type { AiMessage as AiMsg, AiTask, AiConsentCard, AiConsentResponse } from '../types/ai';
 
 const { Content } = Layout;
 const { Text, Title } = Typography;
@@ -43,6 +43,35 @@ const CARD_LABELS: Record<string, string> = {
 };
 
 const cardLabel = (kind: string) => CARD_LABELS[kind] ?? kind;
+
+type ConsentOutcome = 'completed' | 'refused' | 'failed' | 'in_progress' | 'pending' | 'uncertain';
+interface ConsentResolution { cardId: string; label: string; outcome: ConsentOutcome; detail: string }
+const CONSENT_STATES = new Set(['executed', 'rejected', 'failed', 'expired', 'unknown', 'approved', 'executing', 'pending']);
+const consentStates = (response: AiConsentResponse) => [response.state, response.card?.state].filter((state): state is string => state !== undefined);
+const classifyConsent = (response: AiConsentResponse): ConsentOutcome => {
+  const states = consentStates(response);
+  if (states.length === 0 || states.some((state) => !CONSENT_STATES.has(state)) || new Set(states).size > 1) return 'uncertain';
+  switch (states[0]) {
+    case 'executed': return 'completed';
+    case 'rejected': return 'refused';
+    case 'failed':
+    case 'expired': return 'failed';
+    case 'approved':
+    case 'executing': return 'in_progress';
+    case 'pending': return 'pending';
+    default: return 'uncertain';
+  }
+};
+const outcomeLabel: Record<ConsentOutcome, string> = {
+  completed: '执行完成', refused: '拒绝已记录', failed: '执行失败/已过期', in_progress: '已接受，处理中', pending: '仍待处理', uncertain: '结果未确认',
+};
+const consentDetail = (response: AiConsentResponse) => [...new Set([
+  response.card?.result, response.result, response.card?.reason,
+  ...(consentStates(response).includes('unknown') ? ['执行结果未知，请核验任务状态；请勿重复批准或重试。'] : []),
+].filter(Boolean))].join('\n');
+const hasResolvedApproval = (outcome: ConsentOutcome) => ['completed', 'refused', 'failed', 'in_progress'].includes(outcome);
+const shouldRemovePending = (response: AiConsentResponse, outcome: ConsentOutcome) =>
+  hasResolvedApproval(outcome) || (outcome === 'uncertain' && consentStates(response).length > 0 && consentStates(response).every((state) => state === 'unknown'));
 
 /** 折叠时只显示第一行指纹（文件名/目标/SHA 前几位都在里面）。 */
 const cardFingerprint = (summary: string) => {
@@ -159,10 +188,14 @@ const AiProjectPage: React.FC = () => {
   const [streaming, setStreaming] = useState(false);
   const [streamIssue, setStreamIssue] = useState<StreamIssue | null>(null);
   const [pendingCards, setPendingCards] = useState<AiConsentCard[]>([]);
+  const [consentResults, setConsentResults] = useState<ConsentResolution[]>([]);
+  const [batchSummary, setBatchSummary] = useState('');
   const [resolvingCardId, setResolvingCardId] = useState<string | null>(null);
   const [batchBusy, setBatchBusy] = useState(false);
   const threadRef = useRef<HTMLDivElement>(null);
   const selectedTaskIdRef = useRef<string | null>(selectedTaskId);
+  const taskSelectionRef = useRef(0);
+  const resolvedCardIdsRef = useRef(new Set<string>());
   const streamSequenceRef = useRef(0);
   const activeStreamRef = useRef<{
     requestId: number;
@@ -186,6 +219,10 @@ const AiProjectPage: React.FC = () => {
   const conversationBusy = streaming || generationRunning;
 
   const selectTask = (taskId: string | null) => {
+    if (selectedTaskIdRef.current !== taskId) {
+      taskSelectionRef.current += 1;
+      resolvedCardIdsRef.current.clear();
+    }
     const active = activeStreamRef.current;
     if (active && active.taskId !== taskId) {
       active.controller.abort();
@@ -215,18 +252,24 @@ const AiProjectPage: React.FC = () => {
     setStreaming(false);
     setStreamIssue(null);
     setPendingCards([]);
+    setConsentResults([]);
+    setBatchSummary('');
     setResolvingCardId(null);
+    setBatchBusy(false);
   }, [selectedTaskId]);
 
   useEffect(() => () => {
+    taskSelectionRef.current += 1;
     activeStreamRef.current?.controller.abort();
     activeStreamRef.current = null;
   }, []);
 
   useEffect(() => {
     const restored = messagesQuery.data?.pending_actions;
-    if (restored !== undefined) setPendingCards(restored);
-  }, [messagesQuery.data?.pending_actions, selectedTaskId]);
+    if (!messagesQuery.isError && restored !== undefined) {
+      setPendingCards(restored.filter((card) => !resolvedCardIdsRef.current.has(card.card_id)));
+    }
+  }, [messagesQuery.data?.pending_actions, messagesQuery.isError, selectedTaskId]);
 
   useEffect(() => {
     const el = threadRef.current;
@@ -329,40 +372,49 @@ const AiProjectPage: React.FC = () => {
 
   const handleResolveCard = async (card: AiConsentCard, approved: boolean) => {
     const taskId = selectedTask?.id;
+    const selection = taskSelectionRef.current;
+    const isCurrent = () => selectedTaskIdRef.current === taskId && taskSelectionRef.current === selection;
     if (!taskId || resolvingCardId) return;
     setResolvingCardId(card.card_id);
     try {
       const r = await aiApi.resolveConsent(projectId, taskId, card.card_id, approved);
-      if (selectedTaskIdRef.current === taskId) {
-        if (approved) {
-          message.success(r.result || '已批准本次操作；后续操作仍需单独确认');
-        } else {
-          message.info(r.result || '已拒绝，本次不执行');
+      if (isCurrent()) {
+        const outcome = classifyConsent(r);
+        const detail = consentDetail(r);
+        setConsentResults((prev) => [{ cardId: card.card_id, label: cardFingerprint(card.summary), outcome, detail }, ...prev.filter((item) => item.cardId !== card.card_id)]);
+        if (shouldRemovePending(r, outcome)) {
+          resolvedCardIdsRef.current.add(card.card_id);
+          setPendingCards((prev) => prev.filter((c) => c.card_id !== card.card_id));
         }
-        setPendingCards((prev) => prev.filter((c) => c.card_id !== card.card_id));
-        // 提交/授权结果已由后端落库为 assistant 消息，立即刷出，不能只靠 toast。
-        await messagesQuery.refetch();
+        // Missing/conflicting state is not authoritative; refresh before reconciling the card.
+        const refreshed = await messagesQuery.refetch();
+        if (!isCurrent()) return;
+        if (!refreshed.isError && refreshed.data?.pending_actions) {
+          setPendingCards(refreshed.data.pending_actions.filter((pending) => !resolvedCardIdsRef.current.has(pending.card_id)));
+        }
         void tasksQuery.refetch();
         void taskContextQuery.refetch();
       }
     } catch (err) {
-      if (selectedTaskIdRef.current === taskId) {
+      if (isCurrent()) {
         const detail = err instanceof Error ? err.message : '授权处理失败';
-        message.error(detail);
-        // 这张卡可能已经作废（例如作业已提交、或准备过程被重新做过）：
-        // 失败后也刷新一次，让过期卡从页面上消失，避免用户反复点同一张废卡。
-        setPendingCards((prev) => prev.filter((c) => c.card_id !== card.card_id));
-        void messagesQuery.refetch();
+        setConsentResults((prev) => [{ cardId: card.card_id, label: cardFingerprint(card.summary), outcome: 'uncertain', detail }, ...prev.filter((item) => item.cardId !== card.card_id)]);
+        const refreshed = await messagesQuery.refetch();
+        if (isCurrent() && !refreshed.isError && refreshed.data?.pending_actions) {
+          setPendingCards(refreshed.data.pending_actions.filter((pending) => !resolvedCardIdsRef.current.has(pending.card_id)));
+        }
         void taskContextQuery.refetch();
       }
     } finally {
-      if (selectedTaskIdRef.current === taskId) setResolvingCardId(null);
+      if (isCurrent()) setResolvingCardId(null);
     }
   };
 
   /** 批量处理同类卡片：一次点击，但逐张提交、各自留决议记录。 */
   const handleResolveCards = async (cards: AiConsentCard[], approved: boolean) => {
     const taskId = selectedTask?.id;
+    const selection = taskSelectionRef.current;
+    const isCurrent = () => selectedTaskIdRef.current === taskId && taskSelectionRef.current === selection;
     if (!taskId || resolvingCardId || batchBusy || cards.length === 0) return;
     const confirmed = await new Promise<boolean>((resolve) => {
       Modal.confirm({
@@ -381,28 +433,43 @@ const AiProjectPage: React.FC = () => {
         onCancel: () => resolve(false),
       });
     });
-    if (!confirmed) return;
+    if (!confirmed || !isCurrent()) return;
     setBatchBusy(true);
-    let done = 0;
-    const failed: string[] = [];
-    for (const card of cards) {
-      try {
-        await aiApi.resolveConsent(projectId, taskId, card.card_id, approved);
-        done += 1;
-        setPendingCards((prev) => prev.filter((c) => c.card_id !== card.card_id));
-      } catch (err) {
-        failed.push(`${cardFingerprint(card.summary)}：${err instanceof Error ? err.message : '处理失败'}`);
+    const results: ConsentResolution[] = [];
+    try {
+      for (const card of cards) {
+        if (!isCurrent()) return;
+        try {
+          const response = await aiApi.resolveConsent(projectId, taskId, card.card_id, approved);
+          if (!isCurrent()) return;
+          const outcome = classifyConsent(response);
+          const detail = consentDetail(response);
+          results.push({ cardId: card.card_id, label: cardFingerprint(card.summary), outcome, detail });
+          if (shouldRemovePending(response, outcome)) {
+            resolvedCardIdsRef.current.add(card.card_id);
+            setPendingCards((prev) => prev.filter((c) => c.card_id !== card.card_id));
+          }
+        } catch (err) {
+          if (!isCurrent()) return;
+          results.push({ cardId: card.card_id, label: cardFingerprint(card.summary), outcome: 'uncertain', detail: err instanceof Error ? err.message : '处理失败' });
+        }
+        // Capture this receipt before the next request mutates the batch array.
+        const receipt = results[results.length - 1];
+        setConsentResults((prev) => [receipt, ...prev.filter((item) => item.cardId !== card.card_id)]);
       }
+      const refreshed = await messagesQuery.refetch();
+      if (!isCurrent()) return;
+      if (!refreshed.isError && refreshed.data?.pending_actions) setPendingCards(refreshed.data.pending_actions.filter((pending) => !resolvedCardIdsRef.current.has(pending.card_id)));
+      const counts = results.reduce<Record<ConsentOutcome, number>>((sum, item) => ({ ...sum, [item.outcome]: sum[item.outcome] + 1 }),
+        { completed: 0, refused: 0, failed: 0, in_progress: 0, pending: 0, uncertain: 0 });
+      const summary = (['completed', 'refused', 'failed', 'in_progress', 'pending', 'uncertain'] as ConsentOutcome[])
+        .map((outcome) => `${outcomeLabel[outcome]} ${counts[outcome]}`).join('；');
+      setBatchSummary(`本批处理结果：${summary}`);
+      void tasksQuery.refetch();
+      void taskContextQuery.refetch();
+    } finally {
+      if (isCurrent()) setBatchBusy(false);
     }
-    setBatchBusy(false);
-    if (failed.length) {
-      message.warning(`本批完成 ${done} 项，${failed.length} 项未成功：\n${failed.join('\n')}`);
-    } else {
-      message.success(approved ? `本批已批准 ${done} 项（每项单独留决议记录）` : `本批已拒绝 ${done} 项`);
-    }
-    await messagesQuery.refetch();
-    void tasksQuery.refetch();
-    void taskContextQuery.refetch();
   };
 
   const send = async () => {
@@ -641,6 +708,20 @@ const AiProjectPage: React.FC = () => {
                   ));
                 })()}
               </div>
+            )}
+            {consentResults.length > 0 && (
+              <Alert
+                type="info"
+                showIcon
+                style={{ marginBottom: 10 }}
+                message={batchSummary || '授权处理结果'}
+                description={<div>{consentResults.map((result) => (
+                  <div key={result.cardId} style={{ marginTop: 4 }}>
+                    <Text strong>{result.label}：<span>{outcomeLabel[result.outcome]}</span></Text>
+                    {result.detail && <div style={{ whiteSpace: 'pre-wrap' }}>{result.detail.split('\n').map((line, index) => <div key={index}>{line}</div>)}</div>}
+                  </div>
+                ))}</div>}
+              />
             )}
             {streamIssue && (
               <Alert

@@ -3,15 +3,16 @@
 // （数据来自 MSW 演示后端 aiDemo / aiSettingsHandlers）
 // ============================================================
 
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { delay, http, HttpResponse } from 'msw';
+import { http, HttpResponse } from 'msw';
 import { routes } from '../router';
 import { aiDemo } from '../mocks/aiStore';
 import { server } from '../mocks/server';
 import SecretInput from '../components/ai/SecretInput';
+import { ConfigProvider, Modal, message } from 'antd';
 
 function renderPath(path: string) {
   const router = createMemoryRouter(routes, { initialEntries: [path] });
@@ -19,9 +20,9 @@ function renderPath(path: string) {
     defaultOptions: { queries: { retry: false, staleTime: Infinity }, mutations: { retry: false } },
   });
   render(
-    <QueryClientProvider client={queryClient}>
+    <ConfigProvider theme={{ token: { motion: false } }}><QueryClientProvider client={queryClient}>
       <RouterProvider router={router} />
-    </QueryClientProvider>
+    </QueryClientProvider></ConfigProvider>
   );
   return queryClient;
 }
@@ -37,6 +38,18 @@ const executionDetail = (taskId: string, historical: string, current: string) =>
 describe('AI 前端整合（M12）', () => {
   beforeEach(() => {
     aiDemo.reset();
+    // JSDOM has no CSS transition completion events for static Ant portals.
+    ConfigProvider.config({ holderRender: (children) => <ConfigProvider theme={{ token: { motion: false } }}>{children}</ConfigProvider> });
+  });
+
+  afterEach(async () => {
+    cleanup();
+    await act(async () => {
+      Modal.destroyAll();
+      message.destroy();
+    });
+    await waitFor(() => expect(screen.queryAllByRole('dialog')).toHaveLength(0));
+    ConfigProvider.config({ holderRender: undefined });
   });
 
   it.each([
@@ -287,6 +300,10 @@ describe('AI 前端整合（M12）', () => {
   });
 
   it('结构化 INCAR 草稿在写入前生成单次授权卡片，可拒绝', async () => {
+    server.use(http.post('/ai/v1/projects/:projectId/tasks/:taskId/messages/consent', () => HttpResponse.json({
+      mode: 'ai', ok: true, kind: 'workspace', approved: false, state: 'rejected',
+      card: { state: 'rejected', result: '已拒绝，本次不执行' },
+    })));
     const user = userEvent.setup();
     renderPath('/ai/projects/prj_001');
     expect(await screen.findByText('结构优化 + 静态 + DOS')).toBeInTheDocument();
@@ -299,6 +316,7 @@ describe('AI 前端整合（M12）', () => {
     const rejectButton = await screen.findByRole('button', { name: /拒\s*绝/ });
     expect(rejectButton).toBeInTheDocument();
     await user.click(rejectButton);
+    expect(await screen.findByText('拒绝已记录')).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByText('操作授权')).not.toBeInTheDocument());
     // 等待真正回到 idle：SSE 流结束后 send() 的 finally 复位 streaming，「发送」按钮恢复
     await screen.findByRole('button', { name: /发送/ }, { timeout: 5000 });
@@ -308,11 +326,13 @@ describe('AI 前端整合（M12）', () => {
     });
   });
 
-  it('授权响应缺少结果文案时明确仅批准本次操作', async () => {
+  it('根据执行状态显示授权回执，不把请求中的批准回显当作成功', async () => {
+    let consentCalls = 0;
     server.use(
-      http.post('/ai/v1/projects/:projectId/tasks/:taskId/messages/consent', () => HttpResponse.json({
-        mode: 'ai', ok: true, kind: 'workspace', approved: true, result: '',
-      })),
+      http.post('/ai/v1/projects/:projectId/tasks/:taskId/messages/consent', () => { consentCalls += 1; return HttpResponse.json({
+        mode: 'ai', ok: false, kind: 'workspace', approved: true, state: 'executed',
+        card: { state: 'executed', result: '执行凭据已登记' }, result: '',
+      }); }),
     );
     const user = userEvent.setup();
     renderPath('/ai/projects/prj_001');
@@ -320,11 +340,143 @@ describe('AI 前端整合（M12）', () => {
     await user.type(await screen.findByPlaceholderText(/描述计算需求/), '请生成 INCAR 草稿并弹卡');
     await user.click(screen.getByRole('button', { name: /发送/ }));
     await user.click(await screen.findByRole('button', { name: '同意本次' }));
+    await waitFor(() => expect(consentCalls).toBe(1));
 
-    expect(await screen.findByText('已批准本次操作；后续操作仍需单独确认')).toBeInTheDocument();
+    expect(await screen.findByText('执行完成')).toBeInTheDocument();
+    expect(screen.getByText('执行凭据已登记')).toBeInTheDocument();
+    expect(screen.queryByText(/已批准本次操作/)).not.toBeInTheDocument();
   });
 
-  it('授权请求完成前切换任务，不让旧回调污染新任务界面', async () => {
+  it('单卡 failed 显示失败原因，不显示批准成功', async () => {
+    let active = true;
+    const failedCard = pendingCard({ card_id: 'failed-one', kind: 'workspace', summary: '失败的操作' });
+    server.use(
+      http.get('/ai/v1/projects/:projectId/tasks/:taskId/messages', () => HttpResponse.json({
+        messages: [], generation: { running: false }, pending_actions: active ? [failedCard] : [],
+      })),
+      http.post('/ai/v1/projects/:projectId/tasks/:taskId/messages/consent', () => {
+        active = false;
+        return HttpResponse.json({ mode: 'ai', ok: false, kind: 'workspace', approved: true, state: 'failed',
+          card: { state: 'failed', reason: 'source changed after confirmation', result: '未执行' } });
+      }),
+    );
+    const user = userEvent.setup();
+    renderPath('/ai/projects/prj_001');
+    await user.click(await screen.findByRole('button', { name: '同意本次' }));
+    expect(await screen.findByText('执行失败/已过期')).toBeInTheDocument();
+    expect(screen.getByText('未执行')).toBeInTheDocument();
+    expect(screen.getByText('source changed after confirmation')).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText('失败的操作')).not.toBeInTheDocument());
+    expect(screen.queryByText(/已批准本次操作/)).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ['缺失状态', {}],
+    ['冲突状态', { state: 'failed', card: { state: 'executed' } }],
+    ['未知状态', { state: 'mystery' }],
+  ])('将%s响应标记为未确认并保留待处理卡', async (_name, outcome) => {
+    const card = pendingCard({ card_id: 'uncertain-one', kind: 'workspace', summary: '需要保留的卡' });
+    server.use(
+      http.get('/ai/v1/projects/:projectId/tasks/:taskId/messages', () => HttpResponse.json({ messages: [], pending_actions: [card] })),
+      http.post('/ai/v1/projects/:projectId/tasks/:taskId/messages/consent', () => HttpResponse.json({
+        mode: 'ai', ok: true, kind: 'workspace', ...outcome,
+      })),
+    );
+    const user = userEvent.setup();
+    renderPath('/ai/projects/prj_001');
+    await user.click(await screen.findByRole('button', { name: '同意本次' }));
+    expect(await screen.findByText('结果未确认')).toBeInTheDocument();
+    expect(await screen.findByText('需要保留的卡')).toBeInTheDocument();
+  });
+
+  it.each([
+    ['executed', '执行完成', false],
+    ['rejected', '拒绝已记录', false],
+    ['failed', '执行失败/已过期', false],
+    ['expired', '执行失败/已过期', false],
+    ['approved', '已接受，处理中', false],
+    ['executing', '已接受，处理中', false],
+    ['unknown', '结果未确认', false],
+    ['pending', '仍待处理', true],
+  ])('card.state=%s 分类准确，后续刷新不会恢复已处理授权', async (state, label, remainsPending) => {
+    aiDemo.tasks[0].updated_at = '2099-01-01T00:00:00Z';
+    const card = pendingCard({ card_id: 'state-card', kind: 'workspace', summary: '状态合同卡' });
+    let reads = 0;
+    server.use(
+      http.get('/ai/v1/projects/:projectId/tasks/:taskId/messages', () => {
+        reads += 1;
+        return HttpResponse.json({ messages: [], pending_actions: [card] });
+      }),
+      http.post('/ai/v1/projects/:projectId/tasks/:taskId/messages/consent', () => HttpResponse.json({
+        mode: 'ai', ok: true, approved: true, kind: 'workspace', card: { state, result: '权威执行凭据' },
+      })),
+    );
+    const user = userEvent.setup();
+    const queryClient = renderPath('/ai/projects/prj_001');
+    await user.click(await screen.findByRole('button', { name: '同意本次' }));
+    expect(await screen.findByText(label)).toBeInTheDocument();
+    expect(screen.getByText('权威执行凭据')).toBeInTheDocument();
+    await waitFor(() => expect(reads).toBeGreaterThanOrEqual(2));
+    await act(async () => { await queryClient.refetchQueries({ queryKey: ['aiMessages', 'prj_001', 'tsk_001'] }); });
+    await waitFor(() => expect(screen.queryByRole('button', { name: /同意本次/ }) !== null).toBe(remainsPending));
+    if (state === 'unknown') expect(screen.getByText(/执行结果未知，请核验任务状态/)).toBeInTheDocument();
+    if (state !== 'executed') expect(screen.queryByText('执行完成')).not.toBeInTheDocument();
+  });
+
+  it.each(['缺失', '冲突'])('%s状态只在权威刷新确认后移除授权', async (kind) => {
+    const card = pendingCard({ card_id: 'reconciled-card', kind: 'workspace', summary: '刷新确认卡' });
+    let active = true;
+    server.use(
+      http.get('/ai/v1/projects/:projectId/tasks/:taskId/messages', () => HttpResponse.json({ messages: [], pending_actions: active ? [card] : [] })),
+      http.post('/ai/v1/projects/:projectId/tasks/:taskId/messages/consent', () => {
+        active = false;
+        return HttpResponse.json({ mode: 'ai', ok: true, kind: 'workspace',
+          ...(kind === '冲突' ? { state: 'failed', card: { state: 'executed' } } : {}),
+        });
+      }),
+    );
+    const user = userEvent.setup();
+    renderPath('/ai/projects/prj_001');
+    await user.click(await screen.findByRole('button', { name: '同意本次' }));
+    expect(await screen.findByText('结果未确认')).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole('button', { name: '同意本次' })).not.toBeInTheDocument());
+    expect(screen.queryByText('执行完成')).not.toBeInTheDocument();
+  });
+
+  it('HTTP 错误后先刷新权威状态，卡片仍待处理时予以保留', async () => {
+    const card = pendingCard({ card_id: 'http-error-one', kind: 'workspace', summary: '网络错误卡' });
+    server.use(
+      http.get('/ai/v1/projects/:projectId/tasks/:taskId/messages', () => HttpResponse.json({ messages: [], pending_actions: [card] })),
+      http.post('/ai/v1/projects/:projectId/tasks/:taskId/messages/consent', () => HttpResponse.json({ error: 'unavailable' }, { status: 503 })),
+    );
+    const user = userEvent.setup();
+    renderPath('/ai/projects/prj_001');
+    await user.click(await screen.findByRole('button', { name: '同意本次' }));
+    expect(await screen.findByText('结果未确认')).toBeInTheDocument();
+    expect(await screen.findByText('网络错误卡')).toBeInTheDocument();
+  });
+
+  it.each([false, true])('HTTP 错误后刷新失败=%s，仅成功的权威刷新可移除卡', async (refreshFails) => {
+    const card = pendingCard({ card_id: 'http-reconcile', kind: 'workspace', summary: 'HTTP 对账卡' });
+    let attempted = false;
+    server.use(
+      http.get('/ai/v1/projects/:projectId/tasks/:taskId/messages', () => attempted && refreshFails
+        ? HttpResponse.json({ error: 'offline' }, { status: 503 })
+        : HttpResponse.json({ messages: [], pending_actions: attempted ? [] : [card] })),
+      http.post('/ai/v1/projects/:projectId/tasks/:taskId/messages/consent', () => {
+        attempted = true;
+        return HttpResponse.json({ error: 'offline' }, { status: 503 });
+      }),
+    );
+    const user = userEvent.setup();
+    renderPath('/ai/projects/prj_001');
+    await user.click(await screen.findByRole('button', { name: '同意本次' }));
+    expect(await screen.findByText('结果未确认')).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole('button', { name: /同意本次/ }) !== null).toBe(refreshFails));
+    expect(screen.queryByText('执行完成')).not.toBeInTheDocument();
+  });
+
+  it.each([false, true])('授权请求完成前切换任务（返回原任务=%s），旧回调不污染当前选择', async (returnToOriginal) => {
     const card = {
       card_id: 'switch-card',
       tool: 'write_file',
@@ -338,6 +490,8 @@ describe('AI 前端整合（M12）', () => {
     };
     let oldTaskMessageGets = 0;
     let consentFinished = false;
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
     server.use(
       http.get('/ai/v1/projects/:projectId/tasks/:taskId/messages', ({ params }) => {
         const taskId = String(params.taskId);
@@ -349,11 +503,11 @@ describe('AI 前端整合（M12）', () => {
         });
       }),
       http.post('/ai/v1/projects/:projectId/tasks/:taskId/messages/consent', async () => {
-        await delay(180);
+        await gate;
         consentFinished = true;
         return HttpResponse.json({
-          mode: 'ai', ok: true, kind: 'workspace', approved: true,
-          result: '已批准本次操作；后续操作仍需单独确认',
+          mode: 'ai', ok: true, kind: 'workspace', approved: true, state: 'executed',
+          result: '旧请求的执行凭据',
         });
       }),
     );
@@ -364,9 +518,13 @@ describe('AI 前端整合（M12）', () => {
     await user.click(screen.getByText('结构优化 + 静态 + DOS'));
 
     expect(await screen.findByRole('heading', { name: '结构优化 + 静态 + DOS' })).toBeInTheDocument();
+    if (returnToOriginal) await user.click(screen.getByText('带结构计算的能带'));
+    const readsBeforeRelease = oldTaskMessageGets;
+    release();
     await waitFor(() => expect(consentFinished).toBe(true));
-    expect(screen.queryByText('待切换授权卡')).not.toBeInTheDocument();
-    expect(oldTaskMessageGets).toBe(1);
+    if (!returnToOriginal) expect(screen.queryByText('待切换授权卡')).not.toBeInTheDocument();
+    expect(screen.queryByText('旧请求的执行凭据')).not.toBeInTheDocument();
+    expect(oldTaskMessageGets).toBe(readsBeforeRelease);
   });
 
   it('设置页渲染全局设置表单与连通测试入口', async () => {
@@ -435,8 +593,63 @@ describe('AI 前端整合（M12）', () => {
     expect(screen.getByText('2 项待批准（可批量）')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: /全部批准本批（2 项）/ }));
-    await user.click(await screen.findByRole('button', { name: '全部批准' }));
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: /全部批准/ }));
     await waitFor(() => expect(approved).toEqual(['up-1', 'up-2']));
+  });
+
+  it('混合批次逐卡显示执行、失败和 HTTP 未确认结果，并汇总分类', async () => {
+    const cards = [
+      pendingCard({ card_id: 'mix-failed', summary: '会失败' }),
+      pendingCard({ card_id: 'mix-done', summary: '已完成' }),
+      pendingCard({ card_id: 'mix-http', summary: 'HTTP 错误' }),
+    ];
+    const attempted = new Set<string>();
+    server.use(
+      http.get('/ai/v1/projects/:projectId/tasks/:taskId/messages', () => HttpResponse.json({
+        messages: [], generation: { running: false }, pending_actions: cards.filter((card) => !attempted.has(card.card_id)),
+      })),
+      http.post('/ai/v1/projects/:projectId/tasks/:taskId/messages/consent', async ({ request }) => {
+        const body = await request.json() as { card_id: string };
+        if (body.card_id === 'mix-http') return HttpResponse.json({ error: 'temporarily unavailable' }, { status: 503 });
+        attempted.add(body.card_id);
+        const state = body.card_id === 'mix-failed' ? 'failed' : 'executed';
+        return HttpResponse.json({ mode: 'ai', ok: state === 'executed', kind: 'hpc_upload', approved: true,
+          state, card: { state, result: state === 'failed' ? 'source changed' : 'upload finished' } });
+      }),
+    );
+    const user = userEvent.setup();
+    renderPath('/ai/projects/prj_001');
+    expect(await screen.findByText('3 项待批准（可批量）')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /全部批准本批（3 项）/ }));
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: /全部批准/ }));
+    expect(await screen.findByText(/本批处理结果：执行完成 1；拒绝已记录 0；执行失败\/已过期 1；已接受，处理中 0；仍待处理 0；结果未确认 1/)).toBeInTheDocument();
+    expect(screen.getByText('source changed')).toBeInTheDocument();
+    expect(screen.getByText('upload finished')).toBeInTheDocument();
+    expect(await screen.findByText('HTTP 错误')).toBeInTheDocument();
+    expect(screen.getByText('结果未确认')).toBeInTheDocument();
+  });
+
+  it('混批 unknown 与 executing 不冒充完成，陈旧刷新只保留 pending 授权', async () => {
+    const states = ['unknown', 'executing', 'pending'];
+    const cards = states.map((state) => pendingCard({ card_id: state, summary: `批次 ${state}` }));
+    server.use(
+      http.get('/ai/v1/projects/:projectId/tasks/:taskId/messages', () => HttpResponse.json({ messages: [], pending_actions: cards })),
+      http.post('/ai/v1/projects/:projectId/tasks/:taskId/messages/consent', async ({ request }) => {
+        const { card_id: state } = await request.json() as { card_id: string };
+        return HttpResponse.json({ mode: 'ai', ok: true, approved: true, kind: 'hpc_upload', state, card: { state, result: `${state} 凭据` } });
+      }),
+    );
+    const user = userEvent.setup();
+    renderPath('/ai/projects/prj_001');
+    await user.click(await screen.findByRole('button', { name: /全部批准本批（3 项）/ }));
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: /全部批准/ }));
+    expect(await screen.findByText(/本批处理结果：执行完成 0；拒绝已记录 0；执行失败\/已过期 0；已接受，处理中 1；仍待处理 1；结果未确认 1/)).toBeInTheDocument();
+    for (const state of states) expect(screen.getByText(`${state} 凭据`)).toBeInTheDocument();
+    expect(screen.getByText(/执行结果未知，请核验任务状态/)).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /同意本次/ })).toHaveLength(1);
   });
 
   it('科学输入卡不参与批量，只逐项确认', async () => {

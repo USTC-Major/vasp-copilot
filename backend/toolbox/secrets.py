@@ -17,6 +17,12 @@ ACCOUNTS = {
     "mp_api_key": "secret://mp_api_key",
 }
 
+# Shared with every configuration root using this credential namespace. This
+# is ownership/migration state, not a successful-clear receipt: the actual
+# credential must still be read, and every mutation must be verified.
+MANAGED_ACCOUNTS = {name: f"secret-state://{name}" for name in ACCOUNTS}
+_MANAGED_VERSION = "managed-v1"
+
 
 class SecretStorageError(ValueError):
     """Credential operation failed; messages never include secret values."""
@@ -120,6 +126,38 @@ def get_secret(name: str) -> Optional[str]:
     return value
 
 
+def secret_state(name: str) -> tuple[Optional[str], bool]:
+    """Return current value and whether historical plaintext is still eligible."""
+    if name not in ACCOUNTS:
+        raise KeyError(f"未知密钥名: {name}")
+    backend = _get_backend()
+    if backend is None:
+        return None, True
+    try:
+        state = backend.get(MANAGED_ACCOUNTS[name])
+        if state not in {None, _MANAGED_VERSION}:
+            raise SecretStorageError("凭据迁移状态无法识别，请检查本机凭据服务")
+        value = backend.get(ACCOUNTS[name])
+    except SecretStorageError:
+        raise
+    except Exception as exc:
+        raise SecretStorageError("凭据后端读取失败，请检查本机凭据服务") from exc
+    return value, state is None and not value
+
+
+def resolve_secret(name: str, legacy_value: str) -> str:
+    value, legacy_allowed = secret_state(name)
+    return value or (legacy_value if legacy_allowed else "")
+
+
+def _mark_managed(backend: SecretBackend, name: str) -> None:
+    account = MANAGED_ACCOUNTS[name]
+    if backend.get(account) != _MANAGED_VERSION:
+        backend.set(account, _MANAGED_VERSION)
+    if backend.get(account) != _MANAGED_VERSION:
+        raise SecretStorageError("凭据后端未确认迁移状态，未完成变更")
+
+
 def set_secret(name: str, value: str) -> bool:
     """写入并复读确认；后端失败或未实际写入时明确报错。"""
     account = ACCOUNTS.get(name)
@@ -132,6 +170,7 @@ def set_secret(name: str, value: str) -> bool:
         backend.set(account, value)
         if backend.get(account) != value:
             raise SecretStorageError("凭据后端未确认保存，未完成替换")
+        _mark_managed(backend, name)
     except SecretStorageError:
         raise
     except Exception as exc:
@@ -147,6 +186,9 @@ def delete_secret(name: str) -> None:
     if backend is None:
         raise SecretStorageError("凭据后端不可用，无法确认清除")
     try:
+        # Establish ownership before deleting. A failed delete leaves its real
+        # value visible; no other root may subsequently migrate stale plaintext.
+        _mark_managed(backend, name)
         if backend.get(account) is not None:
             backend.delete(account)
         if backend.get(account) is not None:
@@ -165,7 +207,8 @@ def secret_value_for_file(name: str, current: str, previous: str, env_value: str
     迁移失败抛异常，调用方尚未写文件，旧文件保持原样。
     """
     candidate = previous if env_value else current
-    if get_secret(name):
+    stored, legacy_allowed = secret_state(name)
+    if stored or not legacy_allowed:
         return ""
     if not candidate:
         return ""

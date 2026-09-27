@@ -236,7 +236,7 @@ const AiSettingsPage: React.FC = () => {
           <Col span={12}><Text strong>最大作业数</Text><Input value={form.max_jobs} onChange={set("max_jobs")} /></Col>
           <Col span={24}><Text type="secondary" style={{ fontSize: 12 }}>最大作业数 = 同一超算账号「排队 + 运行中」总数上限，全局生效。</Text></Col>
           <Col span={12}><Text strong>监控轮询间隔（秒）</Text><Input value={form.poll_interval_seconds} onChange={set("poll_interval_seconds")} placeholder="60" /></Col>
-          <Col span={24}><Text type="secondary" style={{ fontSize: 12 }}>提交后 AI 按此间隔自动检查超算作业状态（排队/运行/完成/补提后续），直到全部结束并生成报告；下限 10 秒。</Text></Col>
+          <Col span={24}><Text type="secondary" style={{ fontSize: 12 }}>Toolbox 按此间隔查询已提交作业状态；后续计算仍需人工准备和确认。下限 10 秒。</Text></Col>
         </Row>
       ))}
 

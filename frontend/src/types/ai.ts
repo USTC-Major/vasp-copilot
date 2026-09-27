@@ -257,6 +257,19 @@ export interface AiConsentCard {
    *  mp_poscar_write / script_attestation / retry_job / remote_file 等。 */
   kind: string;
   summary: string;
+  state?: string;
+  result?: string;
+}
+
+export interface AiConsentResponse {
+  mode: string;
+  ok: boolean;
+  kind: string;
+  /** Echo of the requested decision; it is not the Toolbox execution outcome. */
+  approved?: boolean;
+  state?: string;
+  result?: string;
+  card?: { state?: string; result?: string; reason?: string };
 }
 
 export interface AiMessagesResponse {

@@ -1188,6 +1188,10 @@ class ToolExecutor:
             (self._task().get("goal") or "")
         local_dir = self.local_dir()
         flow = self._load_flow()
+        from .computation import missing_submission_identity
+        if any(missing_submission_identity(flow, j)
+               for j in flow.get("plan", {}).get("jobs", [])):
+            return ToolFailure('SUBMISSION_UNKNOWN', "历史提交记录存在但作业身份缺失；请人工核对，不能通过重新规划创建新身份")
         if any(j.get("status") in {"submitted", "queued", "running", "unknown", "failed", "not_converged"}
                or j.get("attempt_history") or j.get("submission_state") or j.get("slurm_id")
                for j in flow.get("plan", {}).get("jobs", [])):

@@ -58,10 +58,24 @@ def missing_submission_identity(flow, job, *, current_action_id=None):
         action.get('kind') == 'submit'
         and (not current_action_id or action.get('action_id') != current_action_id)
         and action.get('state') in {'executing', 'executed', 'unknown'}
+        and not _proven_not_dispatched(flow, action, job)
         and (action.get('binding') or {}).get('job_key') == job.get('key')
         and ((action.get('binding') or {}).get('attempt_id') == job.get('attempt_id')
              or (not (action.get('binding') or {}).get('attempt_id') and not job.get('attempt_history')))
         for action in ((flow.get('consent') or {}).get('actions') or {}).values())
+
+
+def _proven_not_dispatched(flow, action, job):
+    """Only a completed zero-dispatch audit with an unused exact scope is safe."""
+    binding = action.get('binding') or {}
+    scope = ((flow.get('consent') or {}).get('computation_scopes') or {}).get(binding.get('scope_id')) or {}
+    return (action.get('state') == 'executed'
+            and action.get('dispatch_state') == 'not_dispatched'
+            and action.get('binding_hash') == digest(binding)
+            and bool(job.get('attempt_id'))
+            and binding.get('attempt_id') == scope.get('attempt_id') == job['attempt_id']
+            and binding.get('job_key') == scope.get('job_key') == job.get('key')
+            and scope.get('submit_limit') == 1)
 
 
 def select_job(flow, args, *, preparing=True):
