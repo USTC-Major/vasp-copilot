@@ -5,7 +5,7 @@ from pathlib import Path
 from fastapi import APIRouter, FastAPI, Request, Query
 from fastapi.responses import JSONResponse, Response
 from . import browse, consent, paths
-from .config import ExecutionConfig, load_settings, save_settings
+from .config import ExecutionConfig, load_settings, mp_environment_value, save_settings
 from .contracts import ToolboxError
 from .service import ExecutionService, envelope
 
@@ -282,8 +282,7 @@ def secret(kind: str, request: Request, payload: dict):
             except Exception as exc:
                 raise ToolboxError('SECRET_STORAGE_FAILED', 'SSH凭据操作失败，未确认变更', 503) from exc
         elif kind == 'mp':
-            import os
-            if os.environ.get('TOOLBOX_MP_API_KEY') or os.environ.get('AI_MODE_MP_API_KEY'):
+            if mp_environment_value():
                 raise ToolboxError('SECRET_ENV_MANAGED', 'MP密钥由环境变量管理，不能通过页面修改')
             try:
                 if value:
@@ -304,9 +303,8 @@ def secret(kind: str, request: Request, payload: dict):
 
 @router.get('/settings/secret-status')
 def secret_status(request: Request):
-    import os
     from .secrets import SecretStorageError, get_secret
-    mp_env = bool(os.environ.get('TOOLBOX_MP_API_KEY') or os.environ.get('AI_MODE_MP_API_KEY'))
+    mp_env = bool(mp_environment_value())
     try:
         cfg = service(request).settings_loader()
         mp_stored = None if mp_env else get_secret('mp_api_key')
