@@ -1,7 +1,8 @@
-import React, { useEffect, useState } from 'react';
-import { Alert, Button, Card, Col, Form, Input, InputNumber, Row, Select, Space, Spin, Typography, message } from 'antd';
+import React, { useEffect, useRef, useState } from 'react';
+import { Alert, Button, Card, Col, Form, Input, InputNumber, Modal, Row, Select, Space, Spin, Typography, message } from 'antd';
 import { useQuery } from '@tanstack/react-query';
 import { toolboxApi } from '../api/client';
+import type { ToolboxSettings } from '../types/toolbox';
 
 const { Title, Paragraph, Text } = Typography;
 
@@ -17,6 +18,19 @@ interface SettingsForm {
   scheduler_backend: string;
 }
 
+/** 服务端设置 -> 表单值；用于加载回填，也用于保存前比对服务端是否已被改动。 */
+const toForm = (settings: ToolboxSettings): SettingsForm => ({
+  max_jobs: settings.max_jobs,
+  poll_interval_seconds: settings.poll_interval_seconds,
+  ssh_name: settings.ssh.name,
+  ssh_host: settings.ssh.host,
+  ssh_port: settings.ssh.port,
+  ssh_username: settings.ssh.username,
+  ssh_known_hosts_path: settings.ssh.known_hosts_path,
+  ssh_identity_file: settings.ssh.identity_file,
+  scheduler_backend: settings.ssh.scheduler_backend ?? 'slurm',
+});
+
 const ToolboxSettingsPage: React.FC = () => {
   const [form] = Form.useForm<SettingsForm>();
   const settingsQuery = useQuery({ queryKey: ['toolboxSettings'], queryFn: () => toolboxApi.getSettings(), retry: false });
@@ -24,27 +38,53 @@ const ToolboxSettingsPage: React.FC = () => {
   const [testing, setTesting] = useState(false);
   const [sshPassword, setSshPassword] = useState('');
   const [mpSecret, setMpSecret] = useState('');
+  // 页面加载时服务端给过的值，用于保存前判断“是否已被他处改动”。
+  const loadedRef = useRef<SettingsForm | null>(null);
 
   useEffect(() => {
     const settings = settingsQuery.data?.settings;
     if (!settings) return;
-    form.setFieldsValue({
-      max_jobs: settings.max_jobs,
-      poll_interval_seconds: settings.poll_interval_seconds,
-      ssh_name: settings.ssh.name,
-      ssh_host: settings.ssh.host,
-      ssh_port: settings.ssh.port,
-      ssh_username: settings.ssh.username,
-      ssh_known_hosts_path: settings.ssh.known_hosts_path,
-      ssh_identity_file: settings.ssh.identity_file,
-      scheduler_backend: settings.ssh.scheduler_backend,
-    });
+    const next = toForm(settings);
+    form.setFieldsValue(next);
+    loadedRef.current = next;
   }, [form, settingsQuery.data]);
+
+  const confirmOverwrite = (conflicts: string[]) =>
+    new Promise<boolean>((resolve) => {
+      Modal.confirm({
+        title: '后台配置已被修改',
+        content: `检测到这些字段在别处已更新：${conflicts.join('、')}。继续保存会用本页的值覆盖它。`,
+        okText: '仍然覆盖',
+        cancelText: '用后台值刷新',
+        onOk: () => resolve(true),
+        onCancel: () => resolve(false),
+      });
+    });
 
   const save = async (values: SettingsForm) => {
     if (!settingsQuery.data?.settings || settingsQuery.isError) return;
     setSaving(true);
     try {
+      // 保存前对齐服务端：页面加载后若他处改过配置，先确认再覆盖，
+      // 避免把旧的 SSH 用户名/主机等设置写回去（AI 设置页同款保护）。
+      const snapshot = loadedRef.current;
+      const latest = await settingsQuery.refetch();
+      const latestSettings = latest?.data?.settings;
+      if (latest?.isError || !latestSettings) {
+        message.error('无法确认最新设置，未保存');
+        return;
+      }
+      const latestForm = toForm(latestSettings);
+      const conflicts = (Object.keys(values) as (keyof SettingsForm)[])
+        .filter((key) => snapshot
+          && String(latestForm[key]) !== String(snapshot[key])
+          && String(values[key]) !== String(latestForm[key]));
+      loadedRef.current = latestForm;
+      if (conflicts.length && !(await confirmOverwrite(conflicts))) {
+        form.setFieldsValue(latestForm);
+        message.info('已改用后台最新配置，未覆盖');
+        return;
+      }
       await toolboxApi.saveSettings({ ...values });
       message.success('Toolbox 执行设置已保存');
       await settingsQuery.refetch();

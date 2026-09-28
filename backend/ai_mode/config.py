@@ -1,7 +1,7 @@
 """智能模式配置加载（优先级：默认值 < 本地私有 config.json < 环境变量）。
 
 - 默认值见 ``defaults()``：max_jobs=20、轮询 60s、LLM 接口默认空等。
-- 本地私有文件 ~/.vasp-ai/config.json 存用户偏好与本地密钥（仅本地，不随项目上传）。
+- 本地私有文件存用户偏好；LLM/MP 密钥迁入系统凭据管理器，兼容读取旧明文。
 - 环境变量 AI_MODE_*（含开关 ENABLE_AI_MODE）最高优先级，便于容器/测试注入。
 - SSH 密码不落本模型：M6 起接入系统凭据管理器；这里仅存连接资料。
 - enabled 一律以独立开关 ENABLE_AI_MODE 为准（本模块在此固化，禁止被文件覆盖）。
@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 
 from . import paths as _paths
 from .gate import is_ai_mode_enabled
+from backend.toolbox.secrets import SecretStorageError, resolve_secret, secret_value_for_file
 
 ENV_PREFIX = "AI_MODE_"
 
@@ -111,6 +112,7 @@ def _env_overrides(env: Mapping[str, str]) -> dict[str, Any]:
 def load_settings(
     *, env: Mapping[str, str] | None = None,
     config_path: Path | None = None,
+    secret_fields: tuple[str, ...] = ("llm_api_key", "mp_api_key"),
 ) -> AiModeConfig:
     """按优先级合并三来源并返回配置对象（默认 < 文件 < 环境变量）。
 
@@ -122,8 +124,19 @@ def load_settings(
     base = defaults()
     if config_path is None:
         config_path = _paths.home_dir() / "ai_config.json"
-    base.update(_read_config_file(config_path if config_path.exists() else _paths.config_path()))
+        source = config_path if config_path.exists() else _paths.config_path()
+    else:
+        source = config_path
+    base.update(_read_config_file(source))
     base.update(_env_overrides(env))
+    # 密钥优先级：环境变量 > 系统凭据管理器 > 本地配置文件（旧明文值仍可读，便于迁移）。
+    for field, variable in (("llm_api_key", f"{ENV_PREFIX}LLM_API_KEY"),
+                            ("mp_api_key", f"{ENV_PREFIX}MP_API_KEY")):
+        if field not in secret_fields:
+            continue
+        if env.get(variable):
+            continue
+        base[field] = resolve_secret(field, str(base.get(field) or ''))
     base["enabled"] = is_ai_mode_enabled(env)
     return AiModeConfig(**base)
 
@@ -132,7 +145,10 @@ def save_settings(config: AiModeConfig, config_path: Path | None = None) -> None
     """把配置写入本地私有文件（enabled 不落盘，开关永远走环境变量）。"""
     if config_path is None:
         config_path = _paths.home_dir() / "ai_config.json"
-    local_before = _read_config_file(config_path)
+    source = config_path
+    if config_path.name == 'ai_config.json' and not config_path.exists():
+        source = config_path.parent / 'config.json'
+    local_before = _read_config_file(source)
     payload = config.model_dump(mode="json")
     payload.pop("enabled", None)
     payload["data_dir"] = str(config.data_dir)
@@ -141,19 +157,25 @@ def save_settings(config: AiModeConfig, config_path: Path | None = None) -> None
     # Model configuration has its own file; execution settings are owned by 8000.
     if config_path.name == 'ai_config.json':
         payload = {k: v for k, v in payload.items() if k.startswith('llm_') or k == 'data_dir'}
-    # Environment secrets have higher runtime precedence but must never be
-    # copied into the local config by an unrelated settings update. Preserve
-    # any prior local value behind the environment override instead.
-    for variable, field in ((f"{ENV_PREFIX}LLM_API_KEY", "llm_api_key"),
-                            (f"{ENV_PREFIX}MP_API_KEY", "mp_api_key")):
-        if os.environ.get(variable):
-            if field in payload:
-                payload[field] = str(local_before.get(field) or "")
+    # 密钥不落明文：迁移进系统凭据管理器；环境变量提供的密钥只参与本次运行，不落盘。
+    for field, variable in (("llm_api_key", f"{ENV_PREFIX}LLM_API_KEY"),
+                            ("mp_api_key", f"{ENV_PREFIX}MP_API_KEY")):
+        if field not in payload:
+            continue
+        payload[field] = secret_value_for_file(
+            field, str(payload.get(field) or ""),
+            str(local_before.get(field) or ""), os.environ.get(variable) or "")
     config_path.parent.mkdir(parents=True, exist_ok=True)
-    config_path.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    from backend.toolbox.storage import atomic_json
+    try:
+        atomic_json(config_path, payload)
+        legacy = config_path.parent / 'config.json'
+        if config_path.name == 'ai_config.json' and legacy.is_file():
+            from backend.toolbox.config import scrub_legacy_secret
+            if payload.get('llm_api_key') == '':
+                scrub_legacy_secret(legacy, 'llm_api_key')
+    except (OSError, ValueError) as exc:
+        raise SecretStorageError('配置写入或旧密钥清理失败；凭据状态可能已改变，请重新查询') from exc
 
 
 from backend.toolbox.config import execution_mode  # Compatibility value classifier.

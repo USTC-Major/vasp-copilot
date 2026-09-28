@@ -118,8 +118,7 @@ class SessionStore:
     def summaries(self) -> list[dict]:
         """启动列会话：简洁摘要字段（供 UI 续接列表）。"""
         out = []
-        for path in sorted(self.root.glob("*.json"),
-                           key=lambda p: p.stat().st_mtime, reverse=True):
+        for path in self.root.glob("*.json"):
             try:
                 s = self.load(path.stem)
             except SessionStoreError:
@@ -134,4 +133,9 @@ class SessionStore:
                 "summary": snap.last_summary if snap else None,
                 "occupancy": snap.occupancy if snap else 0.0,
             })
+        # 按会话自身的 updated_at 排序（降序），session_id 兜底保证同刻写入也稳定。
+        # 原实现按文件 mtime 排序：同一时间刻度内的两次保存会并列，顺序随机，
+        # 导致「继续会话」列表顺序不稳定（测试也因此在快机器上偶发失败）。
+        out.sort(key=lambda item: (str(item["updated_at"] or ""), item["session_id"]),
+                 reverse=True)
         return out

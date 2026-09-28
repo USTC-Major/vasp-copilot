@@ -59,6 +59,7 @@ def create_task(project_id: str, request: Request, payload: dict):
         task = svc.store.create_task(project_id, **payload)
     return envelope(task=task)
 
+
 @router.patch('/projects/{project_id}/tasks/{task_id}')
 def update_task(project_id: str, task_id: str, request: Request, payload: dict):
     svc = service(request)
@@ -89,7 +90,9 @@ def update_task(project_id: str, task_id: str, request: Request, payload: dict):
                         job.pop('draft', None)
                 for scope in (raw.get('consent') or {}).get('computation_scopes', {}).values():
                     if scope.get('state') in {'proposed', 'active'}:
-                        scope['state'] = 'revoked'
+                        scope.update(state='revoked',
+                                     revoked_by='system',
+                                     reason='工作区已变更，需按新工作区重新授权')
                 for action in (raw.get('consent') or {}).get('actions', {}).values():
                     if action.get('state') in {'pending', 'approved'}:
                         action.update(state='expired', result='工作区已变更，必须重新确认')
@@ -228,6 +231,7 @@ def settings(request: Request):
 
 @router.put('/settings')
 def update_settings(request: Request, payload: dict):
+    from .secrets import SecretStorageError
     svc = service(request)
     allowed = set(ExecutionConfig.model_fields) - {'data_dir', 'mp_api_key'}
     if set(payload) - allowed:
@@ -235,36 +239,65 @@ def update_settings(request: Request, payload: dict):
     with svc._guard:
         try:
             cfg = ExecutionConfig(**(svc.settings_loader().model_dump() | payload))
-            if not 10 <= cfg.poll_interval_seconds <= 3600 or cfg.max_jobs < 1 or not 1 <= cfg.ssh_port <= 65535:
+            if (not 10 <= cfg.poll_interval_seconds <= 3600 or cfg.max_jobs < 1
+                    or not 1 <= cfg.ssh_port <= 65535):
                 raise ValueError('range')
+        except SecretStorageError:
+            raise
         except Exception:
             raise ToolboxError('INVALID_SETTINGS', '请检查端口、作业上限和轮询间隔（10–3600秒）') from None
-        save_settings(cfg, svc.root / 'toolbox_config.json')
+        try:
+            save_settings(cfg, svc.root / 'toolbox_config.json')
+        except SecretStorageError:
+            raise
+        except (OSError, ValueError) as exc:
+            raise SecretStorageError('配置保存失败；凭据状态可能已改变，请重新查询') from exc
     return settings_payload(svc)
 
 @router.post('/settings/secrets/{kind}')
 def secret(kind: str, request: Request, payload: dict):
     svc = service(request)
+    from .secrets import SecretStorageError, delete_secret, get_secret, set_secret
     value = payload.get('value')
     if not isinstance(value, str):
         raise ToolboxError('INVALID_SECRET', 'value必须为字符串；空字符串清除')
     with svc._guard:
-        cfg = svc.settings_loader()
+        try:
+            cfg = svc.settings_loader()
+        except SecretStorageError as exc:
+            raise ToolboxError('SECRET_STORAGE_FAILED', str(exc), 503) from exc
         if kind == 'ssh':
             if not cfg.ssh_host or not cfg.ssh_username:
                 raise ToolboxError('SSH_UNCONFIGURED', '请先设置SSH主机和用户名')
             from .ssh.credentials import KeyringCredentialStore
             credentials = KeyringCredentialStore()
-            if value:
-                credentials.set_password(cfg.ssh_host, cfg.ssh_username, value)
-            else:
-                credentials.delete_password(cfg.ssh_host, cfg.ssh_username)
+            try:
+                if value:
+                    credentials.set_password(cfg.ssh_host, cfg.ssh_username, value)
+                else:
+                    credentials.delete_password(cfg.ssh_host, cfg.ssh_username)
+                stored = credentials.get_password(cfg.ssh_host, cfg.ssh_username)
+                if (stored or '') != value:
+                    raise SecretStorageError('凭据后端未确认SSH密码变更')
+            except Exception as exc:
+                raise ToolboxError('SECRET_STORAGE_FAILED', 'SSH凭据操作失败，未确认变更', 503) from exc
         elif kind == 'mp':
             import os
             if os.environ.get('TOOLBOX_MP_API_KEY') or os.environ.get('AI_MODE_MP_API_KEY'):
                 raise ToolboxError('SECRET_ENV_MANAGED', 'MP密钥由环境变量管理，不能通过页面修改')
-            cfg.mp_api_key = value
-            save_settings(cfg, svc.root / 'toolbox_config.json')
+            try:
+                if value:
+                    set_secret('mp_api_key', value)
+                else:
+                    delete_secret('mp_api_key')
+                cfg.mp_api_key = value
+                save_settings(cfg, svc.root / 'toolbox_config.json')
+                stored = get_secret('mp_api_key')
+                configured = bool(svc.settings_loader().mp_api_key)
+                if (stored or '') != value or configured != bool(value):
+                    raise SecretStorageError('密钥变更后的实际状态未通过核对')
+            except (SecretStorageError, OSError, ValueError) as exc:
+                raise ToolboxError('SECRET_STORAGE_FAILED', 'MP凭据操作失败，未确认变更；请重新查询状态', 503) from exc
         else:
             raise ToolboxError('INVALID_SECRET_KIND', '不支持的凭据类型')
     return envelope(configured=bool(value))
@@ -272,17 +305,26 @@ def secret(kind: str, request: Request, payload: dict):
 @router.get('/settings/secret-status')
 def secret_status(request: Request):
     import os
-    cfg = service(request).settings_loader()
+    from .secrets import SecretStorageError, get_secret
     mp_env = bool(os.environ.get('TOOLBOX_MP_API_KEY') or os.environ.get('AI_MODE_MP_API_KEY'))
+    try:
+        cfg = service(request).settings_loader()
+        mp_stored = None if mp_env else get_secret('mp_api_key')
+    except SecretStorageError as exc:
+        raise ToolboxError('SECRET_STORAGE_FAILED', str(exc), 503) from exc
     ssh_configured = False
     if cfg.ssh_host and cfg.ssh_username:
         from .ssh.credentials import KeyringCredentialStore
         try:
             ssh_configured = bool(KeyringCredentialStore().get_password(cfg.ssh_host, cfg.ssh_username))
-        except Exception:
-            pass
+        except Exception as exc:
+            raise ToolboxError('SECRET_STORAGE_FAILED', 'SSH凭据状态读取失败', 503) from exc
     return envelope(secrets={
-        'mp': {'configured': bool(cfg.mp_api_key), 'source': 'environment' if mp_env else 'local_config' if cfg.mp_api_key else 'none', 'manageable': not mp_env},
+        'mp': {'configured': bool(cfg.mp_api_key),
+               'source': ('environment' if mp_env else
+                          'credential_store' if mp_stored else
+                          'local_config' if cfg.mp_api_key else 'none'),
+               'manageable': not mp_env},
         'ssh': {'configured': ssh_configured, 'source': 'credential_store' if ssh_configured else 'none', 'manageable': True}})
 
 @router.post('/settings/test/mp')
@@ -357,5 +399,9 @@ def create_toolbox_app(*, root: Path | None = None, settings_loader=None, orch_f
             app.state.toolbox.close()
     app = FastAPI(lifespan=lifespan)
     app.add_exception_handler(ToolboxError, error_handler)
+    from .secrets import SecretStorageError
+    async def secret_storage_error(request, exc):
+        return await error_handler(request, ToolboxError('SECRET_STORAGE_FAILED', str(exc), 503))
+    app.add_exception_handler(SecretStorageError, secret_storage_error)
     app.include_router(router, prefix='/api/v1')
     return app

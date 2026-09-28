@@ -1,4 +1,4 @@
-"""VASP-Doctor -> BE-A workflow endpoints (IR-01/IR-03/IR-05).
+"""VASP-Copilot -> BE-A workflow endpoints (IR-01/IR-03/IR-05).
 
 POST /workflows/plan      - recipe combination preview + pending confirmations
 POST /workflows/generate  - run BE-A generation pipeline, cache bundle

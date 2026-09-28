@@ -1,5 +1,5 @@
 {
-  "bundle_sha256": "1fbc92f7ca1b3e012458b97ba05f95f7b2d9d4ee3f09740eb7e4bddcc0b79124",
+  "bundle_sha256": "f6cf0c208b18a227a0f2c3c4086e8596683fe53bd326fd6648abd2d70e006851",
   "created_at": "2026-08-10T00:00:00Z",
   "files": [
     {
@@ -19,8 +19,8 @@
     },
     {
       "path": "01_relax/submit.sh",
-      "sha256": "cbd299822cb6ef888e84b226bd81ce893ab28fcc945e864b64f01a0691efb9ae",
-      "size_bytes": 298
+      "sha256": "19178ebac281191b1ab281f6228b3918c88d8c62d6d7671c3c49279b39ff4285",
+      "size_bytes": 299
     },
     {
       "path": "02_static/INCAR",
@@ -39,8 +39,8 @@
     },
     {
       "path": "02_static/submit.sh",
-      "sha256": "2d07bd3bb01ce97e93f7c4234a1d94f935dff55cbf1e598c6aee52deab4fa9d6",
-      "size_bytes": 299
+      "sha256": "ad031a9400da1fd4ccbdcbcf7c00a177a9cf2d560afc6b7d4badfebc80967960",
+      "size_bytes": 300
     },
     {
       "path": "03_dos/INCAR",
@@ -59,8 +59,8 @@
     },
     {
       "path": "03_dos/submit.sh",
-      "sha256": "1857658f30f6a00bb7622361f7224786cdcefbb7da367cd7650785e1b95dd020",
-      "size_bytes": 296
+      "sha256": "8ba3a42234dee6d0cfe6c848533335188c3d77b8b23c97e070972e1887221974",
+      "size_bytes": 297
     },
     {
       "path": "INPUT_CHECK_REPORT.md",

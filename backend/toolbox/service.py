@@ -92,7 +92,10 @@ class ExecutionService:
         flow = {**raw, 'execution_mode': raw.get('execution_mode', 'None'),
                 'phase': raw.get('phase', ''), 'goal': raw.get('goal') or task.get('goal', ''),
                 'strategy': plan.get('strategy', ''), 'jobs': plan.get('jobs', []),
-                'local_dir': raw.get('local_dir', ''), 'hpc_dir': raw.get('hpc_dir', ''),
+                # hpc_dir 回退到任务里选定的超算工作区：规划前它就是实际生效的远端根，
+                # 页面与 AI 都不该显示成"未设置"。
+                'local_dir': raw.get('local_dir', ''),
+                'hpc_dir': raw.get('hpc_dir') or task.get('hpc_workspace') or '',
                 'waiting': raw.get('waiting', []), 'report': raw.get('report', ''),
                 'precheck': raw.get('precheck') or {'ok': False, 'issues': []},
                 'draft': raw.get('draft', []), 'artifacts': raw.get('artifacts', {})}
@@ -176,9 +179,10 @@ class ExecutionService:
                 # Do not expose credentials/upstream exception bodies.
                 raise ToolboxError('TOOL_EXECUTION_FAILED', f'工具执行失败：{type(exc).__name__}', 400) from exc
             self.store.append_event(project_id, task_id, 'tool.' + name, str(result))
-            return envelope(task_id=task_id, ok=error is None, error=error,
-                            result=str(result), pending=pending,
-                            flow=self.detail(project_id, task_id)['flow'])
+            value = envelope(task_id=task_id, ok=error is None, error=error,
+                             result=str(result), pending=pending,
+                             flow=self.detail(project_id, task_id)['flow'])
+        return value
 
     def resolve(self, project_id, task_id, card_id, approved, note='', scope_confirmation=None):
         if not isinstance(approved, bool):
@@ -188,6 +192,12 @@ class ExecutionService:
             card = consent.get_card(self.store, project_id, task_id, card_id)
             if card is None:
                 raise ToolboxError('CARD_NOT_FOUND', '授权卡不存在', 404)
+            if ((card.get('binding') or {}).get('operation') in {
+                    'potcar_generate', 'script_deploy', 'file_prepare_grant'}
+                    and card.get('state') in {'pending', 'approved'}):
+                consent.resolve_card(self.store, project_id, task_id, card_id,
+                                     approved=approved, note=note)
+                card = consent.get_card(self.store, project_id, task_id, card_id)
             if card.get('kind') == 'remote_file':
                 from .file_actions import public, file_error
                 try:

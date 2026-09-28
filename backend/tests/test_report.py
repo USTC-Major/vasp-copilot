@@ -67,7 +67,7 @@ def test_report_generate_produces_markdown_and_metadata():
     assert len(meta.sha256) == 64
     assert meta.sections == ["summary", "input_overview", "issues", "fixes",
                              "missing_evidence", "disclaimer"]
-    assert "VASP-Doctor" in body
+    assert "VASP-Copilot" in body
     assert "summary" in body
     assert "input_overview" in body
     assert "disclaimer" in body

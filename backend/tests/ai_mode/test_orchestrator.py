@@ -602,12 +602,20 @@ def test_wait_queue_until_slot_then_backfill(env):
     assert not [call for call in hpc.calls if call.startswith("sbatch")]
 
     # Capacity recovery alone cannot inherit the prior confirmation.
+    held_action = next(a for a in flow['consent']['actions'].values()
+                       if a.get('kind') == 'submit' and a.get('state') == 'executed')
+    assert held_action['dispatch_state'] == 'not_dispatched'
+    held_scope = flow['consent']['computation_scopes'][held_action['binding']['scope_id']]
+    assert held_scope['submit_limit'] == 1
     hpc.squeue_rows.clear()
     assert store.get_task(pid, tid)["flow"]["phase"] == "await_submit"
     assert not [call for call in hpc.calls if call.startswith("sbatch")]
     submitted = _confirmed_submit(orch, store, pid, tid)
     assert "slurm id 4201" in submitted
     assert len([call for call in hpc.calls if call.startswith("sbatch")]) == 1
+    latest = store.get_task(pid, tid)['flow']
+    assert any(a.get('dispatch_state') == 'dispatched'
+               for a in latest['consent']['actions'].values())
 
 
 def test_begin_uses_user_workspace_as_compute_dir(env):

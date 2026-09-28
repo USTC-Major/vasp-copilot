@@ -150,6 +150,8 @@ export interface AiSettingsOut {
   max_jobs: number;
   poll_interval_seconds?: number;
   billing_estimate_enabled?: boolean;
+  /** 单条消息进入模型上下文的上限（超出部分会被截断，页面据此提示用户）。 */
+  message_char_limit?: number;
   llm: AiSettingsLlm;
   ssh: { name: string; host: string; port: number; username: string; known_hosts_path?: string; identity_file?: string; scheduler_backend?: "slurm" | "paracloud" };
   materials_project: { api_key: string };
@@ -251,8 +253,24 @@ export interface AiConsentCard {
   reason: string;
   options: string[];
   batch_key: string;
-  kind: 'workspace' | 'submit' | 'remote_file';
+  /** 卡片类型：submit / copy_inputs / hpc_upload / incar_write / kpoints_write /
+   *  mp_poscar_write / script_attestation / retry_job / remote_file 等。 */
+  kind: string;
   summary: string;
+  state?: string;
+  result?: string;
+}
+
+export interface AiConsentResponse {
+  mode: string;
+  ok: boolean;
+  kind: string;
+  /** Echo of the requested decision; it is not the Toolbox execution outcome. */
+  approved?: boolean;
+  state?: string;
+  result?: string | null;
+  card?: { state?: string; result?: string | null; reason?: string | null };
+  error?: { code?: string; message?: string; retryable?: boolean } | null;
 }
 
 export interface AiMessagesResponse {

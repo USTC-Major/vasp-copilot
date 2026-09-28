@@ -4,16 +4,18 @@
 import json
 from types import SimpleNamespace
 import hashlib
+import time
 
 import pytest
 
 from ai_mode.agent import parse_turn, run_agent, run_agent_stream
-from ai_mode.agent.runner import _strip_receipt_wait
+from ai_mode.agent.runner import _strip_receipt_wait, _wait_card_group
 from ai_mode.agent.protocol import INTENT_MARK, TOOL_MARK
 from ai_mode.agent.tools import _CONSENT_PENDING
 from backend.tests.toolbox.legacy_bridge import ToolExecutor
 from ai_mode.config import AiModeConfig
-from backend.toolbox.consent import claim_action, get_card, resolve_card
+from backend.toolbox.consent import (claim_action, get_card, list_cards,
+                                     resolve_card)
 from ai_mode.llm.fake import FakeLLM
 from backend.tests.toolbox.legacy_bridge import ProjectStore
 from backend.tests.valid_vasp_inputs import FILES as VALID_INPUTS
@@ -21,6 +23,49 @@ from backend.tests.valid_vasp_inputs import FILES as VALID_INPUTS
 
 def _intent(kind: str = "compute") -> str:
     return INTENT_MARK + json.dumps({"intent": kind}, ensure_ascii=False)
+
+
+def test_execution_readiness_follows_the_toolbox_settings():
+    """就绪状态取执行侧（Toolbox /settings），不取智能模式自己的配置。"""
+    seen = []
+
+    class _Client:
+        def __init__(self, value=None, error=None):
+            self.value, self.error = value, error
+
+        def request(self, method, path, **kwargs):
+            seen.append((method, path, kwargs))
+            if self.error:
+                raise self.error
+            return self.value
+
+    payload = {"backend_mode": "Real",
+               "settings": {"ssh": {"host": "h", "username": "u"},
+                            "materials_project": {"configured": True},
+                            "allow_potcar_assembly": True,
+                            "allow_script_deploy": True,
+                            "submit_script_template": "/home/u/tpl/run.sh"}}
+    from ai_mode.agent.tools import ToolExecutor as AgentToolExecutor
+    executor = AgentToolExecutor(store=None, project_id="p", task_id="t",
+                                 client=_Client(payload))
+    assert executor.execution_readiness() == {"ssh": True, "mp": True, "backend_mode": "Real"}
+    assert seen == [("GET", "/settings", {})]
+
+    empty = AgentToolExecutor(store=None, project_id="p", task_id="t",
+                              client=_Client({"backend_mode": "None",
+                                              "settings": {"ssh": {},
+                                                           "materials_project": {},
+                                                           "allow_potcar_assembly": False,
+                                                           "allow_script_deploy": False}}))
+    assert empty.execution_readiness() == {"ssh": False, "mp": False,
+                                           "backend_mode": "None"}
+
+    # 查询失败/响应异常一律返回 {}，让提示词退回原判定，不影响对话
+    broken = AgentToolExecutor(store=None, project_id="p", task_id="t",
+                               client=_Client(error=RuntimeError("toolbox down")))
+    assert broken.execution_readiness() == {}
+    assert AgentToolExecutor(store=None, project_id="p", task_id="t",
+                             client=_Client({"settings": "nope"})).execution_readiness() == {}
 
 
 def _tool(name: str, **args) -> str:
@@ -123,7 +168,9 @@ def test_agent_compute_plans_and_runs(ctx):
     llm.enqueue("规划完成；工作量已真实落库。")
     answer = run_agent(ctx.store, ctx.pid, ctx.tid, "帮我做一个结构优化",
                        cfg=ctx.cfg, llm_factory=lambda c: llm)
-    assert "结构优化" in answer
+    # 最终回答 = 最后一次工具动作之后的正文；调用前的叙述不再计入（见更新记录第 16 项）。
+    assert "规划完成；工作量已真实落库。" in answer
+    assert "我先把结构优化作业规划出来。" not in answer
     flow = ctx.store.get_task(ctx.pid, ctx.tid)["flow"]
     assert flow["phase"] == "running"
     assert flow["plan"]["jobs"][0]["label"] == "结构优化"
@@ -240,15 +287,51 @@ def test_incar_confirmation_is_single_use_and_atomic(ctx):
                             approved=True)
     assert resolved["state"] == "approved"
     result = ex.execute_action(action_id)
-    assert "已原子写入" in result
+    assert "已写入" in result
     target = ex.local_dir() / "INCAR"
     assert target.read_text(encoding="utf-8") == "ENCUT = 520\nEDIFF = 1e-06\n"
     assert get_card(ctx.store, ctx.pid, ctx.tid, action_id)["state"] == "executed"
     before = target.stat().st_mtime_ns
-    assert "已原子写入" in ex.execute_action(action_id)
+    assert "已写入" in ex.execute_action(action_id)
     assert target.stat().st_mtime_ns == before
     again = resolve_card(ctx.store, ctx.pid, ctx.tid, action_id, approved=True)
     assert again["conflict"] is True
+
+
+def test_propose_incar_normalizes_text_logical_and_single_element_values(ctx):
+    """LREAL=".FALSE."、ENCUT="520"、MAGMOM=[0.6] 这类写法必须被归一化，不再自检失败。"""
+    ex = ToolExecutor(store=ctx.store, project_id=ctx.pid, task_id=ctx.tid,
+                      cfg=ctx.cfg)
+    pending = ex.handle("propose_incar", {"entries": [
+        {"tag": "ENCUT", "value": "520"},
+        {"tag": "LREAL", "value": ".FALSE."},
+        {"tag": "MAGMOM", "value": [0.6]},
+    ]})
+    assert pending.startswith(_CONSENT_PENDING), pending
+    action_id = pending[len(_CONSENT_PENDING):]
+    card = get_card(ctx.store, ctx.pid, ctx.tid, action_id)
+    values = {item["tag"]: item["value"] for item in card["binding"]["entries"]}
+    assert values["ENCUT"] == 520
+    assert values["LREAL"] is False
+    assert values["MAGMOM"] == [0.6]
+
+
+def test_propose_incar_surfaces_roundtrip_diff_instead_of_crashing(ctx, monkeypatch):
+    """round-trip 自检失败要返回带参数名的结构化错误，不能异常穿透让模型只能猜。"""
+    import backend.toolbox.incar_draft as incar_draft
+
+    def boom(_entries):
+        raise incar_draft.IncarRoundtripMismatch(
+            "INCAR round-trip mismatch after serialization",
+            details={"diffs": [{"parameter": "SIGMA", "original": "0.05",
+                                "reparsed": "None"}]})
+
+    monkeypatch.setattr(incar_draft, "serialize_entries", boom)
+    ex = ToolExecutor(store=ctx.store, project_id=ctx.pid, task_id=ctx.tid,
+                      cfg=ctx.cfg)
+    result = ex.handle("propose_incar", {"entries": [{"tag": "SIGMA", "value": 0.05}]})
+    assert "AI_INCAR_DRAFT_INVALID" in result
+    assert "SIGMA" in result
 
 
 def test_interrupted_action_blocks_a_second_execution(ctx):
@@ -342,11 +425,11 @@ def test_kpoints_generator_is_deterministic_confirmed_and_single_use(ctx):
     action = get_card(ctx.store, ctx.pid, ctx.tid, action_id)
     assert action["binding"]["execution_kind"] == "deterministic_kpoints_generator"
     assert "6 6 4" in action["summary"]
-    assert "已原子写入" in _approve_pending(ex, pending)
-    expected = "Generated by VASP-Doctor\n0\nGamma\n6 6 4\n0 0 0\n"
+    assert "已写入" in _approve_pending(ex, pending)
+    expected = "Generated by VASP-Copilot\n0\nGamma\n6 6 4\n0 0 0\n"
     assert target.read_text(encoding="utf-8") == expected
     before = target.read_bytes()
-    assert "已原子写入" in ex.execute_action(action_id)
+    assert "已写入" in ex.execute_action(action_id)
     assert target.read_bytes() == before
 
 
@@ -1093,7 +1176,8 @@ def test_executor_hpc_upload_direct_without_card(ctx, tmp_path):
     ex = ToolExecutor(store=ctx.store, project_id=ctx.pid, task_id=tk["id"],
                       cfg=ctx.cfg, orch=SimpleNamespace(hpc=hpc))
     out = ex.handle("hpc_upload", {"source": "extra.bin"})
-    assert "AI_ARTIFACT_REQUIRED" in out
+    # 键名不对/缺 artifact_id 现在返回可自查的参数错误（原为误导性的 AI_ARTIFACT_REQUIRED）
+    assert "INVALID_TOOL_ARGUMENT" in out
     assert not hpc.written
     assert not hpc.mkdir_calls
     flow = (ctx.store.get_task(ctx.pid, tk["id"]) or {}).get("flow") or {}
@@ -1121,7 +1205,7 @@ def test_registered_artifact_upload_is_confirmed_and_single_use(ctx, tmp_path):
     assert action["binding"]["source_sha256"] == ex._sha256_file(ws / "INCAR")
     assert action["binding"]["execution_mode"] == "Fake"
     assert action["options"] == ["同意本次", "拒绝"]
-    assert "已通过 SFTP 上传" in _approve_pending(ex, pending)
+    assert "已把这份输入上传到超算工作区" in _approve_pending(ex, pending)
     assert hpc.written[f"{root}/relax/INCAR"] == (ws / "INCAR").read_bytes()
     assert hpc.write_calls == [f"{root}/relax/INCAR"]
     assert hpc.sha256_file(f"{root}/relax/INCAR") == \
@@ -1158,17 +1242,17 @@ def test_executor_hpc_upload_rejects_unsafe_and_missing(ctx, tmp_path):
     ex = ToolExecutor(store=ctx.store, project_id=ctx.pid, task_id=tk["id"],
                       cfg=ctx.cfg, orch=SimpleNamespace(hpc=hpc))
     out_esc = ex.handle("hpc_upload", {"source": "../escape.txt"})
-    assert "AI_ARTIFACT_REQUIRED" in out_esc
-    assert "AI_ARTIFACT_REQUIRED" in ex.handle(
+    assert "INVALID_TOOL_ARGUMENT" in out_esc
+    assert "INVALID_TOOL_ARGUMENT" in ex.handle(
         "hpc_upload", {"source": "a.txt", "dest": "/abs/dest"})
-    assert "AI_ARTIFACT_REQUIRED" in ex.handle("hpc_upload", {})
-    assert "AI_ARTIFACT_REQUIRED" in ex.handle(
+    assert "INVALID_TOOL_ARGUMENT" in ex.handle("hpc_upload", {})
+    assert "INVALID_TOOL_ARGUMENT" in ex.handle(
         "hpc_upload", {"source": "missing.txt"})
     assert hpc.written == {}
     # 未连超算：如实说明
     ex2 = ToolExecutor(store=ctx.store, project_id=ctx.pid, task_id=tk["id"],
                        cfg=ctx.cfg, orch=SimpleNamespace(hpc=None))
-    assert "AI_ARTIFACT_REQUIRED" in ex2.handle(
+    assert "INVALID_TOOL_ARGUMENT" in ex2.handle(
         "hpc_upload", {"source": "INCAR"})
 
 
@@ -1428,3 +1512,139 @@ def test_copy_inputs_rejects_off_plan_dir(ctx):
                                     "job_key": "static"})
     assert "不是任何已规划作业的目录" in out
     assert not (ex.local_dir() / "static").exists()
+
+
+# --- 参数诊断回归：模型传错键名时，回执必须说清「收到了什么、应该传什么」 ---
+
+def test_hpc_upload_rejects_wrong_argument_name_with_hint(ctx):
+    """用户实测的失败形态：把路径当参数传（path=...），此前只回一句误导性的
+    「上传只接受已登记的 artifact_id」，看不出真正原因是键名不对。"""
+    ex = ToolExecutor(store=ctx.store, project_id=ctx.pid, task_id=ctx.tid,
+                      cfg=ctx.cfg)
+    out = ex.handle("hpc_upload", {"path": "relax/POSCAR", "job_key": "relax"})
+    assert "INVALID_TOOL_ARGUMENT" in out
+    assert "path" in out                      # 回显收到的键名
+    assert "artifact_id" in out               # 指明正确参数
+    assert "AI_ARTIFACT_REQUIRED" not in out  # 不再复用误导性错误码
+
+
+def test_hpc_upload_missing_artifact_id_echoes_received_keys(ctx):
+    ex = ToolExecutor(store=ctx.store, project_id=ctx.pid, task_id=ctx.tid,
+                      cfg=ctx.cfg)
+    out = ex.handle("hpc_upload", {"job_key": "relax"})
+    assert "INVALID_TOOL_ARGUMENT" in out and "artifact_id" in out
+    assert "job_key" in out
+
+
+def test_copy_inputs_rejects_unknown_argument(ctx):
+    ex = ToolExecutor(store=ctx.store, project_id=ctx.pid, task_id=ctx.tid,
+                      cfg=ctx.cfg)
+    out = ex.handle("copy_inputs", {"files": ["relax/POSCAR"], "job_key": "relax"})
+    assert "INVALID_TOOL_ARGUMENT" in out and "artifact_ids" in out
+
+
+def test_action_failure_text_keeps_error_code():
+    """卡片执行失败必须保留错误码（此前只打印异常类名，丢掉可行动的原因）。"""
+    from backend.toolbox.commands import _action_failure_text
+
+    class Fake(Exception):
+        code = "SCOPE_EXPIRED"
+        message = "Owner file permission is expired"
+
+    exc = Fake("boom")
+    text = _action_failure_text(exc)
+    assert "SCOPE_EXPIRED" in text and "expired" in text
+    assert _action_failure_text(ValueError("plain")).startswith("操作失败且未重试：ValueError")
+
+
+# ---------------- 同类卡片一次批准（用户点一次，整批继续） ----------------
+def _two_jobs(ctx):
+    ToolExecutor(store=ctx.store, project_id=ctx.pid, task_id=ctx.tid,
+                 cfg=ctx.cfg).handle("plan", {"jobs": [
+        {"key": "relax", "label": "结构优化", "kind": "relax"},
+        {"key": "static", "label": "静态自洽", "kind": "static"}]})
+
+
+def _two_kpoints_cards(ctx):
+    ex = ToolExecutor(store=ctx.store, project_id=ctx.pid, task_id=ctx.tid,
+                      cfg=ctx.cfg)
+    notes = [
+        ex.handle("generate_kpoints", {"job_key": "relax", "grid": [4, 4, 4],
+                                       "centering": "Gamma"}),
+        ex.handle("generate_kpoints", {"job_key": "static", "grid": [6, 6, 6],
+                                       "centering": "Gamma"}),
+    ]
+    assert all(note.startswith(_CONSENT_PENDING) for note in notes)
+    return ex, [(None, note[len(_CONSENT_PENDING):]) for note in notes]
+
+
+def test_wait_card_group_converges_after_one_batch_approval(ctx):
+    """两张卡都已批准执行时，整批等待立刻收敛并带回两条回执。"""
+    _two_jobs(ctx)
+    ex, cards = _two_kpoints_cards(ctx)
+    for _req, card_id in cards:
+        resolve_card(ctx.store, ctx.pid, ctx.tid, card_id, approved=True)
+        ex.execute_action(card_id)
+    state, note = _wait_card_group(ctx.store, ctx.pid, ctx.tid, cards,
+                                   executor=ex, should_stop=None)
+    assert state == "executed"
+    assert note.count("KPOINTS") >= 2
+    assert (ex.local_dir() / "relax" / "KPOINTS").is_file()
+    assert (ex.local_dir() / "static" / "KPOINTS").is_file()
+
+
+def test_wait_card_group_stops_at_the_first_unapproved_card(ctx):
+    """整批里有一张被拒 → 立即返回拒绝，不继续等后面的卡。"""
+    _two_jobs(ctx)
+    ex, cards = _two_kpoints_cards(ctx)
+    resolve_card(ctx.store, ctx.pid, ctx.tid, cards[0][1], approved=True)
+    ex.execute_action(cards[0][1])
+    resolve_card(ctx.store, ctx.pid, ctx.tid, cards[1][1], approved=False)
+    state, note = _wait_card_group(ctx.store, ctx.pid, ctx.tid, cards,
+                                   executor=ex, should_stop=None)
+    assert state == "denied"
+    assert not (ex.local_dir() / "static" / "KPOINTS").exists()
+
+
+def test_stream_turn_emits_two_cards_and_needs_one_approval(ctx):
+    """同一条回复里的两个待确认操作会同时出卡；用户整批批准后这一轮直接继续。"""
+    import threading
+    _two_jobs(ctx)
+    llm = FakeLLM()
+    llm.enqueue(_tool("generate_kpoints", job_key="relax", grid=[4, 4, 4],
+                      centering="Gamma")
+                + _tool("generate_kpoints", job_key="static", grid=[6, 6, 6],
+                        centering="Gamma"))
+    llm.enqueue("两个网格都已生成。")
+
+    approved: set[str] = set()
+
+    def approver():
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline and len(approved) < 2:
+            pending = list_cards(ctx.store, ctx.pid, ctx.tid)
+            if pending:
+                ex = ToolExecutor(store=ctx.store, project_id=ctx.pid,
+                                  task_id=ctx.tid, cfg=ctx.cfg)
+                for card in pending:
+                    resolve_card(ctx.store, ctx.pid, ctx.tid, card["card_id"],
+                                 approved=True)
+                    ex.execute_action(card["card_id"])
+                    approved.add(card["card_id"])
+            time.sleep(0.05)
+
+    worker = threading.Thread(target=approver, daemon=True)
+    worker.start()
+    events = list(run_agent_stream(ctx.store, ctx.pid, ctx.tid, "给我两个网格",
+                                  cfg=ctx.cfg, llm_factory=lambda c: llm))
+    worker.join(5)
+
+    cards = [e["card"] for e in events if e["type"] == "card"]
+    assert len(cards) == 2, events
+    status = " ".join(e.get("text", "") for e in events if e["type"] == "status")
+    assert status.count("KPOINTS") >= 2
+    assert events[-1]["type"] == "done"
+    local_dir = ToolExecutor(store=ctx.store, project_id=ctx.pid, task_id=ctx.tid,
+                             cfg=ctx.cfg).local_dir()
+    assert (local_dir / "relax" / "KPOINTS").is_file()
+    assert (local_dir / "static" / "KPOINTS").is_file()

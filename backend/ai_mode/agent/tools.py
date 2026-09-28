@@ -268,6 +268,30 @@ class ToolExecutor:
     def phase(self):
         return (self.store.get_task(self.project_id, self.task_id).get('flow') or {}).get('phase', '')
 
+    def execution_readiness(self) -> dict:
+        """超算/MP 是否就绪，以 Toolbox（执行侧真源）为准。
+
+        智能模式自己的配置只存模型相关项（执行设置归 8000 管），拿它判断
+        「超算是否已配置」会出现「AI 一边读超算目录、一边说超算没配置」。
+        取不到时返回 {}，调用方退回原判定，绝不因这一句查询失败而影响对话。
+        """
+        try:
+            value = self.client.request('GET', '/settings')
+        except Exception:  # noqa: BLE001 - 就绪状态只用于提示词裁剪
+            return {}
+        settings = value.get('settings') if isinstance(value, dict) else None
+        if not isinstance(settings, dict):
+            return {}
+        ssh = settings.get('ssh') if isinstance(settings.get('ssh'), dict) else {}
+        mp = (settings.get('materials_project')
+              if isinstance(settings.get('materials_project'), dict) else {})
+        readiness = {'ssh': bool(ssh.get('host') and ssh.get('username')),
+                     'mp': bool(mp.get('configured'))}
+        mode = value.get('backend_mode')
+        if isinstance(mode, str) and mode:
+            readiness['backend_mode'] = mode
+        return readiness
+
     def auto_pump(self):
         detail = self.client.request('GET', self.client.task_path(self.project_id, self.task_id) + '/detail')
         return json.dumps({'flow': detail['flow'], 'monitor': detail['monitor']}, ensure_ascii=False)

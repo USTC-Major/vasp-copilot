@@ -307,6 +307,8 @@ class Orchestrator:
             issues.append({"job": job["key"], "file": "提交脚本(*.sh)",
                            "level": level, "message": msg})
             attestation = (flow.get("script_attestations") or {}).get(job["key"])
+            if (attestation or {}).get("claimed_by") in {"template_match", "script_deploy"}:
+                attestation = None
             attested = (isinstance(attestation, dict) and isinstance(actual, dict)
                         and attestation.get("attempt_id") == job.get("attempt_id")
                         and all(attestation.get(key) == actual.get(key)
@@ -403,6 +405,8 @@ class Orchestrator:
                 script_name = script.name
                 fingerprint = fingerprint_local_submit_script(script)
             attestation = (flow.get("script_attestations") or {}).get(job["key"])
+            if (attestation or {}).get("claimed_by") in {"template_match", "script_deploy"}:
+                attestation = None
             if not isinstance(attestation, dict) or any(
                     attestation.get(key) != value for key, value in {
                         "attempt_id": job.get("attempt_id"),
@@ -547,6 +551,10 @@ class Orchestrator:
         if not selected.get("draft"):
             return "[AI_PRECHECK_BLOCKED] 缺少绑定脚本哈希的提交草稿；sbatch 次数为 0。"
         logs_note = "已通过远端硬预检；不会在提交阶段隐式上传或改写文件。"
+        # Consent execution is not scheduler dispatch. Persist a precise audit
+        # for capacity/dependency holds, then replace it before any submit call.
+        executing_action['dispatch_state'] = 'not_dispatched'
+        self._save(store, project_id, task_id, flow)
         account = self.cfg.ssh_username
         free = self._free_slots(account)
         if free is None:
@@ -603,6 +611,7 @@ class Orchestrator:
                 submitted.append("单计算授权已过期或失效；未提交")
                 continue
             flow["consent"]["computation_scopes"][binding["scope_id"]]["submit_limit"] = 0
+            executing_action['dispatch_state'] = 'dispatching'
             job["submission_state"] = "executing"
             job["scheduler_target"] = target_binding(self.cfg)
             job["submission_action_id"] = executing_action["action_id"]
@@ -611,6 +620,7 @@ class Orchestrator:
                 free -= 1  # Unknown receipts also consume this batch's budget.
                 slurm_id = self._submit_one(calc, script_name)
             except Exception as exc:  # noqa: BLE001
+                executing_action['dispatch_state'] = 'unknown'
                 job["submission_state"] = "unknown"
                 job["status"] = "unknown"
                 job["submission_error"] = str(exc)[:500]
@@ -618,6 +628,7 @@ class Orchestrator:
                 submitted.append(f"- {job['key']} 提交结果不确定：{exc}；不会自动重试")
                 continue
             job["slurm_id"] = slurm_id
+            executing_action['dispatch_state'] = 'dispatched'
             job["status"] = "submitted"
             job["submission_state"] = "submitted"
             self._save(store, project_id, task_id, flow)
@@ -673,6 +684,8 @@ class Orchestrator:
             raise RuntimeError("远端作业目录缺少唯一用户脚本")
         fingerprint = fingerprint_remote_submit_script(self.hpc, calc, script_name)
         attestation = (flow.get("script_attestations") or {}).get(job["key"])
+        if (attestation or {}).get("claimed_by") in {"template_match", "script_deploy"}:
+            attestation = None
         draft = job.get("draft")
         if (not isinstance(attestation, dict) or not isinstance(draft, dict)
                 or attestation.get("attempt_id") != job.get("attempt_id")

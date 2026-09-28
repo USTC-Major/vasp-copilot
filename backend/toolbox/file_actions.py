@@ -199,6 +199,8 @@ class FileActions:
             409,
         )
         check(scope.get("state") != "revoked", "SCOPE_REVOKED", "文件范围已撤销", 403)
+        check(not scope.get("derived_from"), "SCOPE_STALE",
+              "旧自动派生范围已撤出，请人工重新登记根并建立范围", 409)
         check(
             scope.get("state") in ({"active"} if active else {"active", "proposed"}),
             "SCOPE_STALE",
@@ -209,6 +211,12 @@ class FileActions:
         self._job(flow, scope)
         roots = {r["root_id"]: r for r in flow.get("file_roots", [])}
         for binding in scope["root_bindings"]:
+            root = roots.get(binding["root_id"], {})
+            grant = flow.get("file_grant") or {}
+            check(not (grant and root.get("registered_by") != "human"
+                       and grant.get("hpc_workspace") in {
+                           root.get("requested_path"), root.get("canonical_path")}),
+                  "SCOPE_STALE", "旧工作区授权根来源不明确，请人工重新登记", 409)
             check(
                 binding["root_id"] in roots
                 and roots[binding["root_id"]]["version"] == binding["version"],
@@ -306,7 +314,8 @@ class FileActions:
                     "同一根目录不能重复登记别名",
                     409,
                 )
-                result.append({**observed, "selected_by_user_at": now()})
+                result.append({**observed, "selected_by_user_at": now(),
+                               "registered_by": "human"})
         with consent.task_lock(project, task), self.guard:
 
             def update(flow):

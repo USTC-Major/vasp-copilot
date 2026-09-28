@@ -235,7 +235,7 @@ def _new_fix_id(issue_ids: list[str]) -> str:
 
 def _apply_manual_md(fix: RecommendedFix, plan: list[dict]) -> str:
     lines = [
-        "# VASP-Doctor 修复改动清单（请人工确认后手动应用）",
+        "# VASP-Copilot 修复改动清单（请人工确认后手动应用）",
         "",
         "> 说明：本文件不自动覆盖任何原件。请核对下方改动，确认后自行应用到 INCAR。",
         "",
@@ -257,7 +257,7 @@ def _apply_manual_md(fix: RecommendedFix, plan: list[dict]) -> str:
         "",
         "## 应用建议",
         "",
-        "- 修改后请重新运行 VASP-Doctor 的静态一致性诊断确认无新增 HIGH 问题。",
+        "- 修改后请重新运行 VASP-Copilot 的静态一致性诊断确认无新增 HIGH 问题。",
         "- 涉及磁矩/DFT+U/资源/科研阈值的改动务必人工核验后再提交计算。",
     ]
     return "\n".join(lines)

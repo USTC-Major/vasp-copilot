@@ -139,6 +139,33 @@ class IncarParser:
 
 
 def _values_equal(a: Any, b: Any) -> bool:
+    # 逻辑值常被写成字符串（".FALSE." / "T"）：渲染后重解析得到 bool，
+    # 与字符串比较会误判为不一致。这里按 VASP 语义把文本逻辑值与 bool 视为等价。
+    _BOOL_TEXT = {".TRUE.": True, ".FALSE.": False, "TRUE": True, "FALSE": False,
+                  "T": True, "F": False}
+    if isinstance(a, str) and isinstance(b, bool):
+        return _BOOL_TEXT.get(a.strip().upper()) is b
+    if isinstance(b, str) and isinstance(a, bool):
+        return _BOOL_TEXT.get(b.strip().upper()) is a
+    # 数值写成字符串（"520" / "1e-6"）同样按数值语义比较：没有任何 INCAR 参数
+    # 把这种写法当作字符串值使用。
+    if isinstance(a, str) and isinstance(b, (int, float)) and not isinstance(b, bool):
+        try:
+            return float(a.strip()) == float(b)
+        except ValueError:
+            return False
+    if isinstance(b, str) and isinstance(a, (int, float)) and not isinstance(a, bool):
+        try:
+            return float(b.strip()) == float(a)
+        except ValueError:
+            return False
+    # INCAR 里「MAGMOM = 0.6」与「MAGMOM = 0.6」的单元素列表在语义上完全等价
+    # （VASP 不区分单元素数组与标量），但序列化后重解析只会得到标量。
+    # 单元素列表与对应标量按相等处理，避免误报 round-trip 不一致。
+    if isinstance(a, list) and len(a) == 1:
+        return _values_equal(a[0], b)
+    if isinstance(b, list) and len(b) == 1:
+        return _values_equal(a, b[0])
     if isinstance(a, bool) or isinstance(b, bool):
         return isinstance(a, bool) and isinstance(b, bool) and a == b
     if isinstance(a, (int, float)) and isinstance(b, (int, float)):

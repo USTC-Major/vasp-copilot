@@ -103,16 +103,18 @@ def test_escape_parent_and_absolute_denied(tmp_path):
 def test_sensitive_path_wording(tmp_path):
     root = tmp_path / "calc"
     root.mkdir()
+    sensitive_path = r"C:\Windows\System32\drivers\etc\hosts" if os.name == "nt" else "/etc/hosts"
     with pytest.raises(ExecutionPolicyViolation, match="敏感路径"):
-        check_path_in_bounds("C:\\Windows\\System32\\drivers\\etc\\hosts", root)
+        check_path_in_bounds(sensitive_path, root)
 
 
 def test_write_whitelist_denies_outside(tmp_path):
     d = _mk_calc(tmp_path)
+    outside = str(tmp_path / "outside.txt")
     with pytest.raises(ExecutionPolicyViolation, match="写白名单"):
-        validate_command_text("ls > D:\\outside.txt", cwd=d)
+        validate_command_text(f'ls > "{outside}"', cwd=d)
     with pytest.raises(ExecutionPolicyViolation, match="写白名单"):
-        validate_command_text("mkdir ..\\evil", cwd=d)
+        validate_command_text("mkdir ../evil", cwd=d)
 
 
 def test_write_whitelist_allows_inside(tmp_path):

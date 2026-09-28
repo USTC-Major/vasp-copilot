@@ -52,7 +52,7 @@ class ReportGenerator:
             diagnosis_id=result.diagnosis_id,
             format="markdown",
             language="zh",
-            title="VASP-Doctor 诊断报告",
+            title="VASP-Copilot 诊断报告",
             generated_at=generated_at,
             size_bytes=size,
             sha256=sha,

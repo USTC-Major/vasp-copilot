@@ -170,7 +170,11 @@ class FakeRemoteFiles:
 
 
 def create_isolated_app(root: Path, hpc: FakeHPC | None = None, *,
-                        monitor_enabled: bool = False):
+                        monitor_enabled: bool = False,
+                        auto_approve_kinds: tuple[str, ...] = (),
+                        allow_potcar_assembly: bool = False,
+                        allow_script_deploy: bool = False,
+                        submit_script_template: str = ""):
     """Use the architecture-owned public app factory with an isolated root."""
     from backend.toolbox.api import create_toolbox_app
     from backend.toolbox.config import ExecutionConfig
@@ -182,6 +186,10 @@ def create_isolated_app(root: Path, hpc: FakeHPC | None = None, *,
         max_jobs=2,
         poll_interval_seconds=60,
         ssh_username="offline-review",
+        auto_approve_kinds=list(auto_approve_kinds),
+        allow_potcar_assembly=allow_potcar_assembly,
+        allow_script_deploy=allow_script_deploy,
+        submit_script_template=submit_script_template,
     )
     app = create_toolbox_app(
         root=root,

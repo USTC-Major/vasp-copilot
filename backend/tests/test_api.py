@@ -83,7 +83,7 @@ def test_report_download():
     r = client.get(f"/api/v1/diagnosis/{diag_id}/report")
     assert r.status_code == 200
     assert r.headers["content-type"].startswith("text/markdown")
-    assert "VASP-Doctor" in r.text
+    assert "VASP-Copilot" in r.text
 
 
 def test_download_fix_available_after_run():

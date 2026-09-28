@@ -32,7 +32,7 @@ from .consent import (PendingConsentError, card_payload, claim_action,
 from .config import AiModeConfig, execution_mode, load_settings
 from .exec.errors import ExecutionPolicyViolation
 from .exec.policy import check_path_in_bounds
-from .incar_draft import (IncarUnknownTagError, build_incar_action,
+from .incar_draft import (IncarRoundtripMismatch, IncarUnknownTagError, build_incar_action,
                            commit_incar_action)
 from .input_checks import bounded_fingerprint, read_bound_input, validate_input_set
 from backend.input_validation import InputValidationError
@@ -52,6 +52,31 @@ __test__ = False
 #: handle() 捕获 PendingConsentError，返回 _CONSENT_PENDING+card_id；runner 据此 yield card 事件。
 _CONSENT_PENDING = "__CONSENT_PENDING__"
 
+
+def _action_failure_text(exc: BaseException) -> str:
+    """卡片执行失败的对外文案：保留错误码与原始信息，便于模型与用户处置。
+
+    此前只输出异常类名（例如「操作失败且未重试：RemoteFileError」），
+    把 SCOPE_EXPIRED、REMOTE_CAPABILITY_UNAVAILABLE 这类**可行动**的原因丢掉了。
+    """
+    code = str(getattr(exc, "code", "") or "")
+    detail = str(getattr(exc, "message", "") or exc)
+    if code:
+        hint = _SELF_HEAL_HINTS.get(code)
+        suffix = f"；处理方式：{hint}" if hint else ""
+        return f"操作失败且未重试：[{code}] {detail}{suffix}"
+    return f"操作失败且未重试：{type(exc).__name__}（{detail}）"
+
+
+# Hints never confer authority; replacement actions require a new exact approval.
+_SELF_HEAL_HINTS = {
+    "ROOT_CHANGED": "请核对远端身份，再提出新的精确确认卡",
+    "SOURCE_CHANGED": "请核对文件变化，再提出新的精确确认卡",
+    "SCOPE_STALE": "请重新预检并由用户批准新的精确操作",
+    "SCOPE_EXPIRED": "请重新提出操作并等待用户批准",
+    "REMOTE_CAPABILITY_UNAVAILABLE": "连接不可用，请核对站点配置后重试只读查询",
+}
+
 #: flow.phase -> 任务展示状态（与 orchestrator 对齐）
 _PHASE_STATUS = {
     "running": "planned",
@@ -64,6 +89,7 @@ _PHASE_STATUS = {
 _WS_READ_CAP = 12000             # ws_read 单文件预览上限
 _HPC_READ_CAP = 12000            # hpc_read 单文件预览上限
 _HPC_UPLOAD_CAP = 64 * 1024 * 1024   # hpc_upload 单文件大小上限（64 MB）
+
 
 _SAFE_TEXT_NAMES = frozenset({
     "INCAR", "POSCAR", "CONTCAR", "KPOINTS", "OUTCAR", "OSZICAR",
@@ -442,11 +468,28 @@ class ToolExecutor:
         flow = self._load_flow()
         plan = flow.get("plan") or {}
         jobs = plan.get("jobs") or []
+        completed_keys = {j.get("key") for j in jobs if j.get("status") == "completed"}
+
+        def next_step(job: dict) -> str:
+            """每个作业的下一步归属：等上游 / 可准备提交（需用户确认）/ 已在跑。"""
+            status = str(job.get("status") or "draft")
+            if status in {"submitted", "queued", "running", "unknown"}:
+                return " 下一步=等待超算跑完（系统后台跟进）"
+            if status == "completed":
+                return " 下一步=已完成"
+            if status in {"failed", "not_converged"}:
+                return " 下一步=先诊断（diagnose_job），重试需用户确认"
+            missing = [k for k in (job.get("requires") or []) if k not in completed_keys]
+            if missing:
+                return f" 下一步=等上游 {'、'.join(missing)} 完成（需人工准备下游输入）"
+            return " 下一步=可准备提交：precheck → draft → 由用户确认提交（系统不会自动补提）"
+
         job_lines = "\n".join(
             f"- {j.get('key')}（{j.get('label') or ''}，{j.get('kind') or 'vasp'}）"
             f" status={j.get('status') or 'draft'} attempt_id={j.get('attempt_id') or 'legacy'}"
             + f" precheck={'ok' if (j.get('precheck') or {}).get('ok') else 'blocked_or_unchecked'} draft={'ready' if j.get('draft') else 'none'}"
             + (f" slurm_id={j.get('slurm_id')}" if j.get("slurm_id") else "")
+            + next_step(j)
             for j in jobs) or "（暂无规划）"
         drafts = flow.get("draft") or []
         draft_names = "、".join(
@@ -466,7 +509,9 @@ class ToolExecutor:
             f"- 目标 goal：{flow.get('goal') or self._task().get('goal') or '（未填写）'}\n"
             f"- 规划 strategy：{plan.get('strategy') or '（未规划）'}\n{job_lines}\n"
             f"- 本地计算目录：{flow.get('local_dir') or self.local_dir()}\n"
-            f"- 超算目录 hpc_dir：{flow.get('hpc_dir') or '（未设置）'}\n"
+            # 汇报「实际生效」的远端根：规划前 flow.hpc_dir 还是空的，但任务里选定的
+            # 超算工作区已经生效（上传/查看都用它）；只读 flow 会让 AI 误报"未设置"。
+            f"- 超算目录 hpc_dir：{self._hpc_root(flow) or '（未设置）'}\n"
             f"- 提交前检查：{pre_text}\n"
             f"- 提交草稿：{draft_names}\n"
             f"- 已上传超算：{'是' if flow.get('uploaded') else '否'}\n"
@@ -627,6 +672,8 @@ class ToolExecutor:
                     issues.append({"job": key, "file": "提交脚本(*.sh)",
                                    "level": "error", "message": str(exc)})
             attestation = (flow.get("script_attestations") or {}).get(key)
+            if (attestation or {}).get("claimed_by") in {"template_match", "script_deploy"}:
+                attestation = None
             attested = (isinstance(attestation, dict)
                         and attestation.get("attempt_id") == job.get("attempt_id")
                         and isinstance(actual_script, dict)
@@ -656,6 +703,14 @@ class ToolExecutor:
         """Serialize one complete consent action with all task flow mutations."""
         with task_lock(self.project_id, self.task_id):
             return self._execute_action_locked(action_id)
+
+    def _pending_submit_card(self, flow: dict, job_key: str) -> dict | None:
+        """该作业是否已有一张**待确认**的提交卡（有的话就不该再重复预检/草稿）。"""
+        for action in ((flow.get("consent") or {}).get("actions") or {}).values():
+            if (action.get("kind") == "submit" and action.get("state") == "pending"
+                    and (action.get("binding") or {}).get("job_key") == job_key):
+                return action
+        return None
 
     def _execute_action_locked(self, action_id: str) -> str:
         """Claim and execute one exact approved action without replaying LLM args."""
@@ -705,7 +760,7 @@ class ToolExecutor:
                 }
                 flow["material_imports"] = imported
                 self._save_flow(flow)
-                result += f"，来源 Materials Project {binding['material_id']}；未上传或提交。"
+                result += "，来源是 Materials Project 的标准结构；还没有上传到超算，也没有提交。"
             elif operation == "script_attestation":
                 result = self._execute_script_attestation(action)
             elif operation == "retry_job":
@@ -714,7 +769,9 @@ class ToolExecutor:
             else:
                 raise ValueError(f"unsupported consent operation: {operation}")
         except Exception as exc:  # noqa: BLE001
-            result = f"操作失败且未重试：{type(exc).__name__}（{exc}）"
+            # 保留错误码与原始信息：此前只打印异常类名（如 RemoteFileError），
+            # 把 SCOPE_EXPIRED / REMOTE_CAPABILITY_UNAVAILABLE 等可行动的原因丢掉了。
+            result = _action_failure_text(exc)
             saved = get_card(self.store,self.project_id,self.task_id,action_id) or {}
             state = 'unknown' if operation == 'hpc_upload' and saved.get('file_dispatch_at') else 'failed'
             finish_action(self.store, self.project_id, self.task_id,
@@ -787,8 +844,8 @@ class ToolExecutor:
         finally:
             if temp_name and os.path.exists(temp_name):
                 os.unlink(temp_name)
-        return (f"已原子写入 `{binding['relative_path']}`（SHA-256 "
-                f"{binding['proposal_sha256'][:12]}…）")
+        # 面向用户的结果文案：说人话，不放哈希/实现术语（校验值仍在卡片记录与绑定里可核对）。
+        return f"已写入 {binding['relative_path']}。"
 
     def _execute_upload_action(self, binding: dict, *, ready=None, before_write=None,
                                verify_after=None) -> str:
@@ -843,8 +900,7 @@ class ToolExecutor:
         flow["uploaded_artifacts"] = uploaded
         flow["uploaded"] = True
         self._save_flow(flow)
-        return (f"已通过 SFTP 上传确认的登记输入到 `{remote_path}` "
-                f"（SHA-256 {binding['source_sha256'][:12]}…）")
+        return f"已把这份输入上传到超算工作区：{remote_path}。"
 
     def _execute_script_attestation(self, action: dict) -> str:
         binding = action.get("binding") or {}
@@ -899,10 +955,21 @@ class ToolExecutor:
     # ---------------- 本地 -> 超算受限上传（SFTP，非 scp） ----------------
     def tool_hpc_upload(self, args: dict) -> str:
         """Create one confirmation action for one registered artifact upload."""
+        unknown = set(args) - {"artifact_id", "job_key"}
+        if unknown:
+            return ToolFailure(
+                'INVALID_TOOL_ARGUMENT',
+                f"[INVALID_TOOL_ARGUMENT] 不认识的参数 {sorted(unknown)}；"
+                '正确形式是 {"artifact_id":"art_xxxxxxxx","job_key":"relax"}。'
+                "artifact_id 要用 get_state 登记后返回的 ID，不是文件路径。")
         artifact_id = str(args.get("artifact_id") or "").strip()
         if not artifact_id:
-            return ToolFailure('AI_ARTIFACT_REQUIRED', "[AI_ARTIFACT_REQUIRED] 上传只接受用户工作区登记的 artifact_id；"
-                    "未执行任何远程写入")
+            received = ", ".join(sorted(args)) or "无"
+            return ToolFailure(
+                'INVALID_TOOL_ARGUMENT',
+                f"[INVALID_TOOL_ARGUMENT] 缺少 artifact_id（本次收到参数：{received}）；"
+                "请先 get_state，再用 flow.artifacts 里形如 art_xxxxxxxx 的 ID，"
+                "不要传文件路径。未执行任何远程写入。")
         flow = self._load_flow()
         artifact = self._ensure_artifacts(flow).get(artifact_id)
         if not isinstance(artifact, dict):
@@ -913,7 +980,10 @@ class ToolExecutor:
             return ToolFailure('AI_ARTIFACT_NOT_REGISTERED', "[AI_ARTIFACT_NOT_REGISTERED] 登记项缺少安全相对路径")
         job_key = self._clean_job_subdir(args.get("job_key"))
         if job_key is None:
-            return ToolFailure('AI_ARTIFACT_REQUIRED', "[AI_ARTIFACT_REQUIRED] 非法 job_key")
+            return ToolFailure(
+                'INVALID_TOOL_ARGUMENT',
+                "[INVALID_TOOL_ARGUMENT] 非法 job_key（只允许规划内的相对路径，"
+                "如 relax 或 relax/static；不接受绝对路径、盘符或 ..）。")
         bad_dir = self._validate_job_dir(job_key)
         if bad_dir:
             return ToolFailure('TOOL_POLICY_OR_PRECONDITION', bad_dir)
@@ -982,7 +1052,7 @@ class ToolExecutor:
             raise
         raise PendingConsentError(saved)
 
-    # ---------------- 永久禁用的提交脚本写入兼容入口 ----------------
+    # ---------------- POTCAR：按 vaspkit 的默认选择在作业目录生成 ----------------
     def tool_hpc_write_script(self, args: dict) -> str:
         """Reject the retired AI-authored script capability."""
         del args
@@ -1118,6 +1188,10 @@ class ToolExecutor:
             (self._task().get("goal") or "")
         local_dir = self.local_dir()
         flow = self._load_flow()
+        from .computation import missing_submission_identity
+        if any(missing_submission_identity(flow, j)
+               for j in flow.get("plan", {}).get("jobs", [])):
+            return ToolFailure('SUBMISSION_UNKNOWN', "历史提交记录存在但作业身份缺失；请人工核对，不能通过重新规划创建新身份")
         if any(j.get("status") in {"submitted", "queued", "running", "unknown", "failed", "not_converged"}
                or j.get("attempt_history") or j.get("submission_state") or j.get("slurm_id")
                for j in flow.get("plan", {}).get("jobs", [])):
@@ -1207,6 +1281,19 @@ class ToolExecutor:
             binding["execution_mode"] = self._execution_mode()
         except IncarUnknownTagError as exc:
             return ToolFailure('AI_INCAR_UNKNOWN_TAG', f"[AI_INCAR_UNKNOWN_TAG] {exc}")
+        except IncarRoundtripMismatch as exc:
+            # 明确暴露是哪个参数写不进去，模型与用户才能据此处理；
+            # 此前该异常（继承 BeAError，不是 ValueError）会直接穿透，回执里看不到原因。
+            diffs = ((getattr(exc, "details", None) or {}).get("diffs") or [])[:6]
+            detail = "；".join(
+                f"{item.get('parameter')}: 原值 {item.get('original')} ≠ 回读 "
+                f"{item.get('reparsed')}" for item in diffs if isinstance(item, dict)
+            ) or str(exc)
+            return ToolFailure(
+                'AI_INCAR_DRAFT_INVALID',
+                f"[AI_INCAR_DRAFT_INVALID] INCAR 写入前自检未通过：{detail}。"
+                "请改用受支持的取值（例如逻辑值 .TRUE./.FALSE.、数值用数字），"
+                "或先由用户手工放置该 INCAR 再纳管。")
         except (OSError, UnicodeError, ValueError, OverflowError) as exc:
             return ToolFailure('AI_INCAR_DRAFT_INVALID', f"[AI_INCAR_DRAFT_INVALID] {exc}")
         tags = ", ".join(item["tag"] for item in binding["entries"])
@@ -1236,7 +1323,7 @@ class ToolExecutor:
         centering = str(args.get("centering") or "Gamma")
         try:
             text = KpointsGenerator().uniform(grid, centering,
-                                               comment="Generated by VASP-Doctor")
+                                               comment="Generated by VASP-Copilot")
         except Exception as exc:  # noqa: BLE001
             return ToolFailure('AI_KPOINTS_INVALID', f"[AI_KPOINTS_INVALID] {exc}")
         relative = f"{job_key}/KPOINTS" if job_key else "KPOINTS"
@@ -1336,9 +1423,20 @@ class ToolExecutor:
         raise PendingConsentError(saved)
 
     def tool_copy_inputs(self, args: dict) -> str:
+        unknown = set(args) - {"artifact_ids", "job_key"}
+        if unknown:
+            return ToolFailure(
+                'INVALID_TOOL_ARGUMENT',
+                f"[INVALID_TOOL_ARGUMENT] 不认识的参数 {sorted(unknown)}；"
+                '正确形式是 {"artifact_ids":["art_xxxxxxxx"],"job_key":"relax"}。'
+                "artifact_ids 要用 get_state 登记后返回的 ID，不是文件路径。")
         artifact_ids = args.get("artifact_ids")
         if not isinstance(artifact_ids, list) or not artifact_ids:
-            return ToolFailure('AI_ARTIFACT_REQUIRED', "[AI_ARTIFACT_REQUIRED] 需要非空 artifact_ids 数组")
+            received = ", ".join(sorted(args)) or "无"
+            return ToolFailure(
+                'INVALID_TOOL_ARGUMENT',
+                f"[INVALID_TOOL_ARGUMENT] 需要非空 artifact_ids 数组"
+                f"（本次收到参数：{received}）；请先 get_state 再传 art_xxxxxxxx 形式的 ID。")
         source = self._task().get("local_workspace") or ""
         if not source:
             return ToolFailure('TOOL_PRECONDITION_FAILED', "任务未设置本地工作区，无法复制输入文件")
@@ -1475,6 +1573,7 @@ class ToolExecutor:
         attestations = flow.get("script_attestations") or {}
         attested = all(
             isinstance(attestations.get(item["job_key"]), dict)
+            and attestations[item["job_key"]].get("claimed_by") not in {"template_match", "script_deploy"}
             and all(attestations[item["job_key"]].get(key) == item.get(key)
                     for key in ("attempt_id", "source", "directory", "script_name",
                                 "normalized_path", "sha256", "size"))

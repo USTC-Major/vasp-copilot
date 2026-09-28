@@ -503,7 +503,21 @@ const AI_BASE = "/ai/v1";
 
 interface AiError { code?: string; message?: string; retryable?: boolean; field_errors?: { field: string; code: string; message: string }[] }
 
-async function aiRequest<T>(endpoint: string, options: RequestOptions = {}): Promise<T> {
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+const optionalString = (value: unknown) => value === undefined || typeof value === 'string';
+const optionalNullableString = (value: unknown) => value === null || optionalString(value);
+const isConsentEnvelope = (value: unknown) => {
+  if (!isRecord(value) || typeof value.mode !== 'string' || typeof value.ok !== 'boolean'
+      || typeof value.kind !== 'string' || !optionalString(value.state) || !optionalNullableString(value.result)) return false;
+  if (value.card !== undefined && (!isRecord(value.card) || !optionalString(value.card.state)
+      || !optionalNullableString(value.card.result) || !optionalNullableString(value.card.reason))) return false;
+  if (value.error !== undefined && value.error !== null && (!isRecord(value.error) || !optionalString(value.error.code)
+      || !optionalString(value.error.message) || (value.error.retryable !== undefined && typeof value.error.retryable !== 'boolean'))) return false;
+  return true;
+};
+
+async function aiRequest<T>(endpoint: string, options: RequestOptions = {}, responsePolicy: 'standard' | 'consentReceipt' = 'standard'): Promise<T> {
   const { method = "GET", body, headers = {}, signal } = options;
   const fetchHeaders: Record<string, string> = { ...headers, ...(body ? { "Content-Type": "application/json" } : {}) };
   let response: Response;
@@ -523,6 +537,15 @@ async function aiRequest<T>(endpoint: string, options: RequestOptions = {}): Pro
     data = (await response.json()) as { error?: AiError };
   } catch {
     data = {};
+  }
+  if (responsePolicy === 'consentReceipt' && !isRecord(data)) data = {};
+  // Only resolveConsent uses this policy: an HTTP 2xx business error is still
+  // an execution receipt. State classification belongs to the consent UI.
+  if (responsePolicy === 'consentReceipt' && response.ok) {
+    if (!isConsentEnvelope(data)) {
+      throw new ApiError('INVALID_CONSENT_RESPONSE', '授权回执无法解析，请核验任务状态；请勿重复批准或重试。', false, response.status);
+    }
+    return data as unknown as T;
   }
   if (!response.ok || data.error) {
     const err = data.error || {};
@@ -666,11 +689,14 @@ export const aiApi = {
     }
   },
   stopMessage: (projectId: string, taskId: string) =>
-    aiRequest<{ mode: string; stopped: boolean }>(`/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(taskId)}/messages/stop`, { method: "POST" }),
+    aiRequest<{ mode: 'ai'; stopped: boolean }>(
+      `/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(taskId)}/messages/stop`,
+      { method: "POST" }),
   resolveConsent: (projectId: string, taskId: string, cardId: string, approved: boolean, note?: string) =>
-    aiRequest<{ mode: string; ok: boolean; kind: string; approved: boolean; result?: string }>(
+    aiRequest<import("../types/ai").AiConsentResponse>(
       `/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(taskId)}/messages/consent`,
-      { method: "POST", body: { card_id: cardId, approved, note: note ?? "" } }
+      { method: "POST", body: { card_id: cardId, approved, note: note ?? "" } },
+      'consentReceipt'
     ),
   getContext: () =>
     aiRequest<import("../types/ai").AiContextSummary>("/context"),

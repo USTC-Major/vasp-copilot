@@ -14,15 +14,34 @@ MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 MAX_POSCAR_BYTES = 256 * 1024
 _open_stream = httpx.stream
 
+#: MP 的 material_id 目前是 "mp-" + 不透明小写字母数字串（实测 mp-aaaditqj），
+#: 历史数字形式 mp-149 仍可能存在。只做字符集与长度约束，避免路径/URL/命令注入：
+#: 至少 2 字符、最多 16 字符、仅小写字母与数字。
+_MATERIAL_ID = re.compile(r"(?:mp|mvc)-[a-z0-9]{2,16}\Z")
+
 
 class MaterialsError(ValueError):
     """Safe user-facing error; never includes upstream text or credentials."""
 
 
 def material_id(value: object) -> str:
-    if not isinstance(value, str) or not re.fullmatch(r"(?:mp|mvc)-[0-9]{1,12}", value):
-        raise MaterialsError("[MP_INVALID_ID] 需要明确的 MP 材料 ID，例如 mp-149")
+    if not isinstance(value, str) or not _MATERIAL_ID.fullmatch(value):
+        raise MaterialsError(
+            "[MP_INVALID_ID] 需要明确的 MP 材料 ID（形如 mp-aaaditqj）；"
+            "请先用 mp_search 获取当前 ID，不要凭记忆使用旧数字 ID")
     return value
+
+
+def _request_fields(key: str, params: dict, required: set[str]) -> list[dict]:
+    """取回材料文档；MP 偶发忽略 _fields 时重试一次，仍缺字段则如实报错。"""
+    docs = _request(key, params)
+    if docs and required - set(docs[0]):
+        docs = _request(key, params)
+    if docs and required - set(docs[0]):
+        missing = ",".join(sorted(required - set(docs[0])))
+        raise MaterialsError(
+            f"[MP_FIELDS_UNAVAILABLE] MP 未返回所需字段（{missing}）；请稍后重试")
+    return docs
 
 
 def _request(key: str, params: dict) -> list[dict]:
@@ -65,8 +84,17 @@ def search(key: str, formula: object, limit: object = 5) -> list[dict]:
         raise MaterialsError("[MP_INVALID_QUERY] 化学式无效") from None
     if type(limit) is not int or not 1 <= limit <= 10:
         raise MaterialsError("[MP_INVALID_QUERY] limit 必须是 1 到 10 的整数")
-    docs = _request(key, {"formula": formula, "_limit": limit,
-                          "_fields": "material_id,formula_pretty,symmetry,energy_above_hull,band_gap"})
+    params = {"formula": formula, "_limit": limit,
+              "_fields": "material_id,formula_pretty,symmetry,energy_above_hull,band_gap"}
+    # 按热力学稳定性升序：MP 默认顺序会把亚稳/高压相排在前面，导致常见材料
+    # （实测 Si 共 43 条）的基态相根本进不了前若干条，模型据此得出「该相不存在」的错误结论。
+    try:
+        docs = _request_fields(key, {**params, "_sort_fields": "energy_above_hull"},
+                               {"symmetry"})
+    except MaterialsError as exc:
+        if "MP_HTTP_ERROR" not in str(exc):     # 排序参数不被支持时降级为默认顺序
+            raise
+        docs = _request_fields(key, params, {"symmetry"})
     rows = []
     for doc in docs[:limit]:
         mid = material_id(doc.get("material_id"))
@@ -91,12 +119,17 @@ def _finite_vector(values: object) -> list[float]:
 
 def fetch_poscar(key: str, selected_id: object) -> dict:
     mid = material_id(selected_id)
-    docs = _request(key, {"material_ids": mid, "_limit": 1,
-                          "_fields": "material_id,structure"})
+    docs = _request_fields(key, {"material_ids": mid, "_limit": 1,
+                                 "_fields": "material_id,structure"},
+                           {"material_id", "structure"})
     if not docs:
         raise MaterialsError("[MP_NOT_FOUND] 未找到所选材料")
-    if len(docs) != 1 or docs[0].get("material_id") != mid:
-        raise MaterialsError("[MP_INVALID_RESPONSE] MP 返回材料 ID 与所选 ID 不一致")
+    if len(docs) != 1:
+        raise MaterialsError("[MP_INVALID_RESPONSE] MP 返回的材料文档数量异常")
+    if docs[0].get("material_id") != mid:
+        raise MaterialsError(
+            "[MP_ID_STALE] 该材料 ID 在当前 MP API 中取不到对应条目（返回了其它材料）；"
+            "请先用 mp_search 重新获取当前 ID")
     try:
         source = docs[0]["structure"]
         matrix = source["lattice"]["matrix"]

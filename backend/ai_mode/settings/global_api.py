@@ -1,7 +1,7 @@
 """M11++ 全局设置：掩码汇总 + 可设字段校验 + 真连通测试派发（后端支撑）。
 
-- 私人信息（MP/LLM/SSH 密码）只存本地（LLM key 落 config.json、SSH 密码走系统
-  凭据管理器），绝不上传、不进回包。
+- 私人信息（MP/LLM/SSH 密码）只存本机系统凭据管理器，兼容旧配置迁移；
+  绝不上传、不进回包，环境变量值不写入配置或凭据后端。
 - 对外回包一律走 mask_config()，密钥只出现 <redacted>；另设「只读状态」接口
   只返回是否已配置的布尔态；密钥只能整体替换或清除，永不回显原文。
 - 真连通：llm 走 M3 工厂（auto->openai 时真正 ping）；mp 用最小 GET 验证 key 有效性；
@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import Callable, Mapping, Optional
 
 from ..config import AiModeConfig, save_settings
+from backend.toolbox.secrets import SecretStorageError, delete_secret, secret_state, set_secret
 
 MASK = "<redacted>"
 SSH_PASSWORD_KEY = "ssh_password"   # 仅内部保留，永不回包
@@ -107,12 +108,16 @@ def _coerce(key: str, raw) -> object:
 
 def mask_config(config: AiModeConfig) -> dict:
     """把配置汇总结成可安全对外展示的字典（密钥一律掩码）。"""
+    # 前端据此外提示“本条消息会被截断”（与后端上下文构造共用同一常量）。
+    from ..agent.runner import MESSAGE_CHAR_LIMIT
+
     return {
         "enabled": config.enabled,
         "data_dir": str(config.data_dir),
         "max_jobs": config.max_jobs,
         "poll_interval_seconds": config.poll_interval_seconds,
         "billing_estimate_enabled": config.billing_estimate_enabled,
+        "message_char_limit": MESSAGE_CHAR_LIMIT,
         "llm": {
             "base_url": config.llm_base_url,
             "model": config.llm_model,
@@ -199,8 +204,8 @@ def get_ssh_password(config: AiModeConfig, *,
     store = credential_store or _default_credential_store()
     try:
         return store.get_password(config.ssh_host, config.ssh_username)
-    except Exception:  # noqa: BLE001
-        return None
+    except Exception as exc:
+        raise SecretStorageError('SSH凭据状态读取失败') from exc
 
 
 def update_secret(config: AiModeConfig, kind: str, action: str, value=None, *,
@@ -215,7 +220,7 @@ def update_secret(config: AiModeConfig, kind: str, action: str, value=None, *,
     environment = os.environ if env is None else env
     variable = {"llm": "AI_MODE_LLM_API_KEY",
                 "mp": "AI_MODE_MP_API_KEY"}.get(kind)
-    if variable and environment.get(variable):
+    if variable and (environment.get(variable) or (kind == 'mp' and environment.get('TOOLBOX_MP_API_KEY'))):
         raise ValueError(f"{kind} 密钥由环境变量 {variable} 管理，不能在页面替换或清除")
     if kind == "ssh":
         if not config.ssh_host or not config.ssh_username:
@@ -228,16 +233,24 @@ def update_secret(config: AiModeConfig, kind: str, action: str, value=None, *,
             if not secret:
                 raise ValueError("replace 需要非空 value")
             store.set_password(config.ssh_host, config.ssh_username, secret)
+        expected = '' if action == 'clear' else secret
+        if (store.get_password(config.ssh_host, config.ssh_username) or '') != expected:
+            raise SecretStorageError('凭据后端未确认SSH密码变更')
         return config
     secret = "" if action == "clear" else str(value or "")
     if action == "replace" and not secret:
         raise ValueError("replace 需要非空 value")
     field = "llm_api_key" if kind == "llm" else "mp_api_key"
+    # 密钥真正落点是系统凭据管理器；配置模型里只保留本次运行的有效值。
+    if action == "clear":
+        delete_secret(field)
+    else:
+        set_secret(field, secret)
     return config.model_copy(update={field: secret})
 
 
 def secret_status(config: AiModeConfig, *,
-                  credential_store=None, env=None) -> dict:
+                  credential_store=None, env=None, kinds=None) -> dict:
     """Return non-secret provenance and manageability for each credential."""
     environment = os.environ if env is None else env
     def local_state(configured: bool, source: str = "local_config") -> dict:
@@ -245,19 +258,26 @@ def secret_status(config: AiModeConfig, *,
                 "source": source if configured else "none",
                 "manageable": True}
 
-    llm = ({"configured": True, "source": "environment", "manageable": False}
-           if environment.get("AI_MODE_LLM_API_KEY") else
-           local_state(bool(config.llm_api_key)))
-    mp = ({"configured": True, "source": "environment", "manageable": False}
-          if environment.get("AI_MODE_MP_API_KEY") else
-          local_state(bool(config.mp_api_key)))
-    ssh_configured = get_ssh_password(
-        config, credential_store=credential_store) is not None
-    return {
-        "llm": llm,
-        "mp": mp,
-        "ssh": local_state(ssh_configured, "credential_store"),
-    }
+    def field_status(name: str, env_var: str, value: str) -> dict:
+        if environment.get(env_var) or (name == 'mp_api_key' and environment.get('TOOLBOX_MP_API_KEY')):
+            return {"configured": True, "source": "environment", "manageable": False}
+        stored, legacy_allowed = secret_state(name)
+        if stored:
+            return {"configured": True, "source": "credential_store", "manageable": True}
+        return local_state(bool(value) if legacy_allowed else False)
+
+    requested = set(kinds) if kinds is not None else {"llm", "mp", "ssh"}
+    if not requested <= {"llm", "mp", "ssh"}:
+        raise ValueError("未知密钥类型（llm|mp|ssh）")
+    result = {}
+    if "llm" in requested:
+        result["llm"] = field_status("llm_api_key", "AI_MODE_LLM_API_KEY", config.llm_api_key)
+    if "mp" in requested:
+        result["mp"] = field_status("mp_api_key", "AI_MODE_MP_API_KEY", config.mp_api_key)
+    if "ssh" in requested:
+        result["ssh"] = local_state(get_ssh_password(
+            config, credential_store=credential_store) is not None, "credential_store")
+    return result
 
 
 def _llm_test(cfg: AiModeConfig) -> dict:

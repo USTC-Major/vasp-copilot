@@ -50,7 +50,7 @@ def test_si2_static_default_generates_gamma_8_with_unchanged_other_inputs():
     expected_hashes = {
         "02_static/POSCAR": source_sha,
         "02_static/INCAR": "dc5a2f04cb6cc114d8810d802498a31e76c5d293ea4211d8b2c5163c7bef9c47",
-        "02_static/submit.sh": "fecb66fc0671638aef33bb95c33d28a1675de946b8348d07515fcf1bfa960cb8",
+        "02_static/submit.sh": "4f5dbfe9fc4c8d6cb0e87823688abfda81d37352b89fa7f8b9ceb1f57a243237",
     }
     for path, expected in expected_hashes.items():
         assert hashlib.sha256(files[path]).hexdigest() == expected, path

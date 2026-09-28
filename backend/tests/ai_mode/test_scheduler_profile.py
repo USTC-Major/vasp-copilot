@@ -55,7 +55,7 @@ def prepared(env, jobs=None):
 
 def test_explicit_profiles_and_settings():
     assert submit_argv("run.sh", "paracloud") == ["cbatch", "run.sh"]
-    assert queue_command("paracloud", "demo@BSCC-A2") == "cqueue"
+    assert queue_command("paracloud", "demo@CLUSTER") == "cqueue"
     assert queue_command("slurm", "demo") == "squeue -u demo"
     cfg = update_from_patch(AiModeConfig(), {"scheduler_backend": "paracloud"})
     assert mask_config(cfg)["ssh"]["scheduler_backend"] == "paracloud"

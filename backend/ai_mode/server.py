@@ -34,14 +34,24 @@ from .consent import get_card as _get_consent_card
 from .consent import list_cards as _list_consent_cards
 from .consent import task_lock as _task_state_lock
 from .agent.runner import _stream_card
+
 from .projects import get_project_store as _get_project_store
 from .storage import ensure_layout
 from .streaming import ACTIVE_STOPS as _ACTIVE_STOPS
 from .streaming import ChatRun, GenerationBusy, generation_status, request_stop
 
+
+def _generation_running(store, project_id: str, task_id: str) -> bool:
+    """对话轮是否正在进行；取不到状态时按"没有在跑"处理（回执就落库留痕）。"""
+    try:
+        return bool(generation_status(store, project_id, task_id).get('running'))
+    except Exception:  # noqa: BLE001 - 测试替身/异常时退回旧行为
+        return False
+
+
 logger = logging.getLogger("ai_mode")
 
-APP_TITLE = "VASP-Doctor 智能模式"
+APP_TITLE = "VASP-Copilot 智能模式"
 APP_VERSION = "0.3.0"
 
 
@@ -100,6 +110,11 @@ def create_ai_mode_app() -> FastAPI:
         payload['code'] = {'PROJECT_NOT_FOUND': 'AI_MODE_PROJECT_NOT_FOUND', 'TASK_NOT_FOUND': 'AI_MODE_PROJECT_NOT_FOUND', 'SSH_UNCONFIGURED': 'AI_MODE_HPC_UNCONFIGURED', 'INVALID_SETTINGS': 'AI_MODE_BAD_SETTINGS'}.get(payload['code'], payload['code'])
         return JSONResponse(status_code=exc.status, content={'mode': 'ai', 'ok': False, 'error': payload})
     app.add_exception_handler(ToolboxError, error_handler)
+    from backend.toolbox.secrets import SecretStorageError
+    async def secret_storage_error(request, exc):
+        return JSONResponse(status_code=503, content={'mode': 'ai', 'ok': False,
+            'error': {'code': 'AI_MODE_SECRET_STORAGE_FAILED', 'message': str(exc), 'retryable': False}})
+    app.add_exception_handler(SecretStorageError, secret_storage_error)
 
     @app.post('/ai/internal/reviewer/review', include_in_schema=False)
     def internal_file_review(request: Request, payload: dict):
@@ -224,6 +239,10 @@ def create_ai_mode_app() -> FastAPI:
         if model:
             try:
                 _persist_settings(_apply_settings_patch(cfg, model))
+            except SecretStorageError:
+                raise
+            except OSError as exc:
+                raise SecretStorageError('配置保存失败；凭据状态可能已改变，请重新查询') from exc
             except ValueError as exc:
                 return _bad(str(exc))
         result = get_settings()
@@ -246,13 +265,13 @@ def create_ai_mode_app() -> FastAPI:
 
     @app.get("/ai/v1/settings/secret-status")
     def settings_secret_status():
-        cfg = load_settings()
+        cfg = load_settings(secret_fields=('llm_api_key',))
         resp = _require_enabled(cfg)
         if resp is not None:
             return resp
-        import os
-        env = bool(os.environ.get('AI_MODE_LLM_API_KEY'))
-        model = {'configured': bool(cfg.llm_api_key), 'source': 'environment' if env else 'local_config' if cfg.llm_api_key else 'none', 'manageable': not env}
+        # 复用统一判定：环境变量 > 系统凭据管理器 > 本地配置文件。
+        # 此前这里内联硬编码 local_config，密钥迁到凭据管理器后仍会显示错误来源。
+        model = _secret_status(cfg, kinds={'llm'})['llm']
         remote = _get_project_store().client.request('GET', '/settings/secret-status')['secrets']
         return {'mode': 'ai', 'enabled': True, 'secrets': {'llm': model, **remote}}
 
@@ -287,6 +306,10 @@ def create_ai_mode_app() -> FastAPI:
         elif kind == 'llm':
             try:
                 _persist_settings(_update_secret(cfg, kind, action, payload.get('value')))
+            except SecretStorageError:
+                raise
+            except OSError as exc:
+                raise SecretStorageError('配置保存失败；凭据状态可能已改变，请重新查询') from exc
             except ValueError as exc:
                 return _bad(str(exc))
         else:
@@ -597,10 +620,12 @@ def create_ai_mode_app() -> FastAPI:
         resp = _require_enabled(cfg)
         if resp is not None:
             return resp
+        active = request_stop(project_id, task_id)
+        if active:
+            return {"mode": "ai", "stopped": True}
         store = _get_project_store()
         if store.get_task(project_id, task_id) is None:
             return _project_404("计算任务不存在或被删除")
-        active = request_stop(project_id, task_id)
         return {"mode": "ai", "stopped": active}
 
     @app.post("/ai/v1/projects/{project_id}/tasks/{task_id}/messages/consent")
@@ -622,7 +647,11 @@ def create_ai_mode_app() -> FastAPI:
                 'retryable': False}, 'card_id': card_id, 'kind': 'remote_file'})
         path = store.client.task_path(project_id, task_id) + '/consents/' + quote(card_id, safe='')
         result = store.client.request('POST', path, json={'approved': payload.get('approved'), 'note': payload.get('note', '')})
-        if result.get('result') and not result.get('replayed'):
+        # 回执只在"没有正在进行的对话轮"时才落成 assistant 消息：这时没有 AI 会替它
+        # 总结，用户需要留痕（例如上一个进程死掉后恢复的卡片）。
+        # 对话轮还在跑时，那张卡会被当轮 AI 收尾总结，不必再逐条刷"已把…复制到…"。
+        if (result.get('result') and not result.get('replayed')
+                and not _generation_running(store, project_id, task_id)):
             store.append_message(project_id, task_id, role='assistant', content=str(result['result']))
         return {**result, 'mode': 'ai', 'state': result['card']['state'], 'kind': result['card'].get('kind'), 'approved': payload.get('approved')}
 

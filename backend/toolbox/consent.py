@@ -218,6 +218,12 @@ def resolve_card(store, project_id: str, task_id: str, card_id: str, *,
         action = cons[_ACTIONS_KEY].get(card_id)
         if action is None:
             return {"approved": approved, "missing": True, "card_id": card_id}
+        if (action.get("state") in {"pending", "approved"}
+                and (action.get("binding") or {}).get("operation") in {
+                    "potcar_generate", "script_deploy", "file_prepare_grant"}):
+            action.update(state="failed", result="RETIRED_CAPABILITY: 此扩展已撤出，未执行")
+            _save_flow(store, project_id, task_id, flow, cons)
+            return {"approved": False, "card_id": card_id, "state": "failed"}
         if not _valid_binding(action):
             action["state"] = "failed"
             action["result"] = "确认绑定校验失败，未执行"
@@ -236,7 +242,20 @@ def resolve_card(store, project_id: str, task_id: str, card_id: str, *,
         if action.get("kind") == "submit":
             from .computation import scope_valid
             if approved and not scope_valid(flow, action, active=False):
-                action.update(state="failed", result="SCOPE_STALE: 单计算范围或尝试已变化，未提交")
+                # 给用户看得懂的原因：是"这个作业已经提交了"，还是"输入/脚本/尝试变了"。
+                binding = action.get("binding") or {}
+                job = next((j for j in (flow.get("plan") or {}).get("jobs", [])
+                            if j.get("key") == binding.get("job_key")), {}) or {}
+                if job.get("slurm_id") or job.get("submission_state"):
+                    result = (f"这个作业已经提交过了（超算作业号 {job.get('slurm_id') or '未知'}），"
+                              "这张卡作废、无需再点；要重跑请走重试流程。")
+                elif job.get("attempt_id") and job.get("attempt_id") != binding.get("attempt_id"):
+                    result = ("这个作业的准备过程已经在确认前重新做过，这张卡作废；"
+                              "请按页面上最新那张卡确认。")
+                else:
+                    result = ("这张卡已作废：输入文件、提交脚本或预检结果在确认前发生了变化，"
+                              "需要重新准备后再确认提交。")
+                action.update(state="failed", result=result)
                 _save_flow(store, project_id, task_id, flow, cons)
                 return {"approved": False, "conflict": True, "card_id": card_id, "state": "failed"}
             scope = cons.get("computation_scopes", {}).get((action.get("binding") or {}).get("scope_id"))
@@ -353,7 +372,10 @@ def spawn_submit_card(store, project_id: str, task_id: str,
             tool="confirm_submit", args={"job_key": job["key"], "attempt_id": job["attempt_id"]},
             risk="high", reason="仅批准本计算当前尝试的一次提交；用户需审阅脚本及资源，系统未证明全部副作用。",
             batch_key=batch_key, kind="submit",
-            summary=f"提交计算 {job['key']} / attempt {job['attempt_id']}？\n目录：`{job['draft']['dir']}`\n命令：{job['draft']['submit_cmd']}\nSHA-256：{job['draft']['script_sha256']}\n仅此计算一次，不包含后继或重试。",
+            summary=(f"提交计算 {job['key']} / attempt {job['attempt_id']}？\n"
+                     f"目录：`{job['draft']['dir']}`\n命令：{job['draft']['submit_cmd']}\n"
+                     f"SHA-256：{job['draft']['script_sha256']}"
+                     f"\n仅此计算一次，不包含后继或重试。"),
             options=["确认提交", "取消"], binding=binding)
         cons.setdefault("computation_scopes", {})[scope_id] = {
             **{key: binding[key] for key in ("project_id", "task_id", "job_key", "attempt_id", "endpoint_digest", "precheck_digest", "draft")},

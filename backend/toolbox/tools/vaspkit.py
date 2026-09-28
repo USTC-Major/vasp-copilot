@@ -25,9 +25,8 @@ Run = Callable[..., tuple[int, str, str]]
 #: vaspkit 任务族 → 菜单号（已知编号；探测时以其出现来推断能力是否存在）。
 #: 编号随 VASPKIT 版本有差异，探测可覆盖；仅作为「技能记录」内容，不改动作。
 VASPKIT_TASKS: dict[str, tuple[str, ...]] = {
-    "structure": ("101", "102", "103", "111"),
+    "structure": ("101", "102", "111"),
     "kpoints": ("301", "303", "351"),
-    "potcar": ("401",),
     "submit": ("501", "511", "521"),
     "post": ("600", "601", "602", "700", "701", "702", "711"),
 }
@@ -70,8 +69,9 @@ class VaspkitSkill:
         return cls(found=bool(data.get("found")),
                    version=str(data.get("version", "")),
                    path=str(data.get("path", "")),
-                   tasks={str(k): [str(x) for x in v] for k, v in (data.get("tasks") or {}).items()},
-                   notes=str(data.get("notes", "")),
+                   tasks={str(k): [str(x) for x in v if str(x) in VASPKIT_TASKS[k]]
+                          for k, v in (data.get("tasks") or {}).items() if k in VASPKIT_TASKS},
+                   notes="只读探测记录；禁止 VASPKIT 生成或拼接 POTCAR",
                    detected_at=str(data.get("detected_at", _now_iso())))
 
 

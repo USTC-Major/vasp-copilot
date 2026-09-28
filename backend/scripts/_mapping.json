@@ -14,7 +14,7 @@
   "cls@147": "Agent 工具门面：Agent 唯一可调用的入口（MVP 12.1/12.4）。\n\n永不暴露原始路径、POTCAR 内容或任意命令执行；工具只操作服务生成的 ID。"
  },
  "backend/app/api/v1/workflows.py": {
-  "mod@1": "VASP-Doctor → BE-A 工作流端点（IR-01/IR-03/IR-05）。\n\nPOST /workflows/plan       - 配方组合预览 + 待确认项\nPOST /workflows/generate   - 运行 BE-A 生成流水线并缓存产物包\nGET  /workflows/{id}       - plan/status/revision/file_tree 元数据（design 6.6）\nGET  /workflows/{id}/download - 确定性 zip 产物包\n\n请求可带可选的 ``diagnosis_id``；当未显式提供含 POSCAR 文本的 ``structure`` 时，把已存 run 的 POSCAR/CONTCAR 映射为 StructureContext（IR-05）。",
+  "mod@1": "VASP-Copilot → BE-A 工作流端点（IR-01/IR-03/IR-05）。\n\nPOST /workflows/plan       - 配方组合预览 + 待确认项\nPOST /workflows/generate   - 运行 BE-A 生成流水线并缓存产物包\nGET  /workflows/{id}       - plan/status/revision/file_tree 元数据（design 6.6）\nGET  /workflows/{id}/download - 确定性 zip 产物包\n\n请求可带可选的 ``diagnosis_id``；当未显式提供含 POSCAR 文本的 ``structure`` 时，把已存 run 的 POSCAR/CONTCAR 映射为 StructureContext（IR-05）。",
   "cls@53": "WorkflowGenerateRequest 的宽松请求镜像。\n\n``structure`` 为可选，客户端可只依赖 ``diagnosis_id``；解析器在构建严格请求前从已存 run 填充该字段。",
   "fun@95": "返回 POSCAR/CONTCAR 的 (文本, 来源名)，否则返回 (None, None)。",
   "fun@108": "IR-05：把已存 doctor run 的结构映射为 BE-A StructureContext。"

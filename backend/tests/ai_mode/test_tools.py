@@ -48,7 +48,8 @@ def test_probe_found():
     assert skill.path == "/usr/bin/vaspkit"
     assert skill.version == "VASPKIT 3.5.0"
     assert "structure" in skill.tasks and "kpoints" in skill.tasks
-    assert "401" in skill.tasks["potcar"]
+    assert "potcar" not in skill.tasks
+    assert "103" not in skill.tasks["structure"]
 
 
 def test_probe_not_found():

@@ -1,4 +1,4 @@
-﻿# VASP-Doctor 一键创建/更新后端环境（Windows PowerShell）
+﻿# VASP-Copilot 一键创建/更新后端环境（Windows PowerShell）
 # 用法（仓库根目录）:  powershell -ExecutionPolicy Bypass -File backend\setup_env.ps1
 # 可选参数 -BasePython 指定基础解释器（默认 D:\anaconda3\python.exe）
 # 原则：venv、pip 缓存、临时目录全部位于仓库内（D 盘），不写 C 盘。

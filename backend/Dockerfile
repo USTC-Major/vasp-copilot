@@ -1,4 +1,4 @@
-# VASP-Doctor 后端镜像（13.2：多阶段构建、非 root、healthcheck；不安装 VASP/POTCAR）
+# VASP-Copilot 后端镜像（13.2：多阶段构建、非 root、healthcheck；不安装 VASP/POTCAR）
 # 布局与仓库根一致：源码位于 /repo/backend/app，使两棵导入树与本地开发完全等价：
 #   - PYTHONPATH=/repo              让 BE-A 的 backend.app.* 绝对导入可解析
 #   - uvicorn --app-dir /repo/backend  让医生端 app.main:app 相对导入可解析

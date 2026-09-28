@@ -774,6 +774,7 @@ handlers.push(...aiHandlers, ...toolboxHandlers);
 let mockAiSettings = {
   enabled: true,
   max_jobs: 20,
+  message_char_limit: 2000,
   llm: { base_url: "https://api.openai.com/v1", model: "gpt-4o", provider: "auto", api_key: "" },
   materials_project: { api_key: "" },
   ssh: { name: "", host: "", port: 22, username: "" },
@@ -802,6 +803,7 @@ const aiSettingsHandlers = [
     mockAiSettings = {
       enabled: mockAiSettings.enabled,
       max_jobs: pick("max_jobs", mockAiSettings.max_jobs),
+      message_char_limit: mockAiSettings.message_char_limit,
       llm: {
         ...mockAiSettings.llm,
         base_url: pick("llm_base_url", mockAiSettings.llm.base_url),

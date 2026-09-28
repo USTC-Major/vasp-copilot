@@ -44,7 +44,7 @@ class LlmConfig:
 
 @dataclass
 class Settings:
-    app_name: str = 'vasp-doctor'
+    app_name: str = 'vasp-copilot'
     api_prefix: str = '/api/v1'
     data_dir: str = 'data'
     ttl_seconds: int = 24 * 3600

@@ -17,11 +17,73 @@ import AiDirectoryPicker from '../components/ai/AiDirectoryPicker';
 import ToolboxTaskStatus, { ToolboxEnvironmentTags } from '../components/toolbox/ToolboxTaskStatus';
 import { aiApi, toolboxApi } from '../api/client';
 import { AI_JOB_STATUS_MAP } from '../types/ai';
-import { useAiTasks, useAiTaskCreate, useAiMessages, useAiTaskContext, useAiTaskUpdate, useAiTaskDelete, useToolboxTaskDetail } from '../hooks/useApi';
-import type { AiMessage as AiMsg, AiTask, AiConsentCard } from '../types/ai';
+import { useAiTasks, useAiTaskCreate, useAiMessages, useAiTaskContext, useAiTaskUpdate, useAiTaskDelete, useToolboxTaskDetail, useAiSettings } from '../hooks/useApi';
+import type { AiMessage as AiMsg, AiTask, AiConsentCard, AiConsentResponse } from '../types/ai';
 
 const { Content } = Layout;
 const { Text, Title } = Typography;
+
+// 可批量处理的卡片：只限“机械文件准备”。科学输入（INCAR/KPOINTS/结构导入）、
+// 脚本认领、提交与重试一律逐项确认，不做批量。
+// 文件复制与上传可批量处理；科学参数、结构导入、脚本与提交仍逐项确认。
+const BATCHABLE_KINDS = new Set(['copy_inputs', 'hpc_upload']);
+const PREPARE_GROUP_KEY = 'prepare';
+
+const CARD_LABELS: Record<string, string> = {
+  workspace: '操作授权',        // 旧版/演示后端使用的泛化类型
+  submit: '提交确认',
+  copy_inputs: '输入复制',
+  hpc_upload: '文件上传',
+  incar_write: 'INCAR 参数写入',
+  kpoints_write: 'KPOINTS 生成',
+  mp_poscar_write: '结构导入',
+  script_attestation: '提交脚本认领',
+  retry_job: '失败重试',
+  remote_file: '远端文件计划',
+};
+
+const cardLabel = (kind: string) => CARD_LABELS[kind] ?? kind;
+
+type ConsentOutcome = 'completed' | 'refused' | 'failed' | 'in_progress' | 'pending' | 'uncertain';
+interface ConsentResolution { cardId: string; label: string; outcome: ConsentOutcome; detail: string }
+const CONSENT_STATES = new Set(['executed', 'rejected', 'failed', 'expired', 'unknown', 'approved', 'executing', 'pending']);
+const consentStates = (response: AiConsentResponse) => [response.state, response.card?.state].filter((state): state is string => state !== undefined);
+const classifyConsent = (response: AiConsentResponse): ConsentOutcome => {
+  const states = consentStates(response);
+  if (states.length === 0 || states.some((state) => !CONSENT_STATES.has(state)) || new Set(states).size > 1) return 'uncertain';
+  switch (states[0]) {
+    case 'executed': return 'completed';
+    case 'rejected': return 'refused';
+    case 'failed':
+    case 'expired': return 'failed';
+    case 'approved':
+    case 'executing': return 'in_progress';
+    case 'pending': return 'pending';
+    default: return 'uncertain';
+  }
+};
+const outcomeLabel: Record<ConsentOutcome, string> = {
+  completed: '执行完成', refused: '拒绝已记录', failed: '执行失败/已过期', in_progress: '已接受，处理中', pending: '仍待处理', uncertain: '结果未确认',
+};
+const consentDetail = (response: AiConsentResponse) => [...new Set([
+  response.card?.result, response.result, response.card?.reason, response.error?.message,
+  ...(consentStates(response).includes('unknown') ? ['执行结果未知，请核验任务状态；请勿重复批准或重试。'] : []),
+].filter(Boolean))].join('\n');
+const hasResolvedApproval = (outcome: ConsentOutcome) => ['completed', 'refused', 'failed', 'in_progress'].includes(outcome);
+const shouldRemovePending = (response: AiConsentResponse, outcome: ConsentOutcome) =>
+  hasResolvedApproval(outcome) || (outcome === 'uncertain' && consentStates(response).length > 0 && consentStates(response).every((state) => state === 'unknown'));
+
+/** 折叠时只显示第一行指纹（文件名/目标/SHA 前几位都在里面）。 */
+const cardFingerprint = (summary: string) => {
+  const first = (summary || '').split('\n').map((line) => line.trim()).find(Boolean) ?? '（无摘要）';
+  return first.length > 96 ? `${first.slice(0, 96)}…` : first;
+};
+
+/** 折叠时也显示一句理由，避免用户看不到“为什么需要确认”。 */
+const reasonBrief = (reason: string) => {
+  const text = (reason || '').trim();
+  return text.length > 90 ? `${text.slice(0, 90)}…` : text;
+};
 
 interface LiveMsg {
   role: 'user' | 'assistant';
@@ -34,6 +96,57 @@ interface StreamIssue {
   kind: 'generation' | 'connection';
   message: string;
 }
+
+/** 单张待批卡：默认只显示指纹，完整预览按需展开并限高滚动。 */
+const PendingCardRow: React.FC<{
+  card: AiConsentCard;
+  resolving: boolean;
+  onResolve: (card: AiConsentCard, approved: boolean) => void;
+  toolboxLink?: string;
+}> = ({ card, resolving, onResolve, toolboxLink }) => {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ borderTop: '1px dashed rgba(0,0,0,0.10)', paddingTop: 8, marginTop: 8 }}>
+      <Space style={{ width: '100%', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+        <div style={{ paddingRight: 8 }}>
+          <div style={{ fontSize: 13 }}>{cardFingerprint(card.summary)}</div>
+          {reasonBrief(card.reason) && (
+            <div style={{ fontSize: 12, color: '#8c6d1f', marginTop: 2 }}>{reasonBrief(card.reason)}</div>
+          )}
+        </div>
+        <Button size="small" type="link" onClick={() => setOpen((v) => !v)}>
+          {open ? '收起' : '展开完整预览'}
+        </Button>
+      </Space>
+      {open && (
+        <div style={{ maxHeight: 240, overflowY: 'auto', background: '#fafafa', borderRadius: 6, padding: '8px 10px', marginTop: 6 }}>
+          <div style={{ whiteSpace: 'pre-wrap', fontSize: 12 }}>{card.summary}</div>
+          <div style={{ fontSize: 12, color: '#8c6d1f', marginTop: 8, whiteSpace: 'pre-wrap' }}>{card.reason}</div>
+        </div>
+      )}
+      {card.kind === 'remote_file' ? (
+        <Link to={toolboxLink ?? '#'} style={{ fontSize: 13 }}>审阅完整文件计划与授权范围</Link>
+      ) : (
+        <Space style={{ marginTop: 8 }}>
+          {(card.options && card.options.length
+            ? card.options.filter((opt) => opt !== '同意本批' && opt !== 'allow_batch')
+            : ['同意本次', '拒绝']).map((opt) => (
+            <Button
+              key={opt}
+              size="small"
+              type={opt === '拒绝' ? 'default' : 'primary'}
+              danger={opt === '拒绝'}
+              loading={resolving}
+              onClick={() => onResolve(card, opt !== '拒绝')}
+            >
+              {opt}
+            </Button>
+          ))}
+        </Space>
+      )}
+    </div>
+  );
+};
 
 const AiProjectPage: React.FC = () => {
   const { projectId = '' } = useParams();
@@ -75,9 +188,14 @@ const AiProjectPage: React.FC = () => {
   const [streaming, setStreaming] = useState(false);
   const [streamIssue, setStreamIssue] = useState<StreamIssue | null>(null);
   const [pendingCards, setPendingCards] = useState<AiConsentCard[]>([]);
+  const [consentResults, setConsentResults] = useState<ConsentResolution[]>([]);
+  const [batchSummary, setBatchSummary] = useState('');
   const [resolvingCardId, setResolvingCardId] = useState<string | null>(null);
+  const [batchBusy, setBatchBusy] = useState(false);
   const threadRef = useRef<HTMLDivElement>(null);
   const selectedTaskIdRef = useRef<string | null>(selectedTaskId);
+  const taskSelectionRef = useRef(0);
+  const resolvedCardIdsRef = useRef(new Set<string>());
   const streamSequenceRef = useRef(0);
   const activeStreamRef = useRef<{
     requestId: number;
@@ -87,6 +205,11 @@ const AiProjectPage: React.FC = () => {
 
   const tasks = tasksQuery.data?.tasks ?? [];
   const selectedTask = tasks.find((t) => t.id === selectedTaskId) ?? null;
+  // 单条消息进入模型上下文的上限由后端下发，避免前后端各写一份常量。
+  const settingsQuery = useAiSettings(true);
+  const messageLimit = settingsQuery.data?.settings.message_char_limit ?? 2000;
+  const draftLength = input.trim().length;
+  const draftOverLimit = draftLength > messageLimit;
   const executionQuery = useToolboxTaskDetail(projectId, selectedTaskId, { observeOnly: true });
   const messagesQuery = useAiMessages(projectId, selectedTaskId);
   const taskContextQuery = useAiTaskContext(projectId, selectedTaskId);
@@ -96,6 +219,10 @@ const AiProjectPage: React.FC = () => {
   const conversationBusy = streaming || generationRunning;
 
   const selectTask = (taskId: string | null) => {
+    if (selectedTaskIdRef.current !== taskId) {
+      taskSelectionRef.current += 1;
+      resolvedCardIdsRef.current.clear();
+    }
     const active = activeStreamRef.current;
     if (active && active.taskId !== taskId) {
       active.controller.abort();
@@ -125,18 +252,24 @@ const AiProjectPage: React.FC = () => {
     setStreaming(false);
     setStreamIssue(null);
     setPendingCards([]);
+    setConsentResults([]);
+    setBatchSummary('');
     setResolvingCardId(null);
+    setBatchBusy(false);
   }, [selectedTaskId]);
 
   useEffect(() => () => {
+    taskSelectionRef.current += 1;
     activeStreamRef.current?.controller.abort();
     activeStreamRef.current = null;
   }, []);
 
   useEffect(() => {
     const restored = messagesQuery.data?.pending_actions;
-    if (restored !== undefined) setPendingCards(restored);
-  }, [messagesQuery.data?.pending_actions, selectedTaskId]);
+    if (!messagesQuery.isError && restored !== undefined) {
+      setPendingCards(restored.filter((card) => !resolvedCardIdsRef.current.has(card.card_id)));
+    }
+  }, [messagesQuery.data?.pending_actions, messagesQuery.isError, selectedTaskId]);
 
   useEffect(() => {
     const el = threadRef.current;
@@ -225,7 +358,9 @@ const AiProjectPage: React.FC = () => {
     try {
       const r = await aiApi.stopMessage(projectId, selectedTask.id);
       if (!r.stopped) {
-        message.info('当前没有进行中的回复生成，可直接发送下一条。');
+        message.info('当前没有正在生成的回复');
+      } else {
+        message.info('已停止生成');
       }
       void messagesQuery.refetch();
     } catch (err) {
@@ -237,34 +372,113 @@ const AiProjectPage: React.FC = () => {
 
   const handleResolveCard = async (card: AiConsentCard, approved: boolean) => {
     const taskId = selectedTask?.id;
+    const selection = taskSelectionRef.current;
+    const isCurrent = () => selectedTaskIdRef.current === taskId && taskSelectionRef.current === selection;
     if (!taskId || resolvingCardId) return;
     setResolvingCardId(card.card_id);
     try {
       const r = await aiApi.resolveConsent(projectId, taskId, card.card_id, approved);
-      if (selectedTaskIdRef.current === taskId) {
-        if (approved) {
-          message.success(r.result || '已批准本次操作；后续操作仍需单独确认');
-        } else {
-          message.info(r.result || '已拒绝，本次不执行');
+      if (isCurrent()) {
+        const outcome = classifyConsent(r);
+        const detail = consentDetail(r);
+        setConsentResults((prev) => [{ cardId: card.card_id, label: cardFingerprint(card.summary), outcome, detail }, ...prev.filter((item) => item.cardId !== card.card_id)]);
+        if (shouldRemovePending(r, outcome)) {
+          resolvedCardIdsRef.current.add(card.card_id);
+          setPendingCards((prev) => prev.filter((c) => c.card_id !== card.card_id));
         }
-        setPendingCards((prev) => prev.filter((c) => c.card_id !== card.card_id));
-        // 提交/授权结果已由后端落库为 assistant 消息，立即刷出，不能只靠 toast。
-        await messagesQuery.refetch();
+        // Missing/conflicting state is not authoritative; refresh before reconciling the card.
+        const refreshed = await messagesQuery.refetch();
+        if (!isCurrent()) return;
+        if (!refreshed.isError && refreshed.data?.pending_actions) {
+          setPendingCards(refreshed.data.pending_actions.filter((pending) => !resolvedCardIdsRef.current.has(pending.card_id)));
+        }
         void tasksQuery.refetch();
         void taskContextQuery.refetch();
       }
     } catch (err) {
-      if (selectedTaskIdRef.current === taskId) {
-        message.error(err instanceof Error ? err.message : '授权处理失败');
+      if (isCurrent()) {
+        const detail = err instanceof Error ? err.message : '授权处理失败';
+        setConsentResults((prev) => [{ cardId: card.card_id, label: cardFingerprint(card.summary), outcome: 'uncertain', detail }, ...prev.filter((item) => item.cardId !== card.card_id)]);
+        const refreshed = await messagesQuery.refetch();
+        if (isCurrent() && !refreshed.isError && refreshed.data?.pending_actions) {
+          setPendingCards(refreshed.data.pending_actions.filter((pending) => !resolvedCardIdsRef.current.has(pending.card_id)));
+        }
+        void taskContextQuery.refetch();
       }
     } finally {
-      if (selectedTaskIdRef.current === taskId) setResolvingCardId(null);
+      if (isCurrent()) setResolvingCardId(null);
+    }
+  };
+
+  /** 批量处理同类卡片：一次点击，但逐张提交、各自留决议记录。 */
+  const handleResolveCards = async (cards: AiConsentCard[], approved: boolean) => {
+    const taskId = selectedTask?.id;
+    const selection = taskSelectionRef.current;
+    const isCurrent = () => selectedTaskIdRef.current === taskId && taskSelectionRef.current === selection;
+    if (!taskId || resolvingCardId || batchBusy || cards.length === 0) return;
+    const confirmed = await new Promise<boolean>((resolve) => {
+      Modal.confirm({
+        title: approved ? `批准本批 ${cards.length} 项` : `拒绝本批 ${cards.length} 项`,
+        content: (
+          <div style={{ maxHeight: 220, overflowY: 'auto' }}>
+            <div style={{ marginBottom: 6 }}>将逐项处理以下操作（每项仍单独记录决议）：</div>
+            <div style={{ whiteSpace: 'pre-wrap', fontSize: 12 }}>
+              {cards.map((card) => `· ${cardFingerprint(card.summary)}`).join('\n')}
+            </div>
+          </div>
+        ),
+        okText: approved ? '全部批准' : '全部拒绝',
+        cancelText: '取消',
+        onOk: () => resolve(true),
+        onCancel: () => resolve(false),
+      });
+    });
+    if (!confirmed || !isCurrent()) return;
+    setBatchBusy(true);
+    const results: ConsentResolution[] = [];
+    try {
+      for (const card of cards) {
+        if (!isCurrent()) return;
+        try {
+          const response = await aiApi.resolveConsent(projectId, taskId, card.card_id, approved);
+          if (!isCurrent()) return;
+          const outcome = classifyConsent(response);
+          const detail = consentDetail(response);
+          results.push({ cardId: card.card_id, label: cardFingerprint(card.summary), outcome, detail });
+          if (shouldRemovePending(response, outcome)) {
+            resolvedCardIdsRef.current.add(card.card_id);
+            setPendingCards((prev) => prev.filter((c) => c.card_id !== card.card_id));
+          }
+        } catch (err) {
+          if (!isCurrent()) return;
+          results.push({ cardId: card.card_id, label: cardFingerprint(card.summary), outcome: 'uncertain', detail: err instanceof Error ? err.message : '处理失败' });
+        }
+        // Capture this receipt before the next request mutates the batch array.
+        const receipt = results[results.length - 1];
+        setConsentResults((prev) => [receipt, ...prev.filter((item) => item.cardId !== card.card_id)]);
+      }
+      const refreshed = await messagesQuery.refetch();
+      if (!isCurrent()) return;
+      if (!refreshed.isError && refreshed.data?.pending_actions) setPendingCards(refreshed.data.pending_actions.filter((pending) => !resolvedCardIdsRef.current.has(pending.card_id)));
+      const counts = results.reduce<Record<ConsentOutcome, number>>((sum, item) => ({ ...sum, [item.outcome]: sum[item.outcome] + 1 }),
+        { completed: 0, refused: 0, failed: 0, in_progress: 0, pending: 0, uncertain: 0 });
+      const summary = (['completed', 'refused', 'failed', 'in_progress', 'pending', 'uncertain'] as ConsentOutcome[])
+        .map((outcome) => `${outcomeLabel[outcome]} ${counts[outcome]}`).join('；');
+      setBatchSummary(`本批处理结果：${summary}`);
+      void tasksQuery.refetch();
+      void taskContextQuery.refetch();
+    } finally {
+      if (isCurrent()) setBatchBusy(false);
     }
   };
 
   const send = async () => {
     const content = input.trim();
     if (!content || !selectedTask || conversationBusy) return;
+    if (content.length > messageLimit) {
+      // 后端按上限截断后才会进模型上下文；这里如实告知，避免用户以为全文都被读到。
+      message.warning(`本条消息 ${content.length} 字，超过 ${messageLimit} 字上限；超出部分不会进入模型上下文，建议分段发送。`);
+    }
     const taskId = selectedTask.id;
     const requestId = ++streamSequenceRef.current;
     const controller = new AbortController();
@@ -363,6 +577,7 @@ const AiProjectPage: React.FC = () => {
                 {selectedTask.local_workspace && <Tag icon={<FolderOutlined />} color="geekblue" style={{ margin: 0 }}>{selectedTask.local_workspace}</Tag>}
                 {selectedTask.hpc_workspace && <Tag icon={<CloudServerOutlined />} color="purple" style={{ margin: 0 }}>{selectedTask.hpc_workspace}</Tag>}
                 <AiContextBar context={taskContextQuery.data} />
+                <Button size="small" danger onClick={() => void handleStop()}>停止生成</Button>
                 <Button size="small" danger icon={<DeleteOutlined />} onClick={() => {
                   Modal.confirm({
                     title: "删除该计算任务？",
@@ -403,12 +618,14 @@ const AiProjectPage: React.FC = () => {
                 <AiChatBubble key={`live-${idx}`} role={m.role} name={m.role === 'assistant' ? 'VASP 计算助手' : undefined}>
                   <>
                     {m.role === 'assistant' && m.thinking ? (
-                      <div style={{ marginBottom: 10, padding: '8px 12px', background: 'rgba(0,0,0,0.035)', borderRadius: 8, borderLeft: '3px solid #0071e3' }}>
-                        <Text strong style={{ fontSize: 12, display: 'block', marginBottom: 4, color: '#6e6e73' }}>
-                          <LoadingOutlined spin style={{ marginRight: 6 }} />思考过程
-                        </Text>
-                        <div style={{ whiteSpace: 'pre-wrap', color: '#6e6e73', fontSize: 13 }}>{m.thinking}</div>
-                      </div>
+                      // 思考过程默认收起：模型的自述/中间推理（常含英文）不占聊天版面，
+                      // 想看过程点一下即可展开。
+                      <details style={{ marginBottom: 10, padding: '8px 12px', background: 'rgba(0,0,0,0.035)', borderRadius: 8, borderLeft: '3px solid #0071e3' }}>
+                        <summary style={{ fontSize: 12, fontWeight: 600, color: '#6e6e73', cursor: 'pointer', userSelect: 'none' }}>
+                          思考过程 <Text type="secondary" style={{ fontSize: 11 }}>（点击展开）</Text>
+                        </summary>
+                        <div style={{ whiteSpace: 'pre-wrap', color: '#6e6e73', fontSize: 13, marginTop: 8 }}>{m.thinking}</div>
+                      </details>
                     ) : null}
                     {m.role === 'assistant' && !m.thinking && !m.content ? (
                       <div style={{ color: '#8a8a8e', fontSize: 13 }}>
@@ -428,38 +645,83 @@ const AiProjectPage: React.FC = () => {
 
             {pendingCards.length > 0 && (
               <div style={{ marginBottom: 10 }}>
-                {pendingCards.map((card) => (
-                  <div key={card.card_id} style={{ border: '1px solid #f0c36d', background: '#fffbe6', borderRadius: 10, padding: '12px 14px', marginBottom: 8 }}>
-                    <Space style={{ marginBottom: 6, width: '100%', justifyContent: 'space-between' }}>
-                      <Space size={8}>
-                        <Tag color="gold">{card.kind === 'submit' ? '提交确认' : '操作授权'}</Tag>
-                        <Text strong style={{ whiteSpace: 'pre-wrap' }}>{card.summary}</Text>
+                {(() => {
+                  // 同类卡（仅限机械文件准备）折成一组，可一次批准/拒绝；科学输入、
+                  // 脚本认领、提交与重试保持逐项确认。
+                  const groups: { key: string; label: string; cards: AiConsentCard[]; batchable: boolean }[] = [];
+                  for (const card of pendingCards) {
+                    const batchable = BATCHABLE_KINDS.has(card.kind);
+                    const group = batchable ? groups.find((g) => g.batchable) : undefined;
+                    if (group) group.cards.push(card);
+                    else groups.push({ key: batchable ? PREPARE_GROUP_KEY : card.card_id,
+                                       label: batchable ? '文件准备' : cardLabel(card.kind),
+                                       cards: [card], batchable });
+                  }
+                  return groups.map((group) => (
+                    <div key={group.key} style={{ border: '1px solid #f0c36d', background: '#fffbe6', borderRadius: 10, padding: '10px 14px', marginBottom: 8 }}>
+                      <Space style={{ width: '100%', justifyContent: 'space-between' }}>
+                        <Space size={8}>
+                          <Tag color="gold">{group.label}</Tag>
+                          <Text type="secondary" style={{ fontSize: 12 }}>
+                            {group.cards.length} 项待批准{group.batchable ? '（可批量）' : '（逐项确认）'}
+                          </Text>
+                        </Space>
+                        {group.batchable && group.cards.length > 1 && (
+                          <Space>
+                            <Button size="small" type="primary" loading={batchBusy}
+                                    onClick={() => void handleResolveCards(group.cards, true)}>
+                              全部批准本批（{group.cards.length} 项）
+                            </Button>
+                            <Button size="small" danger loading={batchBusy}
+                                    onClick={() => void handleResolveCards(group.cards, false)}>
+                              全部拒绝
+                            </Button>
+                          </Space>
+                        )}
                       </Space>
-                    </Space>
-                    <div style={{ fontSize: 13, color: '#8c6d1f', marginBottom: 10, whiteSpace: 'pre-wrap' }}>{card.reason}</div>
-                    {card.kind === 'remote_file' ? (
-                      <Link to={`/toolbox/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(selectedTaskId || '')}?fileAction=${encodeURIComponent(card.card_id)}#toolbox-files`}>
-                        审阅完整文件计划与授权范围
-                      </Link>
-                    ) : <Space>
-                      {(card.options && card.options.length
-                        ? card.options.filter((opt) => opt !== '同意本批' && opt !== 'allow_batch')
-                        : ['同意本次', '拒绝']).map((opt) => (
-                        <Button
-                          key={opt}
-                          size="small"
-                          type={opt === '拒绝' ? 'default' : 'primary'}
-                          danger={opt === '拒绝'}
-                          loading={resolvingCardId === card.card_id}
-                          onClick={() => void handleResolveCard(card, opt !== '拒绝')}
-                        >
-                          {opt}
-                        </Button>
+                      {group.batchable ? (
+                        // 准备阶段只显示"一组 + 一个全部批准"，明细默认收起，不再糊满屏幕
+                        <details style={{ marginTop: 6 }}>
+                          <summary style={{ fontSize: 12, color: '#6e6e73', cursor: 'pointer' }}>
+                            查看这 {group.cards.length} 项明细（默认收起）
+                          </summary>
+                          {group.cards.map((card) => (
+                            <PendingCardRow
+                              key={card.card_id}
+                              card={card}
+                              resolving={resolvingCardId === card.card_id || batchBusy}
+                              onResolve={(target, approved) => void handleResolveCard(target, approved)}
+                              toolboxLink={`/toolbox/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(selectedTaskId || '')}?fileAction=${encodeURIComponent(card.card_id)}#toolbox-files`}
+                            />
+                          ))}
+                        </details>
+                      ) : group.cards.map((card) => (
+                        <PendingCardRow
+                          key={card.card_id}
+                          card={card}
+                          resolving={resolvingCardId === card.card_id || batchBusy}
+                          onResolve={(target, approved) => void handleResolveCard(target, approved)}
+                          toolboxLink={`/toolbox/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(selectedTaskId || '')}?fileAction=${encodeURIComponent(card.card_id)}#toolbox-files`}
+                        />
                       ))}
-                    </Space>}
-                  </div>
-                ))}
+                    </div>
+                  ));
+                })()}
               </div>
+            )}
+            {consentResults.length > 0 && (
+              <Alert
+                type="info"
+                showIcon
+                style={{ marginBottom: 10 }}
+                message={batchSummary || '授权处理结果'}
+                description={<div>{consentResults.map((result) => (
+                  <div key={result.cardId} style={{ marginTop: 4 }}>
+                    <Text strong>{result.label}：<span>{outcomeLabel[result.outcome]}</span></Text>
+                    {result.detail && <div style={{ whiteSpace: 'pre-wrap' }}>{result.detail.split('\n').map((line, index) => <div key={index}>{line}</div>)}</div>}
+                  </div>
+                ))}</div>}
+              />
             )}
             {streamIssue && (
               <Alert
@@ -502,6 +764,11 @@ const AiProjectPage: React.FC = () => {
                 </Button>
               )}
             </div>
+            {draftOverLimit && (
+              <div style={{ marginTop: 6, fontSize: 12, color: '#d46b08' }}>
+                本条消息 {draftLength} 字，超过 {messageLimit} 字上限；超出部分不会进入模型上下文，建议分段发送。
+              </div>
+            )}
           </div>
         )}
       </Content>
@@ -531,6 +798,11 @@ const AiProjectPage: React.FC = () => {
               <Button icon={<FolderOpenOutlined />} onClick={() => setPickerKind('hpc')}>浏览</Button>
             </div>
           </div>
+          <Alert
+            type="info"
+            showIcon
+            message="工作区仅指定路径；文件根登记及操作授权请在 Toolbox 中确认"
+          />
         </Space>
       </Modal>
 

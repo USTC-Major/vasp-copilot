@@ -1,4 +1,4 @@
-﻿# VASP-Doctor 一键启动（Windows PowerShell）
+﻿# VASP-Copilot 一键启动（Windows PowerShell）
 # 用法（在 backend 目录）:  powershell -ExecutionPolicy Bypass -File .\run.ps1
 param(
     [string]$Listen = "127.0.0.1",
@@ -31,5 +31,5 @@ if (Test-Path $venvPy) {
 }
 Write-Host "使用 Python: $py"
 
-Write-Host "启动 VASP-Doctor: http://$Listen`:$Port  (文档: http://$Listen`:$Port/api/v1/openapi.json)"
+Write-Host "启动 VASP-Copilot: http://$Listen`:$Port  (文档: http://$Listen`:$Port/api/v1/openapi.json)"
 & $py -X utf8 -m uvicorn app.main:app --host $Listen --port $Port

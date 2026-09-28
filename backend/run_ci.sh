@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# VASP-Doctor 后端本地 CI 检查（Linux/macOS）。用法（backend 目录）:  ./run_ci.sh
+# VASP-Copilot 后端本地 CI 检查（Linux/macOS）。用法（backend 目录）:  ./run_ci.sh
 set -euo pipefail
 cd "$(dirname "$0")"
 mkdir -p tests/.tmp
