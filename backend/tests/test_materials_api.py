@@ -7,13 +7,32 @@ list and a Pymatgen-style structure document.
 from __future__ import annotations
 
 import copy
+import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
 from app.api.v1 import deps
 from app.services import materials_project as mp_service
+from app.services.file_store import FileStore
+from app.api.v1 import materials as mp_api, structure as structure_api
+from backend.toolbox import secrets
 
-client = TestClient(app)
+
+@pytest.fixture(autouse=True)
+def _isolated_materials(tmp_path, monkeypatch, isolated_runtime_home):
+    monkeypatch.delenv('MP_API_KEY', raising=False)
+    monkeypatch.setattr(deps.settings, 'data_dir', str(tmp_path / 'app-data'))
+    store = FileStore(root=tmp_path / 'files', ttl_seconds=3600)
+    monkeypatch.setattr(deps, 'file_store', store)
+    monkeypatch.setattr(mp_api, 'file_store', store)
+    monkeypatch.setattr(structure_api, 'file_store', store)
+    monkeypatch.setattr(mp_api, 'get_explainer', lambda _settings: None)
+
+
+@pytest.fixture
+def client():
+    with TestClient(app) as current:
+        yield current
 
 # A Pymatgen-serialized Structure for NaCl (rock salt: Na at 0,0,0 and
 # Cl at 0.5,0.5,0.5 with an fcc-style lattice).
@@ -82,24 +101,23 @@ class FakeMpClient:
 
 
 def _enable_mp(monkeypatch):
-    deps.settings.materials_project.api_key = "fake-key"
+    secrets.set_secret('mp_api_key', 'fake-key')
     monkeypatch.setattr(mp_service, "MaterialsProjectClient", FakeMpClient)
 
 
-def test_materials_search_not_configured_422():
-    deps.settings.materials_project.api_key = ""
+def test_materials_search_not_configured_422(client):
     r = client.post("/api/v1/materials/search", json={"query": "NaCl"})
     assert r.status_code == 422
     assert r.json()["error"]["code"] == "MP_NOT_CONFIGURED"
 
 
-def test_materials_empty_query_422():
+def test_materials_empty_query_422(client):
     r = client.post("/api/v1/materials/search", json={"query": "   "})
     assert r.status_code == 422
     assert r.json()["error"]["code"] == "MP_EMPTY_QUERY"
 
 
-def test_materials_search_with_fake(monkeypatch):
+def test_materials_search_with_fake(client, monkeypatch):
     _enable_mp(monkeypatch)
     r = client.post("/api/v1/materials/search", json={"query": "NaCl", "limit": 5})
     assert r.status_code == 200, r.text
@@ -111,7 +129,7 @@ def test_materials_search_with_fake(monkeypatch):
     assert data["materials"][0]["spacegroup"]["number"] == 225
 
 
-def test_materials_import_with_fake(monkeypatch):
+def test_materials_import_with_fake(client, monkeypatch):
     _enable_mp(monkeypatch)
     r = client.post("/api/v1/materials/import", json={"material_id": "mp-12345"})
     assert r.status_code == 200, r.text
@@ -125,7 +143,7 @@ def test_materials_import_with_fake(monkeypatch):
     assert abs(data["summary"]["lattice"]["volume"] - 133.2) < 1.0
 
 
-def test_materials_import_back_analyze_roundtrip(monkeypatch):
+def test_materials_import_back_analyze_roundtrip(client, monkeypatch):
     """Imported structure is registered in the shared FileStore so the
     regular /structure/analyze read path can resolve it."""
     _enable_mp(monkeypatch)
@@ -137,13 +155,13 @@ def test_materials_import_back_analyze_roundtrip(monkeypatch):
     assert rec.summary.atom_count == 8
 
 
-def test_materials_import_missing_id_422():
+def test_materials_import_missing_id_422(client):
     r = client.post("/api/v1/materials/import", json={"material_id": ""})
     assert r.status_code == 422
     assert r.json()["error"]["code"] == "MP_EMPTY_MATERIAL_ID"
 
 
-def test_materials_import_invalid_lattice_has_no_new_records(monkeypatch):
+def test_materials_import_invalid_lattice_has_no_new_records(client, monkeypatch):
     _enable_mp(monkeypatch)
     bad = copy.deepcopy(_STRUCTURE_DOC)
     bad["structure"]["lattice"]["matrix"][2] = [0.0, 0.0, 0.0]
@@ -155,7 +173,7 @@ def test_materials_import_invalid_lattice_has_no_new_records(monkeypatch):
     assert (len(deps.file_store._files), len(deps.file_store._structures)) == before
 
 
-def test_materials_import_missing_site_coordinates_does_not_drop_atom(monkeypatch):
+def test_materials_import_missing_site_coordinates_does_not_drop_atom(client, monkeypatch):
     _enable_mp(monkeypatch)
     bad = copy.deepcopy(_STRUCTURE_DOC)
     bad["structure"]["sites"][0].pop("abc")

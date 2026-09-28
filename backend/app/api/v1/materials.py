@@ -12,17 +12,35 @@ from __future__ import annotations
 from json import loads as _loads
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, ConfigDict
 
 from backend.input_validation import InputValidationError, validate_poscar
-from ...core.errors import ValidationError
+from ...core.errors import ValidationError, err
 from ...llm import get_explainer
 from ...schemas.api import ApiEnvelope
 from ...schemas.structure import build_structure_summary
 from .deps import file_store, get_request_id, settings
 
 router = APIRouter()
+
+
+def _runtime_mp_api_key(request: Request) -> str:
+    """Use the active Toolbox owner's credential chain on every MP request."""
+    from backend.toolbox.config import load_mp_api_key
+    from backend.toolbox.secrets import SecretStorageError
+
+    owner = getattr(request.app.state, 'toolbox', None)
+    if owner is None:
+        raise err('MP_CREDENTIAL_UNAVAILABLE', 'Toolbox 凭据服务暂不可用，请稍后重试', 503)
+    try:
+        key = load_mp_api_key(config_path=owner.root / 'toolbox_config.json')
+    except (SecretStorageError, OSError, ValueError) as exc:
+        raise err('MP_CREDENTIAL_UNAVAILABLE', '无法读取 Materials Project 凭据，请检查 Toolbox 设置后重试', 503) from exc
+    if not key:
+        raise ValidationError('MP_NOT_CONFIGURED',
+                              '未配置 Materials Project API key，请前往 Toolbox 设置保存密钥')
+    return key
 
 
 class SearchRequest(BaseModel):
@@ -104,17 +122,14 @@ def _compact_summary(summary) -> Dict[str, Any]:
 @router.post("/materials/search", response_model=ApiEnvelope)
 async def search_materials(
     req: SearchRequest,
+    request: Request,
     x_request_id: str = Depends(get_request_id),
 ) -> ApiEnvelope:
     """List MP candidates matching a natural-language / formula query."""
     query = (req.query or "").strip()
     if not query:
         raise ValidationError("MP_EMPTY_QUERY", "请输入材料需求或化学式")
-    if not settings.materials_project.api_key:
-        raise ValidationError(
-            "MP_NOT_CONFIGURED",
-            "未配置 Materials Project API key（后端 MP_API_KEY）",
-        )
+    mp_api_key = _runtime_mp_api_key(request)
 
     from ...services.materials_project import (
         MaterialsProjectClient,
@@ -131,7 +146,7 @@ async def search_materials(
         criteria = parse_requirement(query)
 
     client = MaterialsProjectClient(
-        api_key=settings.materials_project.api_key,
+        api_key=mp_api_key,
         base_url=settings.materials_project.base_url,
         timeout_seconds=settings.materials_project.timeout_seconds,
     )
@@ -152,6 +167,7 @@ async def search_materials(
 @router.post("/materials/import", response_model=ApiEnvelope)
 async def import_material(
     req: ImportRequest,
+    request: Request,
     x_request_id: str = Depends(get_request_id),
 ) -> ApiEnvelope:
     """Fetch an MP material, build a POSCAR, store & analyze it."""
@@ -159,16 +175,12 @@ async def import_material(
     if not material_id:
         raise ValidationError("MP_EMPTY_MATERIAL_ID",
                               "缺少 material_id")
-    if not settings.materials_project.api_key:
-        raise ValidationError(
-            "MP_NOT_CONFIGURED",
-            "未配置 Materials Project API key（后端 MP_API_KEY）",
-        )
+    mp_api_key = _runtime_mp_api_key(request)
 
     from ...services.materials_project import MaterialsProjectClient
 
     client = MaterialsProjectClient(
-        api_key=settings.materials_project.api_key,
+        api_key=mp_api_key,
         base_url=settings.materials_project.base_url,
         timeout_seconds=settings.materials_project.timeout_seconds,
     )

@@ -16,6 +16,7 @@ def isolated_runtime_home(tmp_path, monkeypatch):
         if key.startswith(('AI_MODE_SSH_', 'TOOLBOX_SSH_', 'AI_MODE_LLM_', 'TOOLBOX_MP_', 'AI_MODE_MP_', 'VASP_REVIEWER_')):
             monkeypatch.delenv(key, raising=False)
     monkeypatch.delenv('OPENAI_API_KEY', raising=False)
+    monkeypatch.delenv('MP_API_KEY', raising=False)
 
 @pytest.fixture(autouse=True)
 def isolated_toolbox_http_transport(tmp_path, monkeypatch):

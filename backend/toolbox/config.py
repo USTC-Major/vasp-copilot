@@ -26,6 +26,32 @@ class ExecutionConfig(BaseModel):
 # Historical annotations are compatible; there are no AI settings on this type.
 AiModeConfig = ExecutionConfig
 
+MP_ENV_NAMES = ('TOOLBOX_MP_API_KEY', 'AI_MODE_MP_API_KEY', 'MP_API_KEY')
+
+
+def mp_environment_value(env: Mapping[str, str] | None = None) -> str:
+    """The same precedence is used by settings, writes, status and MP requests."""
+    env = os.environ if env is None else env
+    return next((value for name in MP_ENV_NAMES if (value := env.get(name))), '')
+
+
+def resolve_mp_api_key(legacy_value: str = '', *, env: Mapping[str, str] | None = None) -> str:
+    return mp_environment_value(env) or resolve_secret('mp_api_key', legacy_value)
+
+
+def load_mp_api_key(*, env: Mapping[str, str] | None = None, config_path: Path | None = None) -> str:
+    """Read only the owner's MP field without depending on unrelated SSH settings."""
+    root = Path(config_path).parent if config_path is not None else paths.home_dir()
+    target = config_path or root / 'toolbox_config.json'
+    source = target if target.exists() else root / 'config.json'
+    legacy_value = ''
+    if source.is_file():
+        raw = json.loads(source.read_text(encoding='utf-8'))
+        if not isinstance(raw, dict):
+            raise ValueError('Invalid execution configuration; original file preserved')
+        legacy_value = str(raw.get('mp_api_key') or '')
+    return resolve_mp_api_key(legacy_value, env=env)
+
 def load_settings(*, env: Mapping[str, str] | None = None, config_path: Path | None = None):
     env = os.environ if env is None else env
     root = Path(config_path).parent if config_path is not None else paths.home_dir()
@@ -38,16 +64,13 @@ def load_settings(*, env: Mapping[str, str] | None = None, config_path: Path | N
             raise ValueError('Invalid execution configuration; original file preserved')
         data = {key: value for key, value in raw.items() if key in ExecutionConfig.model_fields}
     for key in ExecutionConfig.model_fields:
-        if key == 'data_dir':
+        if key in {'data_dir', 'mp_api_key'}:
             continue
         value = env.get('TOOLBOX_' + key.upper(), env.get('AI_MODE_' + key.upper()))
-        if key == 'mp_api_key':
-            value = env.get('TOOLBOX_MP_API_KEY') or env.get('AI_MODE_MP_API_KEY')
         if value is not None and value != '':
             data[key] = value
     # 密钥优先级：环境变量 > 系统凭据管理器 > 本地配置文件（旧值仍能读，便于平滑迁移）。
-    if not (env.get('TOOLBOX_MP_API_KEY') or env.get('AI_MODE_MP_API_KEY')):
-        data['mp_api_key'] = resolve_secret('mp_api_key', str(data.get('mp_api_key') or ''))
+    data['mp_api_key'] = resolve_mp_api_key(str(data.get('mp_api_key') or ''), env=env)
     data['data_dir'] = root
     return ExecutionConfig(**data)
 
@@ -60,8 +83,7 @@ def save_settings(config: ExecutionConfig, config_path: Path | None = None):
         before = json.loads(source.read_text(encoding='utf-8'))
         if not isinstance(before, dict):
             raise ValueError('Invalid execution configuration; original file preserved')
-    env_mp = (os.environ.get('TOOLBOX_MP_API_KEY')
-              or os.environ.get('AI_MODE_MP_API_KEY') or '')
+    env_mp = mp_environment_value()
     # 密钥迁移进系统凭据管理器；失败抛错误，尚未写入的原文件保持原样。
     data['mp_api_key'] = secret_value_for_file(
         'mp_api_key', str(data.get('mp_api_key') or ''),
