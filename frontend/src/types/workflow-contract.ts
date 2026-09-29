@@ -44,15 +44,18 @@ export interface SchedulerResponseBlock {
 export interface DftuEntryRequest {
   element: string;
   l: number;
-  u_ev: number;
-  j_ev: number;
-  source_note: string;
+  u_eff_ev?: number | null;
+  u_ev?: number | null;
+  j_ev?: number | null;
+  source_note?: string | null;
   confirmed_by_user: boolean;
 }
 
 /** 请求侧：DFT+U 设置。 */
 export interface DftuSettingsRequest {
   enabled: boolean;
+  form?: 'dudarev' | 'liechtenstein' | null;
+  input_mode?: 'u_eff' | 'u_j' | null;
   entries: DftuEntryRequest[];
 }
 

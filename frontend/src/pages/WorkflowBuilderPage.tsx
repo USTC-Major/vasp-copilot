@@ -40,15 +40,26 @@ type StepKey = 'upload' | 'confirm' | 'plan' | 'edit' | 'generate' | 'download';
 
 /** 表单数据 → 不可变快照（Modal 展示与实际 payload 同源，避免显示与发送不一致）。 */
 const buildSnapshot = (data: ParameterConfirmFormData, summary: StructureSummary): WorkflowConfirmSnapshot => {
+  const entries = data.dftu?.entries ?? [];
+  const isLegacyDftu = data.dftu.enabled && !data.dftu.form &&
+    entries.some((entry) => entry.u_ev != null || entry.j_ev != null);
   const dftu: DftuSettingsRequest = data.dftu.enabled
     ? {
         enabled: true,
-        entries: data.dftu.entries.map((entry) => ({
+        ...(data.dftu.form === 'legacy' || isLegacyDftu ? {} : {
+          form: data.dftu.form === 'liechtenstein' ? 'liechtenstein' as const : 'dudarev' as const,
+          input_mode: data.dftu.form === 'liechtenstein' ? 'u_j' as const : 'u_eff' as const,
+        }),
+        entries: entries.map((entry) => ({
           element: entry.element as string,
           l: entry.l as number,
-          u_ev: entry.u_ev as number,
-          j_ev: entry.j_ev as number,
-          source_note: 'user_input',
+          ...(data.dftu.form === 'legacy' || isLegacyDftu
+            ? { u_ev: entry.u_ev, j_ev: entry.j_ev }
+            : data.dftu.form === 'liechtenstein'
+              ? { u_ev: entry.u_ev, j_ev: entry.j_ev }
+              : { u_eff_ev: entry.u_eff_ev }),
+          ...(entry.source_note !== undefined ? { source_note: entry.source_note } :
+            data.dftu.form === 'legacy' || isLegacyDftu ? {} : { source_note: 'user_input' }),
           // 必须复制表单真实确认状态，禁止在此处生成/伪造用户确认。
           confirmed_by_user: entry.confirmed_by_user === true,
         })),
@@ -78,7 +89,15 @@ const buildSnapshot = (data: ParameterConfirmFormData, summary: StructureSummary
 
 /** Fail-closed 守卫：DFT+U 启用时，任一条目未获用户真实确认即不允许构造确认快照。 */
 export const canBuildConfirmSnapshot = (data: Pick<ParameterConfirmFormData, 'dftu'>): boolean =>
-  !data.dftu.enabled || data.dftu.entries.every((entry) => entry.confirmed_by_user === true);
+  !data.dftu.enabled || (() => {
+    const { form, input_mode, entries = [] } = data.dftu;
+    const explicit = (form === 'dudarev' && input_mode === 'u_eff') ||
+      (form === 'liechtenstein' && input_mode === 'u_j');
+    const legacy = (form === 'legacy' || form == null) && input_mode == null &&
+      entries.every((entry) => entry.u_ev != null && entry.u_eff_ev == null);
+    return entries.length > 0 && (explicit || legacy) &&
+      entries.every((entry) => entry.confirmed_by_user === true);
+  })();
 
 /** 快照 → 后端嵌套契约请求体（confirm=true 已在最终确认 Modal 中由用户点击确认）。 */
 const buildPlanBody = (structureId: string, snapshot: WorkflowConfirmSnapshot): WorkflowPlanRequestBody => ({

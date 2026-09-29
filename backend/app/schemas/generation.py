@@ -8,7 +8,8 @@ bundle manifest 以及库级请求 ``WorkflowGenerateRequest``。
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any, Dict, List, Optional
+import math
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -129,15 +130,64 @@ class StructureContext(_StrictModel):
 class DftuEntry(_StrictModel):
     element: str
     l: int
-    u_ev: float
-    j_ev: float = 0.0
+    u_ev: Optional[float] = None
+    j_ev: Optional[float] = None
+    u_eff_ev: Optional[float] = None
     source_note: Optional[str] = None
     confirmed_by_user: bool = False
+
+    @field_validator("u_ev", "j_ev", "u_eff_ev", mode="before")
+    @classmethod
+    def _finite_energy(cls, value: Any) -> Optional[float]:
+        if value is None:
+            return None
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+            raise ValueError("DFT+U energy must be a finite number in eV")
+        return float(value)
+
+    @field_validator("l", mode="before")
+    @classmethod
+    def _supported_channel(cls, value: Any) -> int:
+        if type(value) is not int or value not in (2, 3):
+            raise ValueError("DFT+U currently supports d (l=2) and f (l=3) only")
+        return value
 
 
 class DftuSettings(_StrictModel):
     enabled: bool = False
+    form: Optional[Literal["dudarev", "liechtenstein"]] = None
+    input_mode: Optional[Literal["u_eff", "u_j"]] = None
     entries: List[DftuEntry] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _form_and_entries(self) -> "DftuSettings":
+        if (self.form is None) != (self.input_mode is None):
+            raise ValueError("DFT+U form and input_mode must be supplied together")
+        if self.form == "dudarev" and self.input_mode != "u_eff":
+            raise ValueError("new Dudarev input requires input_mode=u_eff")
+        if self.form == "liechtenstein" and self.input_mode != "u_j":
+            raise ValueError("Liechtenstein input requires input_mode=u_j")
+        if not self.enabled:
+            if self.entries:
+                raise ValueError("disabled DFT+U must not carry entries")
+            return self
+        seen = set()
+        for entry in self.entries:
+            if not entry.element or entry.element in seen:
+                raise ValueError(f"duplicate or missing DFT+U element: {entry.element!r}")
+            seen.add(entry.element)
+            if self.input_mode == "u_eff":
+                if entry.u_eff_ev is None or entry.u_ev is not None or entry.j_ev is not None:
+                    raise ValueError("Dudarev Ueff entry requires only u_eff_ev")
+            else:
+                if entry.u_eff_ev is not None or entry.u_ev is None:
+                    raise ValueError("DFT+U U/J entry requires u_ev and no u_eff_ev")
+                if self.input_mode == "u_j" and entry.j_ev is None:
+                    raise ValueError("Liechtenstein entry requires j_ev")
+                if self.input_mode is None and entry.j_ev is None:
+                    # Legacy requests used j_ev=0 when omitted; preserve that value.
+                    entry.j_ev = 0.0
+        return self
 
     @property
     def all_confirmed(self) -> bool:

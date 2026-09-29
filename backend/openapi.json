@@ -3575,13 +3575,37 @@
             "title": "L"
           },
           "u_ev": {
-            "type": "number",
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "U Ev"
           },
           "j_ev": {
-            "type": "number",
-            "title": "J Ev",
-            "default": 0.0
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "J Ev"
+          },
+          "u_eff_ev": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "U Eff Ev"
           },
           "source_note": {
             "anyOf": [
@@ -3604,8 +3628,7 @@
         "type": "object",
         "required": [
           "element",
-          "l",
-          "u_ev"
+          "l"
         ],
         "title": "DftuEntry"
       },
@@ -3615,6 +3638,36 @@
             "type": "boolean",
             "title": "Enabled",
             "default": false
+          },
+          "form": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "dudarev",
+                  "liechtenstein"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Form"
+          },
+          "input_mode": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "u_eff",
+                  "u_j"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input Mode"
           },
           "entries": {
             "items": {

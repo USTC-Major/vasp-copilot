@@ -14,10 +14,14 @@ parameters:
   LDAUTYPE: 2
   LMAXMIX: 4
 derived_parameters:
+  - function: generate_ldautype
+    parameter: LDAUTYPE
+    target: INCAR
+    inputs: [dftu.form]
   - function: generate_ldau_arrays
     parameter: LDAU_ARRAYS
     target: INCAR
-    inputs: [structure.elements, dftu.entries]
+    inputs: [structure.elements, dftu.entries, dftu.input_mode]
   - function: generate_dftu_lmaxmix
     parameter: LMAXMIX
     target: INCAR

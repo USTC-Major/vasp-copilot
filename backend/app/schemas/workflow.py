@@ -185,6 +185,8 @@ class AssumptionsBlock(_StrictModel):
 
 class DftuBlock(_StrictModel):
     enabled: bool = False
+    form: Optional[str] = None
+    input_mode: Optional[str] = None
     entries: List[Dict[str, Any]] = Field(default_factory=list)
 
 
