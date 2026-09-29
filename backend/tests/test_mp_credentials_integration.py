@@ -59,7 +59,6 @@ def runtime(tmp_path, monkeypatch, isolated_runtime_home):
     monkeypatch.setattr(deps, 'file_store', store)
     monkeypatch.setattr(mp_api, 'file_store', store)
     monkeypatch.setattr(structure_api, 'file_store', store)
-    monkeypatch.setattr(mp_api, 'get_explainer', lambda _settings: None)
     FakeMP.keys = []
     monkeypatch.setattr(mp_service, 'MaterialsProjectClient', FakeMP)
     with TestClient(app) as client:

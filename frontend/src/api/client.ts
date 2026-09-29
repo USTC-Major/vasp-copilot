@@ -127,10 +127,10 @@ export const structureApi = {
 
 // ---- Materials Project API ----
 export const materialsApi = {
-  search: (query: string, limit = 20) =>
-    request<{ request_id: string; query: string; criteria: Record<string, unknown>; llm_used: boolean; count: number; materials: import('../types/generated-api').MaterialCandidate[] }>('/materials/search', {
+  search: (body: import('../types/materials').MaterialSearchRequest) =>
+    request<import('../types/materials').MaterialSearchResponse>('/materials/search', {
       method: 'POST',
-      body: { query, limit },
+      body,
     }),
 
   importMaterial: (materialId: string) =>
@@ -563,6 +563,8 @@ async function aiRequest<T>(endpoint: string, options: RequestOptions = {}, resp
 
 export const aiApi = {
   ping: () => aiRequest<{ mode: string; enabled: boolean; version: string }>("/ping"),
+  interpretMaterial: (query: string) =>
+    aiRequest<import('../types/materials').MaterialInterpretation>("/materials/interpret", { method: "POST", body: { query } }),
 
   recentHistory: (limit = 10) =>
     aiRequest<import('../types/history').RecentHistoryResponse>(`/history/recent?limit=${limit}`),

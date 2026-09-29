@@ -134,6 +134,7 @@ jobs:
             backend/tests/test_nl_plan_api.py \
             backend/tests/test_materials_api.py \
             backend/tests/test_mp_credentials_integration.py \
+            backend/tests/test_mp_natural_search.py \
             backend/tests/test_toolbox_results.py \
             backend/tests/test_bootstrap.py \
             backend/tests/test_chat_api.py \
@@ -161,6 +162,7 @@ jobs:
               "backend.tests.ai_mode.test_rw3_backend_fixes",
               "backend.tests.test_materials_api",
               "backend.tests.test_mp_credentials_integration",
+              "backend.tests.test_mp_natural_search",
               "backend.tests.ai_mode.test_secret_storage",
               "backend.tests.ai_mode.test_server",
               "backend.tests.ai_mode.test_task_file_grant",
