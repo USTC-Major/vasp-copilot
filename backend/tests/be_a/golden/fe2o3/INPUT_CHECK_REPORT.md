@@ -69,7 +69,7 @@
 | LDAUL | `2 -1` | 确定性派生/规则修复 | generate_ldau_arrays | - |
 | LDAUTYPE | `2` | Recipe 初始推荐 | modifier.dftu | 1.0.0 |
 | LDAUU | `4 0` | 确定性派生/规则修复 | generate_ldau_arrays | - |
-| LMAXMIX | `4` | Recipe 初始推荐 | modifier.dftu | 1.0.0 |
+| LMAXMIX | `4` | 确定性派生/规则修复 | generate_dftu_lmaxmix | - |
 | LREAL | `Auto` | Recipe 初始推荐 | base.vasp | 1.0.0 |
 | LWAVE | `.FALSE.` | Recipe 初始推荐 | base.vasp | 1.0.0 |
 | MAGMOM | `5 5 0.6 0.6 0.6` | 确定性派生/规则修复 | generate_magmom_from_structure | - |
@@ -95,7 +95,7 @@
 | LDAUL | `2 -1` | 确定性派生/规则修复 | generate_ldau_arrays | - |
 | LDAUTYPE | `2` | Recipe 初始推荐 | modifier.dftu | 1.0.0 |
 | LDAUU | `4 0` | 确定性派生/规则修复 | generate_ldau_arrays | - |
-| LMAXMIX | `4` | Recipe 初始推荐 | modifier.dftu | 1.0.0 |
+| LMAXMIX | `4` | 确定性派生/规则修复 | generate_dftu_lmaxmix | - |
 | LREAL | `Auto` | Recipe 初始推荐 | base.vasp | 1.0.0 |
 | LWAVE | `.TRUE.` | Recipe 初始推荐 | task.static.standard | 1.0.0 |
 | MAGMOM | `5 5 0.6 0.6 0.6` | 确定性派生/规则修复 | generate_magmom_from_structure | - |
@@ -123,7 +123,7 @@
 | LDAUL | `2 -1` | 确定性派生/规则修复 | generate_ldau_arrays | - |
 | LDAUTYPE | `2` | Recipe 初始推荐 | modifier.dftu | 1.0.0 |
 | LDAUU | `4 0` | 确定性派生/规则修复 | generate_ldau_arrays | - |
-| LMAXMIX | `4` | Recipe 初始推荐 | modifier.dftu | 1.0.0 |
+| LMAXMIX | `4` | 确定性派生/规则修复 | generate_dftu_lmaxmix | - |
 | LORBIT | `11` | Recipe 初始推荐 | task.dos.standard | 1.0.0 |
 | LREAL | `Auto` | Recipe 初始推荐 | base.vasp | 1.0.0 |
 | LWAVE | `.FALSE.` | Recipe 初始推荐 | base.vasp | 1.0.0 |

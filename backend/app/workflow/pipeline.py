@@ -27,7 +27,7 @@ from backend.app.generators.kpoints import KpointsGenerator
 from backend.app.generators.poscar import PoscarGenerator
 from backend.app.generators.script import ScriptGenerator
 from backend.app.recipes.composer import ComposeRequest, RecipeComposer
-from backend.app.recipes.derived import KPPA_TABLE, generate_kpoint_grid
+from backend.app.recipes.derived import BAND_LINE_DIVISIONS, KPPA_TABLE, generate_kpoint_grid
 from backend.app.recipes.errors import BeAError, DftuConfirmationRequired, RecipeConfirmationRequired
 from backend.app.recipes.registry import RecipeRegistry, default_registry
 from backend.app.recipes.selector import RecipeSelector
@@ -157,6 +157,8 @@ class WorkflowGenerationPipeline:
                 for key in sorted(composition.resolved_parameters)
             }
 
+        self._validate_band_compositions(request, compositions)
+
         self._gating.evaluate(steps, inheritance)
 
         files: Dict[str, str] = {}
@@ -174,6 +176,7 @@ class WorkflowGenerationPipeline:
             )
 
         warnings = self._collect_warnings(compositions)
+        warnings.extend(self._band_warnings(request))
         plan_file = self._build_plan_file(request, steps, inheritance, compositions, warnings)
         files["workflow_plan.json"] = self._dump_plan_file(plan_file)
         files["README_run_order.md"] = self._render_readme(request, steps, inheritance, warnings)
@@ -245,6 +248,10 @@ class WorkflowGenerationPipeline:
         )
         steps: List[WorkflowStep] = planned["steps"]
         inheritance = planned["file_inheritance_plan"]
+        if TaskType.BAND in request.requested_tasks:
+            # A plan must not promise a path that fails only after confirmation.
+            self._kpoints.line_mode(request.structure.poscar_text,
+                                    divisions=BAND_LINE_DIVISIONS[request.precision.value])
 
         confirmations: List[Dict[str, Any]] = []
         conflicts: List[Dict[str, Any]] = []
@@ -281,7 +288,9 @@ class WorkflowGenerationPipeline:
                 confirmations.append(pending.model_dump(mode="json"))
             conflicts.extend(c.model_dump(mode="json") for c in composition.conflicts)
 
+        self._validate_band_compositions(request, compositions)
         warnings = self._collect_warnings(compositions)
+        warnings.extend(self._band_warnings(request))
         return {
             "steps": [step.model_dump(mode="json") for step in steps],
             "file_inheritance_plan": inheritance.model_dump(mode="json"),
@@ -297,6 +306,9 @@ class WorkflowGenerationPipeline:
 
     def _validate_plan_input(self, request: WorkflowGenerateRequest) -> None:
         self._validate_structure(request)
+        if TaskType.BAND in request.requested_tasks and request.material_assumptions.soc:
+            raise BeAError("本批不支持 SOC 能带；请关闭 SOC 后重新规划 PBE／PBE+U 能带。",
+                            code="BAND_COMBINATION_UNSUPPORTED", details={"combination": "SOC"})
         if not request.structure.elements:
             raise BeAError(
                 "structure.elements is required for workflow planning",
@@ -307,6 +319,7 @@ class WorkflowGenerationPipeline:
     # --- 输入校验 ---
 
     def _validate_request(self, request: WorkflowGenerateRequest) -> None:
+        self._validate_plan_input(request)
         if request.dftu.enabled:
             if not request.dftu.entries:
                 raise DftuConfirmationRequired(
@@ -360,6 +373,87 @@ class WorkflowGenerationPipeline:
             keys.update(confirmation.key for confirmation in manifest.confirmations)
         return keys
 
+    @staticmethod
+    def _validate_band_compositions(
+        request: WorkflowGenerateRequest, compositions: Dict[str, RecipeComposition]
+    ) -> None:
+        if TaskType.BAND not in request.requested_tasks:
+            return
+        static = compositions["02_static"].resolved_parameters
+        band = compositions["04_band"].resolved_parameters
+        required_spin = 2 if request.material_assumptions.magnetic else 1
+        if static.get("ISPIN", 1) != required_spin or band.get("ISPIN", 1) != required_spin:
+            raise BeAError(
+                "static 与 band 的 ISPIN 必须一致，并与已确认的磁性设置相符；请检查参数覆盖后重新确认。",
+                code="BAND_SPIN_INCONSISTENT",
+                details={"static_ISPIN": static.get("ISPIN", 1), "band_ISPIN": band.get("ISPIN", 1),
+                         "confirmed_ISPIN": required_spin},
+            )
+        unsupported_tags = ("LHFCALC", "METAGGA", "LSORBIT", "LNONCOLLINEAR")
+        for step_id, parameters in (("02_static", static), ("04_band", band)):
+            for tag in unsupported_tags:
+                if parameters.get(tag) not in (None, False):
+                    raise BeAError("本批能带流程只支持 PBE 及现有 PBE+U；请移除 HSE06、meta-GGA 或 SOC 等设置后重新规划。",
+                                    code="BAND_COMBINATION_UNSUPPORTED",
+                                    details={"step_id": step_id, "parameter": tag})
+            if parameters.get("NSW") != 0 or parameters.get("IBRION") != -1:
+                raise BeAError("static 和 band 必须使用同一固定结构；请移除改变结构的参数后重新确认。",
+                                code="BAND_STRUCTURE_CHANGE_UNSUPPORTED",
+                                details={"step_id": step_id})
+        if static.get("LCHARG") is not True or band.get("ICHARG") != 11:
+            raise BeAError(
+                "static 必须写出 CHGCAR，band 必须以 ICHARG=11 读取；请恢复相应参数后重新确认。",
+                code="BAND_CHGCAR_INCONSISTENT",
+                details={"static_LCHARG": static.get("LCHARG"), "band_ICHARG": band.get("ICHARG")},
+            )
+        if static.get("ICHARG") not in (None, 2):
+            raise BeAError("band 前的 static 必须自洽计算；请恢复 static 的 ICHARG 后重新确认。",
+                            code="BAND_CHGCAR_INCONSISTENT",
+                            details={"static_ICHARG": static.get("ICHARG")})
+        if any(parameters.get("LDAU") is True for parameters in (static, band)) != request.dftu.enabled:
+            raise BeAError("最终 DFT+U 开关与已确认设置不一致；请检查参数覆盖并重新确认。",
+                            code="BAND_DFTU_INCONSISTENT")
+        if not request.dftu.enabled:
+            return
+        for tag in ("LDAU", "LDAUTYPE", "LDAUL", "LDAUU", "LDAUJ"):
+            if static.get(tag) != band.get(tag):
+                raise BeAError("static 与 band 的 DFT+U 参数不一致；请检查覆盖并重新确认。",
+                                code="BAND_DFTU_INCONSISTENT", details={"parameter": tag})
+        channels = static.get("LDAUL", [])
+        if (not isinstance(channels, list) or len(channels) != len(request.structure.elements)
+                or any(type(l) not in (int, float) or l not in (-1, 2, 3) for l in channels)):
+            raise BeAError("本批 PBE+U 能带只支持 d/f 轨道；请核对 LDAUL 后重新确认。",
+                            code="BAND_COMBINATION_UNSUPPORTED", details={"LDAUL": channels})
+        if static.get("LDAU") is not True or band.get("LDAU") is not True or static.get("LDAUTYPE") != 2:
+            raise BeAError("band 需要已确认的现有 Dudarev DFT+U 设置；请检查最终参数后重新确认。",
+                            code="BAND_DFTU_INCONSISTENT")
+        minimum = 6 if 3 in channels else 4
+        for step_id, parameters in (("02_static", static), ("04_band", band)):
+            actual = parameters.get("LMAXMIX")
+            if isinstance(actual, bool) or not isinstance(actual, int) or actual < minimum:
+                raise BeAError(
+                    "static 写入及 band 读取 CHGCAR 时 LMAXMIX 必须足够；请提高该步骤参数后重新确认。",
+                    code="BAND_LMAXMIX_INSUFFICIENT",
+                    details={"step_id": step_id, "required": minimum, "actual": actual},
+                )
+
+    @staticmethod
+    def _band_warnings(request: WorkflowGenerateRequest) -> List[Dict[str, Any]]:
+        if TaskType.BAND not in request.requested_tasks:
+            return []
+        divisions = BAND_LINE_DIVISIONS[request.precision.value]
+        return [{
+            "code": "BAND_PATH_INPUT_CELL",
+            "severity": "high",
+            "message": (
+                f"能带路径按当前 POSCAR 原胞与 Setyawan-Curtarolo 约定生成；"
+                f"对称识别容差 0.01 Å，每段 {divisions} 点。先完成 static 并继承其 CHGCAR；"
+                "若实际晶胞改变，须用最终 CONTCAR 重新生成并确认 static→band。"
+                "static 与 band 须由用户核验使用逐字一致的 PBE POTCAR（同版本、同元素变体及顺序）；"
+                "软件不提供也不校验外部 POTCAR。"
+            ),
+        }]
+
     def _derived_inputs(
         self, request: WorkflowGenerateRequest, task: TaskType
     ) -> Dict[str, Any]:
@@ -396,9 +490,9 @@ class WorkflowGenerationPipeline:
         task: TaskType,
         composition: RecipeComposition,
     ) -> KpointsSpec:
-        kppa = KPPA_TABLE[task.value][request.precision.value]
         if task == TaskType.BAND:
-            return KpointsSpec(mode="line_mode", line_density=int(kppa))
+            return KpointsSpec(mode="line_mode", line_density=BAND_LINE_DIVISIONS[request.precision.value])
+        kppa = KPPA_TABLE[task.value][request.precision.value]
         derived_inputs = self._derived_inputs(request, task)
         grid_info = generate_kpoint_grid({
             "kppa": kppa,
@@ -419,7 +513,7 @@ class WorkflowGenerationPipeline:
             return self._kpoints.line_mode(
                 request.structure.poscar_text,
                 divisions=spec.line_density or 60,
-                comment=f"Line-mode band path for {step.step_id} generated by BE-A",
+                comment=f"Line-mode {spec.line_density} points/segment; Setyawan-Curtarolo path in POSCAR reciprocal basis",
             )
         return self._kpoints.generate(spec, comment=f"KPOINTS for {step.step_id} generated by BE-A")
 

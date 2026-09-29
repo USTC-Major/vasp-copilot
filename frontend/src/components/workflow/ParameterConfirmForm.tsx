@@ -54,6 +54,8 @@ interface ParameterConfirmFormProps {
   onSubmit: (data: ParameterConfirmFormData) => void;
   onBack?: () => void;
   isGenerating: boolean;
+  bandWorkflowStatus?: 'loading' | 'error' | 'enabled' | 'disabled';
+  onRetryBandCapability?: () => void;
 }
 
 const TASK_OPTIONS: { label: string; value: WorkflowTask }[] = [
@@ -97,11 +99,26 @@ const ParameterConfirmForm: React.FC<ParameterConfirmFormProps> = ({
   onSubmit,
   onBack,
   isGenerating,
+  bandWorkflowStatus = 'loading',
+  onRetryBandCapability,
 }) => {
   const [form] = Form.useForm<ParameterConfirmFormData>();
 
   const dftuEnabled = Form.useWatch(['dftu', 'enabled'], form);
   const watchedEntries: DftuEntryFormData[] = Form.useWatch(['dftu', 'entries'], form) ?? [];
+  const watchedTasks: WorkflowTask[] = Form.useWatch('tasks', form) ?? [];
+  const watchedSoc: boolean = Form.useWatch('soc', form) ?? false;
+  const bandSelected = watchedTasks.includes('band');
+  const bandCompatibilityIssues = [
+    ...(watchedTasks.includes('relax')
+      ? ['当前不支持在同一批任务中包含 relax。请先用 relax 完成弛豫，将生成的 CONTCAR 作为新结构上传，再生成 static → band。']
+      : []),
+    ...(watchedSoc ? ['当前批次不支持 SOC 与 band 同时计算，请关闭 SOC 后再提交。'] : []),
+    ...(!watchedTasks.includes('static') ? ['band 必须包含 static 上游任务，请同时选择 static，按 static → band 生成。'] : []),
+  ];
+  const bandSubmissionBlocked = bandSelected && (
+    bandWorkflowStatus !== 'enabled' || bandCompatibilityIssues.length > 0
+  );
 
   // 确认失效机制：记录每条条目被确认时的值指纹；字段变化后自动复位确认。
   const fingerprints = useRef(new Map<number, string>());
@@ -137,7 +154,18 @@ const ParameterConfirmForm: React.FC<ParameterConfirmFormProps> = ({
   );
 
   const handleFinish = (values: ParameterConfirmFormData) => {
-    onSubmit(values);
+    // Form submit guard supplements the disabled submit button and page-level guard.
+    if (values.tasks.includes('band') && (
+      bandWorkflowStatus !== 'enabled' ||
+      values.tasks.includes('relax') ||
+      !values.tasks.includes('static') ||
+      values.soc
+    )) return;
+    // Keep the prerequisite visible in the requested task sequence even if the user selected band first.
+    const submittedValues = values.tasks.includes('band')
+      ? { ...values, tasks: ['static', 'band', ...values.tasks.filter((task) => task !== 'static' && task !== 'band')] as WorkflowTask[] }
+      : values;
+    onSubmit(submittedValues);
   };
 
   // 异常值警告：不阻止、不改写，仅提示用户自行确认（科研决策归用户）。
@@ -157,6 +185,51 @@ const ParameterConfirmForm: React.FC<ParameterConfirmFormProps> = ({
           showIcon
           icon={<InfoCircleOutlined />}
           message="该体系含过渡金属，请确认磁性和 DFT+U 设置"
+          style={{ marginBottom: 16 }}
+        />
+      )}
+
+      {bandWorkflowStatus === 'loading' && (
+        <Alert
+          type="info"
+          showIcon
+          message="正在读取服务端功能配置，完成前能带选项不可用。"
+          style={{ marginBottom: 16 }}
+        />
+      )}
+      {bandWorkflowStatus === 'error' && (
+        <Alert
+          type="warning"
+          showIcon
+          message="服务端功能配置读取失败，能带暂不可用。"
+          action={onRetryBandCapability && (
+            <Button size="small" onClick={onRetryBandCapability}>重试读取</Button>
+          )}
+          style={{ marginBottom: 16 }}
+        />
+      )}
+      {bandWorkflowStatus === 'disabled' && (
+        <Alert
+          type="info"
+          showIcon
+          message="服务端当前未开放能带工作流；其他计算任务仍可使用。"
+          style={{ marginBottom: 16 }}
+        />
+      )}
+      {bandSelected && (
+        <Alert
+          type={bandCompatibilityIssues.length > 0 || bandWorkflowStatus !== 'enabled' ? 'warning' : 'info'}
+          showIcon
+          message={bandCompatibilityIssues.length > 0
+            ? '当前能带任务组合不能提交'
+            : bandWorkflowStatus === 'enabled'
+              ? '能带任务设置'
+              : '能带当前不可提交'}
+          description={bandCompatibilityIssues.length > 0
+            ? bandCompatibilityIssues.join(' ')
+            : bandWorkflowStatus === 'enabled'
+              ? '本批使用默认 PBE 设置；若启用 DFT+U，band 沿用本批现有 PBE+U 设置。任务链为 static → band。'
+              : '请等待配置读取完成、重试读取，或移除 band 后提交其他任务。'}
           style={{ marginBottom: 16 }}
         />
       )}
@@ -188,7 +261,23 @@ const ParameterConfirmForm: React.FC<ParameterConfirmFormProps> = ({
         }}
       >
         <Form.Item label="计算任务" name="tasks" rules={[{ required: true, message: '请选择至少一个计算任务' }]}>
-          <Select mode="multiple" options={TASK_OPTIONS} placeholder="选择计算任务" />
+          <Select
+            mode="multiple"
+            options={TASK_OPTIONS.map((option) => option.value === 'band'
+              ? {
+                  ...option,
+                  disabled: bandWorkflowStatus !== 'enabled',
+                  title: bandWorkflowStatus === 'loading'
+                    ? '正在读取服务端功能配置'
+                    : bandWorkflowStatus === 'error'
+                      ? '功能配置读取失败，可重试'
+                      : bandWorkflowStatus === 'disabled'
+                        ? '服务端当前未开放能带工作流'
+                        : undefined,
+                }
+              : option)}
+            placeholder="选择计算任务"
+          />
         </Form.Item>
 
         <Form.Item label="电子类型" name="electronic_type" rules={[{ required: true }]}>
@@ -378,7 +467,7 @@ const ParameterConfirmForm: React.FC<ParameterConfirmFormProps> = ({
             <Button icon={<ArrowLeftOutlined />} size="large" onClick={onBack}>
               上一步
             </Button>
-            <Button type="primary" htmlType="submit" loading={isGenerating} size="large">
+            <Button type="primary" htmlType="submit" loading={isGenerating} disabled={bandSubmissionBlocked} size="large">
               下一步：确认摘要
             </Button>
           </div>

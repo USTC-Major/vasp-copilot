@@ -7,7 +7,7 @@ import pytest
 
 from backend.app.recipes.errors import BeAError
 from backend.app.schemas.generation import (
-    DftuEntry, DftuSettings, MaterialAssumptions, SchedulerSettings,
+    DftuEntry, DftuSettings, MaterialAssumptions, ParameterPatch, SchedulerSettings,
     StructureContext, WorkflowGenerateRequest,
 )
 from backend.app.schemas.recipe import ElectronicType, PrecisionLevel, TaskType
@@ -152,6 +152,53 @@ class TestWorkflowPlanFileContract:
 
 
 class TestRequestValidation:
+    @pytest.mark.parametrize("channel,required", [(2, 4), (3, 6)])
+    def test_dftu_channel_static_and_band_lmaxmix(self, channel, required):
+        ce_poscar = "Ce\n1\n5 0 0\n0 5 0\n0 0 5\nCe\n1\nDirect\n0 0 0\n"
+        request = WorkflowGenerateRequest(
+            workflow_id="wf_ce_band", structure=StructureContext(
+                formula="Ce", elements=["Ce"], counts=[1], poscar_text=ce_poscar),
+            requested_tasks=[TaskType.STATIC, TaskType.BAND], enable_band_workflow=True,
+            dftu=DftuSettings(enabled=True, entries=[
+                DftuEntry(element="Ce", l=channel, u_ev=5.0, confirmed_by_user=True)]),
+        )
+        pipeline = WorkflowGenerationPipeline()
+        preview = pipeline.preview_plan(request)
+        assert [step["parameters"]["LMAXMIX"] for step in preview["steps"]] == [required, required]
+        result = pipeline.generate(request)
+        for step in ("02_static", "04_band"):
+            assert f"LMAXMIX = {required}" in result.bundle.files[f"{step}/INCAR"].decode()
+        assert "ICHARG = 11" in result.bundle.files["04_band/INCAR"].decode()
+        assert any(dep.source_file == "CHGCAR" and dep.to_step_id == "04_band"
+                   for dep in result.file_inheritance_plan.dependencies)
+
+        request.patches = [ParameterPatch(patch_id="low_lmaxmix", step_id="02_static",
+                                          parameter="LMAXMIX", operation="replace", value=required - 2)]
+        with pytest.raises(BeAError) as excinfo:
+            pipeline.preview_plan(request)
+        assert excinfo.value.code == "BAND_LMAXMIX_INSUFFICIENT"
+
+    def test_band_static_cannot_change_structure(self, nacl_request):
+        nacl_request.requested_tasks = [TaskType.STATIC, TaskType.BAND]
+        nacl_request.enable_band_workflow = True
+        nacl_request.patches = [ParameterPatch(patch_id="ionic", step_id="02_static",
+                                                parameter="NSW", operation="replace", value=3)]
+        with pytest.raises(BeAError) as excinfo:
+            WorkflowGenerationPipeline().preview_plan(nacl_request)
+        assert excinfo.value.code == "BAND_STRUCTURE_CHANGE_UNSUPPORTED"
+
+    def test_band_spin_must_match_static_and_confirmed_mode(self, nacl_request):
+        nacl_request.requested_tasks = [TaskType.STATIC, TaskType.BAND]
+        nacl_request.enable_band_workflow = True
+        pipeline = WorkflowGenerationPipeline()
+        assert [step["task"] for step in pipeline.preview_plan(nacl_request)["steps"]] == ["static", "band"]
+        nacl_request.patches = [ParameterPatch(patch_id="spin", step_id="02_static",
+                                                parameter="ISPIN", operation="replace", value=2,
+                                                confirmed_by_user=True)]
+        with pytest.raises(BeAError) as excinfo:
+            pipeline.preview_plan(nacl_request)
+        assert excinfo.value.code == "BAND_SPIN_INCONSISTENT"
+
     def test_unconfirmed_dftu_rejected(self, fe2o3_request):
         fe2o3_request.dftu = DftuSettings(
             enabled=True,
@@ -173,6 +220,7 @@ class TestRequestValidation:
         assert excinfo.value.code == "BAND_WORKFLOW_DISABLED"
 
     def test_band_task_allowed_with_flag(self, nacl_request):
+        nacl_request.requested_tasks = [TaskType.STATIC]
         nacl_request.requested_tasks.append(TaskType.BAND)
         nacl_request.enable_band_workflow = True
         result = WorkflowGenerationPipeline().generate(nacl_request)
@@ -190,7 +238,7 @@ class TestRequestValidation:
 
         from backend.app.parsers.kpoints import parse_kpoints
 
-        nacl_request.requested_tasks.append(TaskType.BAND)
+        nacl_request.requested_tasks = [TaskType.STATIC, TaskType.BAND]
         nacl_request.enable_band_workflow = True
         result = WorkflowGenerationPipeline().generate(nacl_request)
         text = result.bundle.files["04_band/KPOINTS"].decode("utf-8")

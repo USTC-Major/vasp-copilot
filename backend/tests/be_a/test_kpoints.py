@@ -335,6 +335,55 @@ class TestUniformRendering:
 
 
 class TestBandLineMode:
+    def test_sheared_primitive_coordinates_match_cartesian_path(self):
+        import numpy as np
+        from pymatgen.core import Lattice, Structure
+        from pymatgen.io.vasp import Poscar
+
+        standard = Structure(Lattice.cubic(5.6), ["Na", "Cl"],
+                             [[0, 0, 0], [0.5, 0.5, 0.5]])
+        shear = np.array([[1, 1, 0], [0, 1, 0], [0, 0, 1]])
+        equivalent = Structure(Lattice(shear @ standard.lattice.matrix),
+                               ["Na", "Cl"], [[0, 0, 0], [0.5, 0, 0.5]])
+        generator = KpointsGenerator()
+        paths = [generator.line_mode(str(Poscar(s)), divisions=40) for s in (standard, equivalent)]
+        for text, structure in zip(paths, (standard, equivalent)):
+            endpoints = [line for line in text.splitlines()[4:] if line]
+            assert endpoints
+            cartesian = [structure.lattice.reciprocal_lattice.get_cartesian_coords(
+                [float(value) for value in line.split("!")[0].split()]) for line in endpoints]
+            if structure is standard:
+                reference = cartesian
+            else:
+                assert np.allclose(cartesian, reference, atol=1e-5)
+
+    def test_rotated_primitive_requires_standard_orientation(self):
+        import numpy as np
+        from pymatgen.core import Lattice, Structure
+        from pymatgen.io.vasp import Poscar
+
+        theta = 0.37
+        rotation = np.array([[np.cos(theta), -np.sin(theta), 0],
+                             [np.sin(theta), np.cos(theta), 0], [0, 0, 1]])
+        # One atom defeats an atom-position-only equivalence check.
+        rotated = Structure(Lattice(np.diag([4.0, 5.0, 6.0]) @ rotation.T),
+                            ["Si"], [[0, 0, 0]])
+        with pytest.raises(KpointsGenerationFailed, match="标准原胞的方向"):
+            KpointsGenerator().line_mode(str(Poscar(rotated)))
+
+    def test_conventional_and_supercells_rejected(self):
+        from pymatgen.core import Lattice, Structure
+        from pymatgen.io.vasp import Poscar
+
+        fcc = Structure(Lattice.cubic(5.4), ["Si"] * 4,
+                        [[0, 0, 0], [0, 0.5, 0.5], [0.5, 0, 0.5], [0.5, 0.5, 0]])
+        supercell = Structure(Lattice.cubic(5.6), ["Na", "Cl"],
+                              [[0, 0, 0], [0.5, 0.5, 0.5]])
+        supercell.make_supercell([2, 1, 1])
+        for structure in (fcc, supercell):
+            with pytest.raises(KpointsGenerationFailed, match="常规胞或超胞"):
+                KpointsGenerator().line_mode(str(Poscar(structure)))
+
     def test_l1_stub_renders_exact_endpoint_pairs(self):
         """逐字节断言：A-B-C 展开为 (A,B)、(B,C) 端点对，段间恰一个空行。"""
 

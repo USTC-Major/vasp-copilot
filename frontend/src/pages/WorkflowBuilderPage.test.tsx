@@ -54,6 +54,7 @@ const renderPage = () => {
       </ConfigProvider>
     </QueryClientProvider>
   );
+  return queryClient;
 };
 
 /** 上传文件并进入“确认参数”步骤。 */
@@ -74,6 +75,14 @@ const selectOption = async (combobox: HTMLElement, title: string) => {
     return el as HTMLElement;
   });
   fireEvent.click(option);
+};
+
+const removeTask = (task: 'relax' | 'dos') => {
+  const item = Array.from(document.querySelectorAll('.ant-select-selection-item'))
+    .find((el) => el.textContent?.toLowerCase().includes(`(${task})`));
+  const remove = item?.querySelector('.ant-select-selection-item-remove');
+  if (!remove) throw new Error(`selected task ${task} not found`);
+  fireEvent.click(remove);
 };
 
 const openSummaryModal = async (user: ReturnType<typeof userEvent.setup>) => {
@@ -104,6 +113,91 @@ beforeEach(() => {
 });
 
 describe('WorkflowBuilderPage', () => {
+  it('bootstrap 开启能带时允许 static → band，正常请求不包含客户端强开字段', async () => {
+    useFastMocks();
+    server.use(http.get(`${API}/bootstrap`, () => HttpResponse.json({ ENABLE_BAND_WORKFLOW: true })));
+    const user = userEvent.setup();
+    renderPage();
+    await uploadAndEnterConfirm(user);
+
+    removeTask('relax');
+    removeTask('dos');
+    await selectOption(screen.getAllByRole('combobox')[0], '能带 (band)');
+    await waitFor(() => expect(document.querySelector('.ant-select-selection-item[title="能带 (band)"]')).toBeInTheDocument());
+    expect(await screen.findByText(/本批使用默认 PBE 设置/)).toBeInTheDocument();
+    await openSummaryModal(user);
+    expect(screen.getByText('static → band')).toBeInTheDocument();
+    await confirmAndWaitPlan(user);
+    const body = planBodies[0];
+    expect(body.workflow.requested_tasks).toEqual(['static', 'band']);
+    expect('enable_band_workflow' in body.workflow).toBe(false);
+  });
+
+  it('bootstrap 关闭时只禁用 band，其他任务仍可确认提交', async () => {
+    useFastMocks();
+    server.use(http.get(`${API}/bootstrap`, () => HttpResponse.json({ ENABLE_BAND_WORKFLOW: false })));
+    const user = userEvent.setup();
+    renderPage();
+    await uploadAndEnterConfirm(user);
+    expect(await screen.findByText('服务端当前未开放能带工作流；其他计算任务仍可使用。')).toBeInTheDocument();
+
+    const taskSelect = screen.getAllByRole('combobox')[0];
+    fireEvent.mouseDown(taskSelect);
+    await waitFor(() => expect(document.querySelector('.ant-select-item-option[title="服务端当前未开放能带工作流"]'))
+      .toHaveClass('ant-select-item-option-disabled'));
+    expect(document.querySelector('.ant-select-item-option[title="结构优化 (relax)"]'))
+      .not.toHaveClass('ant-select-item-option-disabled');
+    fireEvent.keyDown(taskSelect, { key: 'Escape' });
+
+    await openSummaryModal(user);
+    await confirmAndWaitPlan(user);
+    expect(planBodies[0].workflow.requested_tasks).toEqual(['relax', 'static', 'dos']);
+    expect(planBodies[0].workflow.confirm).toBe(true);
+  });
+
+  it('bootstrap 读取失败时可重试，成功后启用 band 选项', async () => {
+    useFastMocks();
+    let bootstrapCalls = 0;
+    server.use(http.get(`${API}/bootstrap`, () => {
+      bootstrapCalls += 1;
+      return bootstrapCalls === 1
+        ? HttpResponse.json({ message: 'unavailable' }, { status: 503 })
+        : HttpResponse.json({ ENABLE_BAND_WORKFLOW: true });
+    }));
+    const user = userEvent.setup();
+    renderPage();
+    await uploadAndEnterConfirm(user);
+    expect(await screen.findByText('服务端功能配置读取失败，能带暂不可用。')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '重试读取' }));
+    await waitFor(() => expect(screen.queryByText('服务端功能配置读取失败，能带暂不可用。')).not.toBeInTheDocument());
+
+    removeTask('relax');
+    await selectOption(screen.getAllByRole('combobox')[0], '能带 (band)');
+    await waitFor(() => expect(document.querySelector('.ant-select-selection-item[title="能带 (band)"]')).toBeInTheDocument());
+    expect(await screen.findByText(/本批使用默认 PBE 设置/)).toBeInTheDocument();
+  });
+
+  it('band 快照打开后能力变为 false 时拒绝旧确认并返回保留 band 的表单', async () => {
+    useFastMocks();
+    server.use(http.get(`${API}/bootstrap`, () => HttpResponse.json({ ENABLE_BAND_WORKFLOW: true })));
+    const user = userEvent.setup();
+    const queryClient = renderPage();
+    await uploadAndEnterConfirm(user);
+    removeTask('relax');
+    removeTask('dos');
+    await selectOption(screen.getAllByRole('combobox')[0], '能带 (band)');
+    await waitFor(() => expect(document.querySelector('.ant-select-selection-item[title="能带 (band)"]')).toBeInTheDocument());
+    await openSummaryModal(user);
+
+    queryClient.setQueryData(['featureFlags'], { ENABLE_BAND_WORKFLOW: false });
+    await user.click(screen.getByRole('button', { name: /确认并生成工作流计划/ }));
+    await finishModalLeave();
+    expect(planBodies).toHaveLength(0);
+    expect(Array.from(document.querySelectorAll('.ant-select-selection-item'))
+      .some((item) => item.textContent?.includes('能带 (band)'))).toBe(true);
+    expect(screen.getByText('服务端当前未开放能带工作流；其他计算任务仍可使用。')).toBeInTheDocument();
+  });
+
   it('F3: DFT+U 关闭时 payload 携带 enabled:false 与空 entries', async () => {
     useFastMocks();
     const user = userEvent.setup();

@@ -59,12 +59,21 @@ class TestPlanner:
     def test_band_enabled_by_flag(self):
         planned = WorkflowPlanner().plan(
             "wf_01",
-            [TaskType.RELAX, TaskType.STATIC, TaskType.BAND],
+            [TaskType.STATIC, TaskType.BAND],
             enable_band_workflow=True,
         )
         steps = planned["steps"]
         assert steps[-1].step_id == "04_band"
         assert steps[-1].requires_runtime_outputs == ["02_static/CHGCAR"]
+
+    def test_band_requires_static_and_final_structure(self):
+        for tasks, code in (
+            ([TaskType.BAND], "BAND_STATIC_REQUIRED"),
+            ([TaskType.RELAX, TaskType.STATIC, TaskType.BAND], "BAND_FINAL_STRUCTURE_REQUIRED"),
+        ):
+            with pytest.raises(BeAError) as excinfo:
+                WorkflowPlanner().plan("wf_final", tasks, enable_band_workflow=True)
+            assert excinfo.value.code == code
 
     def test_empty_tasks_rejected(self):
         with pytest.raises(BeAError):

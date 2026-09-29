@@ -7,13 +7,23 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import ParameterConfirmForm from './ParameterConfirmForm';
 
-const renderForm = (onSubmit = vi.fn()) => {
+const renderForm = (
+  onSubmit = vi.fn(),
+  options: {
+    bandWorkflowStatus?: 'loading' | 'error' | 'enabled' | 'disabled';
+    onRetryBandCapability?: () => void;
+    initialValues?: Partial<import('./ParameterConfirmForm').ParameterConfirmFormData>;
+  } = {},
+) => {
   render(
     <ParameterConfirmForm
       elements={['Fe', 'O']}
       transitionMetals={['Fe']}
       onSubmit={onSubmit}
       isGenerating={false}
+      bandWorkflowStatus={options.bandWorkflowStatus}
+      onRetryBandCapability={options.onRetryBandCapability}
+      initialValues={options.initialValues}
     />
   );
   return onSubmit;
@@ -56,6 +66,55 @@ const submit = async (user: ReturnType<typeof userEvent.setup>) => {
 };
 
 describe('ParameterConfirmForm', () => {
+  it('能带能力开启时允许 static → band 提交，并保留用户选项', async () => {
+    const onSubmit = renderForm(vi.fn(), {
+      bandWorkflowStatus: 'enabled',
+      initialValues: { tasks: ['static'] },
+    });
+    const user = userEvent.setup();
+    const taskSelect = screen.getAllByRole('combobox')[0];
+    await selectOption(taskSelect, '能带 (band)');
+    await waitFor(() => expect(document.querySelector('.ant-select-selection-item[title="能带 (band)"]')).toBeInTheDocument());
+    expect(await screen.findByText(/本批使用默认 PBE 设置/)).toBeInTheDocument();
+    await submit(user);
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit.mock.calls[0][0].tasks).toEqual(['static', 'band']);
+  });
+
+  it.each([
+    ['loading', '正在读取服务端功能配置，完成前能带选项不可用。'],
+    ['disabled', '服务端当前未开放能带工作流；其他计算任务仍可使用。'],
+  ] as const)('band 能力为 %s 时选项禁用且说明原因', async (status, message) => {
+    renderForm(vi.fn(), { bandWorkflowStatus: status });
+    expect(screen.getByText(message)).toBeInTheDocument();
+    fireEvent.mouseDown(screen.getAllByRole('combobox')[0]);
+    const unavailableTitle = status === 'loading' ? '正在读取服务端功能配置' : '服务端当前未开放能带工作流';
+    await waitFor(() => expect(document.querySelector(`.ant-select-item-option[title="${unavailableTitle}"]`))
+      .toHaveClass('ant-select-item-option-disabled'));
+  });
+
+  it('bootstrap 读取失败显示可重试入口，band 保持不可用', async () => {
+    const retry = vi.fn();
+    renderForm(vi.fn(), { bandWorkflowStatus: 'error', onRetryBandCapability: retry });
+    expect(screen.getByText('服务端功能配置读取失败，能带暂不可用。')).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole('button', { name: '重试读取' }));
+    expect(retry).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    { tasks: ['relax', 'static', 'band'] as ('relax' | 'static' | 'band')[], soc: false, text: /先用 relax 完成弛豫，将生成的 CONTCAR 作为新结构上传/ },
+    { tasks: ['static', 'band'] as ('static' | 'band')[], soc: true, text: /当前批次不支持 SOC 与 band 同时计算/ },
+    { tasks: ['band'] as 'band'[], soc: false, text: /band 必须包含 static 上游任务/ },
+  ])('band 与当前任务设置冲突时保留选择并阻止提交', async ({ tasks, soc, text }) => {
+    const onSubmit = renderForm(vi.fn(), {
+      bandWorkflowStatus: 'enabled',
+      initialValues: { tasks, soc },
+    });
+    expect(screen.getByText(text)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '下一步：确认摘要' })).toBeDisabled();
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
   it('F1: 含过渡金属时 DFT+U 默认关闭', () => {
     renderForm();
     const switches = screen.getAllByRole('switch');
