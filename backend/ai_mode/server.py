@@ -212,6 +212,62 @@ def create_ai_mode_app() -> FastAPI:
     def _require_enabled(cfg) -> JSONResponse | None:
         return None if cfg.enabled else _disabled_envelope()
 
+    @app.post("/ai/v1/materials/interpret")
+    def interpret_materials(payload: dict):
+        """Interpret a request using the configured AI model; never call MP."""
+        from pydantic import ValidationError as PydanticValidationError
+        from .llm.errors import LLMError, LLMUnavailableError
+        from .llm.factory import build_client, resolve_provider
+        from .materials_interpret import InterpretRequest, interpret
+
+        def failure(code: str, message: str, status: int, retryable: bool = False):
+            return JSONResponse(status_code=status, content={
+                "mode": "ai", "ok": False,
+                "error": {"code": code, "message": message, "retryable": retryable},
+            })
+
+        if not is_ai_mode_enabled():
+            return _disabled_envelope()
+        try:
+            req = InterpretRequest.model_validate(payload)
+        except PydanticValidationError:
+            return failure("AI_MODE_MATERIALS_BAD_QUERY", "材料需求必须是非空文本", 422)
+        cfg = load_settings(secret_fields=("llm_api_key",))
+        if (cfg.llm_provider or "").strip().lower() == "fake":
+            return failure("AI_MODE_MATERIALS_FAKE_PROVIDER", "假模型不能解释材料查询", 503)
+        if not cfg.llm_base_url or not cfg.llm_api_key or not cfg.llm_model:
+            return failure("AI_MODE_MATERIALS_LLM_NOT_CONFIGURED", "请先配置可用的智能模式模型", 503)
+        try:
+            provider = resolve_provider(cfg)
+        except LLMError:
+            return failure("AI_MODE_MATERIALS_LLM_BAD_PROVIDER", "智能模式模型提供方配置无效", 503)
+        if provider == "fake":
+            return failure("AI_MODE_MATERIALS_FAKE_PROVIDER", "假模型不能解释材料查询", 503)
+        client = None
+        try:
+            client = build_client(cfg, provider=provider)
+            return {"mode": "ai", "ok": True, **interpret(req.query, client)}
+        except LLMUnavailableError as exc:
+            import httpx
+            cause = exc.__cause__
+            while cause is not None:
+                if isinstance(cause, httpx.TimeoutException):
+                    return failure("AI_MODE_MATERIALS_LLM_TIMEOUT", "模型请求超时，请稍后重试", 503, True)
+                cause = cause.__cause__
+            return failure("AI_MODE_MATERIALS_LLM_UNAVAILABLE", "模型暂不可用，请稍后重试", 503, True)
+        except LLMError:
+            return failure("AI_MODE_MATERIALS_LLM_FAILED", "模型请求失败，请检查智能模式设置", 503)
+        except (ValueError, PydanticValidationError):
+            return failure("AI_MODE_MATERIALS_INVALID_RESPONSE", "模型返回的查询解释不完整或无效，请重试或修改需求", 502, True)
+        finally:
+            if client is not None:
+                close = getattr(client, "close", None)
+                if close:
+                    try:
+                        close()
+                    except Exception:
+                        logger.warning("材料解释模型客户端关闭失败")
+
     @app.get("/ai/v1/settings")
     def get_settings():
         cfg = load_settings()

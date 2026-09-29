@@ -1,23 +1,20 @@
 """Materials Project import endpoints (workflow upload step).
 
-POST /materials/search  - search the MP database from a natural-language /
-                          structured query (LLM-assisted criteria parsing,
-                          deterministic fallback) and list candidates.
+POST /materials/search  - search MP from a formula or confirmed strict criteria.
 POST /materials/import  - fetch the selected material, build a POSCAR, store
                           it and run the same analyze step as /structure/analyze
                           so the structure_id drops into the existing flow.
 """
 from __future__ import annotations
 
-from json import loads as _loads
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, Request
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
+from backend.materials_criteria import MaterialCriteria, formula_elements
 from backend.input_validation import InputValidationError, validate_poscar
 from ...core.errors import ValidationError, err
-from ...llm import get_explainer
 from ...schemas.api import ApiEnvelope
 from ...schemas.structure import build_structure_summary
 from .deps import file_store, get_request_id, settings
@@ -44,58 +41,19 @@ def _runtime_mp_api_key(request: Request) -> str:
 
 
 class SearchRequest(BaseModel):
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="forbid")
 
     query: str = ""
-    limit: int = 20
+    criteria: MaterialCriteria | None = None
+    confirmed: StrictBool = False
+    unresolved_conditions: List[str] = Field(default_factory=list)
+    limit: int = Field(default=20, ge=1, le=50)
 
 
 class ImportRequest(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     material_id: str = ""
-
-
-_MP_CRITERIA_PROMPT = """你是材料数据库查询助手。把用户的材料需求解析为
-Materials Project API 的 criteria JSON。只输出 JSON，不要额外文字。
-
-可用的 criteria 字段（仅为建议，缺失字段可省略）：
-- "elements": ["Fe", "O"]  （元素列表）
-- "elements_type": "=" | ">=" | "<=" （该列表是精确/超集/子集）
-- "formula": "Fe2O3"  （精确简化式，命中更精准，可只用 formula）
-- "chemsys": "Fe-O"
-- "band_gap": {"$gte": 0.5} / {"$lte": 2.0}
-- "energy_above_hull": {"$lte": 0.0}（稳定结构）
-- "is_metal": true/false
-- "ordering": "FM"/"AFM"/"NM"
-
-需求示例：
-- 「找 Fe2O3 结构」-> {"formula": "Fe2O3"}
-- 「带 1-3 eV 带隙的稳定氧化物」-> {"elements":["O"],"elements_type":">=","band_gap":{"$gte":1,"$lte":3},"energy_above_hull":{"$lte":0.05}}
-- 「铁磁性含 Ni 的化合物」-> {"elements":["Ni"],"elements_type":">=","ordering":"FM","is_stable":true}
-
-用户需求：
-{query}
-请输出 criteria JSON。"""
-
-
-def _query_llm_criteria(query: str) -> Dict[str, Any]:
-    """Optional: use the configured explainer to refine criteria from NL."""
-    explainer = get_explainer(settings)
-    if explainer is None:
-        return {}
-    try:
-        raw = explainer.complete([{"role": "user", "content":
-                                   _MP_CRITERIA_PROMPT.format(query=query)}])
-        content = (raw or "").strip()
-        if content.startswith("```"):
-            content = content.split("```")[1].strip()
-        data = _loads(content)
-        if isinstance(data, dict):
-            return data
-    except Exception:
-        pass
-    return {}
 
 
 def _compact_summary(summary) -> Dict[str, Any]:
@@ -125,25 +83,24 @@ async def search_materials(
     request: Request,
     x_request_id: str = Depends(get_request_id),
 ) -> ApiEnvelope:
-    """List MP candidates matching a natural-language / formula query."""
+    """List MP candidates only after every condition has been reviewed."""
     query = (req.query or "").strip()
-    if not query:
+    if not query and req.criteria is None:
         raise ValidationError("MP_EMPTY_QUERY", "请输入材料需求或化学式")
+    if req.unresolved_conditions:
+        raise ValidationError("MP_UNRESOLVED_CONDITIONS", "仍有未能映射的筛选条件，请先修改查询")
+    if req.criteria is not None:
+        if not req.confirmed:
+            raise ValidationError("MP_CONFIRMATION_REQUIRED", "请先核对并确认结构化筛选条件")
+        criteria = req.criteria.to_mp()
+    elif formula_elements(query) is not None:
+        criteria = MaterialCriteria(formula=query).to_mp()
+    else:
+        raise ValidationError("MP_INTERPRETATION_REQUIRED", "自然语言需求需先通过智能模式解释并确认")
+
     mp_api_key = _runtime_mp_api_key(request)
 
-    from ...services.materials_project import (
-        MaterialsProjectClient,
-        parse_requirement,
-    )
-
-    criteria: Dict[str, Any] = {}
-    llm_used = False
-    raw_llm = _query_llm_criteria(query)
-    if raw_llm:
-        criteria = raw_llm
-        llm_used = True
-    else:
-        criteria = parse_requirement(query)
+    from ...services.materials_project import MaterialsProjectClient
 
     client = MaterialsProjectClient(
         api_key=mp_api_key,
@@ -158,7 +115,7 @@ async def search_materials(
     return ApiEnvelope(request_id=x_request_id, data={
         "query": query,
         "criteria": criteria,
-        "llm_used": llm_used,
+        "llm_used": False,
         "count": len(results),
         "materials": results,
     })

@@ -279,8 +279,14 @@ export function useChatHistoryClear() {
 // ---- Materials Project ----
 export function useMaterialsSearch() {
   return useMutation({
-    mutationFn: ({ query, limit }: { query: string; limit?: number }) =>
-      materialsApi.search(query, limit),
+    mutationFn: (body: import('../types/materials').MaterialSearchRequest) =>
+      materialsApi.search(body),
+  });
+}
+
+export function useMaterialsInterpret() {
+  return useMutation({
+    mutationFn: (query: string) => aiApi.interpretMaterial(query),
   });
 }
 

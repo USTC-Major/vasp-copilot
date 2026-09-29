@@ -156,10 +156,14 @@ def _criteria_to_params(criteria: Dict[str, Any], limit: int) -> Dict[str, Any]:
         ordering = criteria.get("ordering")
         if ordering:
             params["ordering"] = ordering
-        for key, sign in (("band_gap", "band_gap"),):
-            pass
         bg = criteria.get("band_gap")
         if isinstance(bg, dict):
+            # The confirmed search contract uses min/max. Preserve legacy
+            # direct callers of this helper until they migrate.
+            if "min" in bg:
+                params["band_gap_min"] = bg["min"]
+            if "max" in bg:
+                params["band_gap_max"] = bg["max"]
             if "$gte" in bg:
                 params["band_gap_min"] = bg["$gte"]
             if "$lte" in bg:
