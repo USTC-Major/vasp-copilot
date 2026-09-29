@@ -39,6 +39,81 @@ const renderRoute = (path: string, productionDefaults = false) => {
 };
 
 describe('Toolbox 无 AI 手动流程', () => {
+  it.each(['material_id', 'materialId', 'id'])('MP 候选的 %s 显示数字编号，导入仍使用原始 API ID', async (idField) => {
+    const requests: unknown[] = [];
+    server.use(
+      http.get(`${TOOLBOX}/projects/:projectId/tasks/:taskId/detail`, () => HttpResponse.json(detail())),
+      http.post(`${TOOLBOX}/projects/:projectId/tasks/:taskId/tools`, async ({ request }) => {
+        const body = await request.json() as { name: string; args: Record<string, unknown> };
+        requests.push(body);
+        return HttpResponse.json({
+          mode: 'toolbox', task_id: 'task-two', ok: true, error: null, pending: null,
+          result: body.name === 'mp_search'
+            ? JSON.stringify({ materials: [{ [idField]: 'mp-aaaabwmb', formula_pretty: 'SiO', band_gap: 1.5 }] })
+            : '等待人工确认',
+          flow: detail().flow,
+        });
+      }),
+    );
+    const user = userEvent.setup();
+    renderRoute('/toolbox/projects/project-one/tasks/task-two');
+    await screen.findByRole('heading', { name: '第二个精确任务' });
+    await user.type(screen.getByLabelText('Materials Project 化学式'), 'SiO');
+    await user.click(screen.getByRole('button', { name: '搜索候选结构' }));
+
+    const candidate = (await screen.findByText('SiO')).closest('li')!;
+    expect(within(candidate).getByText('mp-32761')).toBeInTheDocument();
+    expect(within(candidate).getByText(/API ID:/)).toBeInTheDocument();
+    expect(within(candidate).getAllByText('mp-aaaabwmb')).toHaveLength(1);
+    expect(within(candidate).getByRole('button', { name: /copy/i })).toBeInTheDocument();
+    expect(candidate).toHaveTextContent('1.5');
+    await user.click(within(candidate).getByRole('button', { name: '预览并请求写入确认' }));
+    await waitFor(() => expect(requests).toEqual([
+      { name: 'mp_search', args: { formula: 'SiO', limit: 10 } },
+      { name: 'mp_import_poscar', args: { material_id: 'mp-aaaabwmb' } },
+    ]));
+  });
+
+  it('MP 数字编号及未知编号保持原样且不重复，无编号仍禁止导入', async () => {
+    const materials = [
+      { material_id: 'mp-32761', formula_pretty: '数字编号' },
+      { material_id: 'mp-hilze', formula_pretty: '新版编号' },
+      { material_id: 'not-an-mpid', formula_pretty: '未知编号' },
+      { formula_pretty: '缺失编号' },
+      { material_id: null, formula_pretty: '空值编号' },
+      { material_id: '', formula_pretty: '空字符串编号' },
+      { material_id: 'mp-aaaabwmb' },
+    ];
+    server.use(
+      http.get(`${TOOLBOX}/projects/:projectId/tasks/:taskId/detail`, () => HttpResponse.json(detail())),
+      http.post(`${TOOLBOX}/projects/:projectId/tasks/:taskId/tools`, () => HttpResponse.json({
+        mode: 'toolbox', task_id: 'task-two', ok: true, error: null, pending: null,
+        result: JSON.stringify({ materials }), flow: detail().flow,
+      })),
+    );
+    const user = userEvent.setup();
+    renderRoute('/toolbox/projects/project-one/tasks/task-two');
+    await screen.findByRole('heading', { name: '第二个精确任务' });
+    await user.type(screen.getByLabelText('Materials Project 化学式'), 'SiO');
+    await user.click(screen.getByRole('button', { name: '搜索候选结构' }));
+    await screen.findByText('数字编号');
+
+    for (const row of materials.slice(0, 3)) {
+      const candidate = screen.getByText(row.formula_pretty!).closest('li')!;
+      expect(within(candidate).getAllByText(row.material_id!)).toHaveLength(1);
+      expect(within(candidate).queryByText(/API ID:/)).not.toBeInTheDocument();
+      expect(within(candidate).getByRole('button', { name: '预览并请求写入确认' })).toBeEnabled();
+    }
+    for (const label of ['缺失编号', '空值编号', '空字符串编号']) {
+      const candidate = screen.getByText(label).closest('li')!;
+      expect(within(candidate).queryByText(/API ID:/)).not.toBeInTheDocument();
+      expect(within(candidate).getByRole('button', { name: '预览并请求写入确认' })).toBeDisabled();
+    }
+    const fallbackCandidate = screen.getAllByText('mp-32761').find((element) => element.closest('.ant-list-item-meta-title'))!.closest('li')!;
+    expect(within(fallbackCandidate).getByText('mp-aaaabwmb')).toBeInTheDocument();
+    expect(within(fallbackCandidate).getByText(/API ID:/)).toBeInTheDocument();
+  });
+
   it('结构化规划使用工具合同，不发送 raw JSON', async () => {
     let requestBody: unknown;
     server.use(
