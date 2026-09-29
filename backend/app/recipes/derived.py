@@ -36,13 +36,14 @@ ENCUT_BY_PRECISION: Dict[str, float] = {
 
 # KPPA 配置表（10.6 节：数值由 quick/standard/high 版本化决定）
 # relax/static/dos 行为 KPPA 语义：N_total ≈ kppa / atom_count，各方向 n_i ∝ |b_i|。
-# band 行不是 KPPA，而是 line-mode 每条线段的插值点数（divisions）。
 KPPA_TABLE: Dict[str, Dict[str, float]] = {
     "relax": {"quick": 500.0, "standard": 1000.0, "high": 1500.0},
     "static": {"quick": 500.0, "standard": 1000.0, "high": 1500.0},
     "dos": {"quick": 800.0, "standard": 1500.0, "high": 2000.0},
-    "band": {"quick": 40.0, "standard": 60.0, "high": 80.0},  # line-mode 每线段插值点数
 }
+
+# VASP line-mode 第二行：每条线段的点数，与均匀网格 KPPA 无关。
+BAND_LINE_DIVISIONS: Dict[str, int] = {"quick": 40, "standard": 60, "high": 80}
 
 # 晶格几何校验容差：matrix 为唯一真值，abc/angles 仅做一致性交叉校验，
 # 容差需覆盖 POSCAR 文本舍入（如 4.356 vs 4.356048）级别的不一致。
@@ -115,6 +116,12 @@ def generate_ldau_arrays(inputs: Dict[str, Any]) -> Dict[str, List[float]]:
             details={"elements": list(elements)},
         )
     return {"LDAUL": ldau_l, "LDAUU": ldau_u, "LDAUJ": ldau_j}
+
+
+def generate_dftu_lmaxmix(inputs: Dict[str, Any]) -> Dict[str, int]:
+    """Preserve f-channel PAW information in the upstream CHGCAR as well."""
+    entries = inputs.get("dftu_entries") or []
+    return {"LMAXMIX": 6 if any(entry.get("l") == 3 for entry in entries) else 4}
 
 
 def _finite_number(value: Any, *, field: str) -> float:
@@ -427,6 +434,7 @@ def derive_encut_from_precision(inputs: Dict[str, Any]) -> float:
 DERIVED_FUNCTIONS: Dict[str, Callable[[Dict[str, Any]], Any]] = {
     "generate_magmom_from_structure": generate_magmom_from_structure,
     "generate_ldau_arrays": generate_ldau_arrays,
+    "generate_dftu_lmaxmix": generate_dftu_lmaxmix,
     "generate_kpoint_grid": generate_kpoint_grid,
     "derive_system_label": derive_system_label,
     "derive_encut_from_precision": derive_encut_from_precision,

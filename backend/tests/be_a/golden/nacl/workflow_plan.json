@@ -59,7 +59,7 @@
         "display_name": "VASP MVP Core Recipe Pack",
         "pack_id": "vasp-mvp-core",
         "schema_version": "1.0",
-        "sha256": "dad041b9859d74cc0a3196dd8aa1bf2acc7a3f27d9a3a360729b04db7072d936",
+        "sha256": "807cda3148f8ccba6ab8431c68b4735310814013e48e9c8b2644a15e74880cff",
         "version": "1.0.0"
       },
       "revision": 1,
@@ -120,7 +120,7 @@
         "display_name": "VASP MVP Core Recipe Pack",
         "pack_id": "vasp-mvp-core",
         "schema_version": "1.0",
-        "sha256": "dad041b9859d74cc0a3196dd8aa1bf2acc7a3f27d9a3a360729b04db7072d936",
+        "sha256": "807cda3148f8ccba6ab8431c68b4735310814013e48e9c8b2644a15e74880cff",
         "version": "1.0.0"
       },
       "revision": 1,

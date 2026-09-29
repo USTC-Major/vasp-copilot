@@ -15,7 +15,7 @@ import ParameterPatchEditor from '../components/recipes/ParameterPatchEditor';
 import GeneratedFilesPreview from '../components/workflow/GeneratedFilesPreview';
 import ErrorAlert from '../components/common/ErrorAlert';
 import AiPlanAssistant, { type AiPlanAssistantResult } from '../components/workflow/AiPlanAssistant';
-import { useWorkflowPlan, useWorkflowGenerate, useWorkflowDownload } from '../hooks/useApi';
+import { useWorkflowPlan, useWorkflowGenerate, useWorkflowDownload, useFeatureFlags } from '../hooks/useApi';
 import type { StructureSummary, WorkflowPlan, FileTreeNode, ParameterPatch } from '../types/generated-api';
 import type { WorkflowStatus } from '../types/enums';
 import type {
@@ -117,6 +117,15 @@ const WorkflowBuilderPage: React.FC = () => {
   const planMutation = useWorkflowPlan();
   const generateMutation = useWorkflowGenerate();
   const downloadMutation = useWorkflowDownload();
+  const featureFlags = useFeatureFlags();
+  const bandWorkflowEnabled = featureFlags.data?.ENABLE_BAND_WORKFLOW === true && !featureFlags.isError;
+  const bandWorkflowStatus = featureFlags.isError
+    ? 'error'
+    : featureFlags.isLoading
+      ? 'loading'
+      : bandWorkflowEnabled
+        ? 'enabled'
+        : 'disabled';
 
   const handleStructureAnalyzed = useCallback((structId: string, structSummary: StructureSummary) => {
     setStructureId(structId);
@@ -136,12 +145,23 @@ const WorkflowBuilderPage: React.FC = () => {
     // Fail-closed：DFT+U 启用且任一条目未获用户真实确认时，
     // 不构造确认快照、不打开最终确认 Modal（表单校验之外的二道防线）。
     if (!canBuildConfirmSnapshot(data)) return;
+    if (data.tasks.includes('band') && (
+      !bandWorkflowEnabled ||
+      data.tasks.includes('relax') ||
+      data.tasks.includes('static') === false ||
+      data.soc
+    )) return;
     // 不直接调 API：先冻结快照并打开最终确认 Modal。
     setConfirmSnapshot(buildSnapshot(data, summary));
-  }, [structureId, summary]);
+  }, [structureId, summary, bandWorkflowEnabled]);
 
   const handleModalConfirm = useCallback(async () => {
     if (submitLock.current || !confirmSnapshot || !structureId) return;
+    // 能力读取失败或服务端关闭后，旧 band 确认快照立即失效；保留表单选择供用户处理。
+    if (confirmSnapshot.requested_tasks.includes('band') && !bandWorkflowEnabled) {
+      setConfirmSnapshot(null);
+      return;
+    }
     submitLock.current = true;
     try {
       const plan = await planMutation.mutateAsync(buildPlanBody(structureId, confirmSnapshot));
@@ -156,7 +176,7 @@ const WorkflowBuilderPage: React.FC = () => {
     } finally {
       submitLock.current = false;
     }
-  }, [structureId, confirmSnapshot, planMutation]);
+  }, [structureId, confirmSnapshot, planMutation, bandWorkflowEnabled]);
 
   const handleModalCancel = useCallback(() => {
     if (submitLock.current) return;
@@ -291,6 +311,8 @@ const WorkflowBuilderPage: React.FC = () => {
         <ParameterConfirmForm
           elements={summary.elements}
           transitionMetals={summary.transition_metals}
+          bandWorkflowStatus={bandWorkflowStatus}
+          onRetryBandCapability={() => { void featureFlags.refetch(); }}
           onSubmit={handleFormSubmit}
           isGenerating={planMutation.isPending}
           onBack={() => setCurrentStep('upload')}

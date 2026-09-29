@@ -156,6 +156,50 @@ def test_download_unknown_workflow_404():
     assert r.json()["error"]["code"] == "WORKFLOW_NOT_FOUND"
 
 
+def test_band_uses_server_capability_for_plan_and_replay(monkeypatch):
+    payload = {"workflow": {
+        "workflow_id": "wf_band_flag_u1",
+        "structure": {"formula": "NaCl", "elements": ["Na", "Cl"], "counts": [1, 1],
+                      "poscar_text": "NaCl\n1\n5.6 0 0\n0 5.6 0\n0 0 5.6\nNa Cl\n1 1\nDirect\n0 0 0\n0.5 0.5 0.5\n"},
+        "requested_tasks": ["static", "band"],
+        "enable_band_workflow": True,
+    }}
+    monkeypatch.setattr(deps.settings.feature_flags, "band_feature", False)
+    disabled = client.post("/api/v1/workflows/plan", json=payload)
+    assert disabled.status_code == 409
+    assert disabled.json()["error"]["code"] == "BAND_WORKFLOW_DISABLED"
+    monkeypatch.setattr(deps.settings.feature_flags, "band_feature", True)
+    payload["workflow"].pop("enable_band_workflow")
+    planned = client.post("/api/v1/workflows/plan", json=payload)
+    assert planned.status_code == 200, planned.text
+    assert [s["task"] for s in planned.json()["data"]["steps"]] == ["static", "band"]
+    workflow_id = planned.json()["data"]["workflow_id"]
+    monkeypatch.setattr(deps.settings.feature_flags, "band_feature", False)
+    replay = client.post("/api/v1/workflows/generate", json={"workflow_id": workflow_id})
+    assert replay.status_code == 409
+    assert replay.json()["error"]["code"] == "BAND_WORKFLOW_DISABLED"
+    monkeypatch.setattr(deps.settings.feature_flags, "band_feature", True)
+    generated = client.post("/api/v1/workflows/generate", json={"workflow_id": workflow_id})
+    assert generated.status_code == 200, generated.text
+    archive = zipfile.ZipFile(io.BytesIO(client.get(generated.json()["data"]["download_url"]).content))
+    assert "02_static/INCAR" in archive.namelist()
+    assert "04_band/KPOINTS" in archive.namelist()
+    assert "ICHARG = 11" in archive.read("04_band/INCAR").decode()
+    assert archive.read("04_band/KPOINTS").decode().splitlines()[1:4] == ["60", "Line-mode", "Reciprocal"]
+    assert "逐字一致的 PBE POTCAR" in archive.read("README_run_order.md").decode()
+
+
+def test_band_rejects_relax_and_missing_static(monkeypatch):
+    monkeypatch.setattr(deps.settings.feature_flags, "band_feature", True)
+    diag_id = _seed_run("diag_band_boundary")
+    for tasks, code in ((["band"], "BAND_STATIC_REQUIRED"),
+                        (["relax", "static", "band"], "BAND_FINAL_STRUCTURE_REQUIRED")):
+        response = client.post("/api/v1/workflows/plan", json={"diagnosis_id": diag_id,
+            "workflow": {"requested_tasks": tasks}})
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == code
+
+
 def test_diagnosis_without_poscar_404():
     diag_id = _seed_run("diag_no_poscar", poscar=None)
     r = client.post("/api/v1/workflows/plan", json={"diagnosis_id": diag_id})

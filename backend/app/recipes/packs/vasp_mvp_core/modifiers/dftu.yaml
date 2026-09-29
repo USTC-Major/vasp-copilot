@@ -18,6 +18,10 @@ derived_parameters:
     parameter: LDAU_ARRAYS
     target: INCAR
     inputs: [structure.elements, dftu.entries]
+  - function: generate_dftu_lmaxmix
+    parameter: LMAXMIX
+    target: INCAR
+    inputs: [dftu.entries]
 requires:
   - material_assumptions.dftu
 conflicts: []

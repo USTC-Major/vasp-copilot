@@ -73,6 +73,8 @@ class WorkflowConfig(BaseModel):
     scheduler: SchedulerSettings = Field(default_factory=SchedulerSettings)
     patches: List[ParameterPatch] = Field(default_factory=list)
     element_initial_moments: Dict[str, float] = Field(default_factory=dict)
+    # Legacy input is accepted for compatibility, but the API replaces it with
+    # the effective server capability before planning or generating.
     enable_band_workflow: bool = False
     confirm: bool = True
 
@@ -186,6 +188,7 @@ def _structure_from_file_store(structure_id: str) -> StructureContext:
 
 
 def _resolve_workflow(req: WorkflowApiRequest, config: WorkflowConfig) -> WorkflowGenerateRequest:
+    config.enable_band_workflow = settings.feature_flags.band_feature
     def build(structure: StructureContext) -> WorkflowGenerateRequest:
         try:
             return config.to_request(validated_structure_context(structure))
@@ -238,6 +241,9 @@ async def generate(
         # Frontend calls generate with only {workflow_id}: replay the plan request.
         if req.workflow_id:
             workflow = workflow_service.replay_request(req.workflow_id)
+            workflow = workflow.model_copy(update={
+                "enable_band_workflow": settings.feature_flags.band_feature,
+            })
             patches = req.patches or config.patches
             if patches:
                 workflow = workflow.model_copy(update={"patches": patches})

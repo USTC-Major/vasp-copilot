@@ -93,7 +93,7 @@
         "display_name": "VASP MVP Core Recipe Pack",
         "pack_id": "vasp-mvp-core",
         "schema_version": "1.0",
-        "sha256": "dad041b9859d74cc0a3196dd8aa1bf2acc7a3f27d9a3a360729b04db7072d936",
+        "sha256": "807cda3148f8ccba6ab8431c68b4735310814013e48e9c8b2644a15e74880cff",
         "version": "1.0.0"
       },
       "revision": 1,
@@ -144,7 +144,7 @@
           "order": 40,
           "recipe_id": "modifier.dftu",
           "selection_reason": "用户启用 DFT+U；L/U/J 必须由用户输入并确认",
-          "sha256": "f925c8f351610bef8e71019dbfc0d8b947dfa1d62e3b020a7e9b1a39ff66b6dc",
+          "sha256": "d463a5e96ecef5c26c933df0999106461d12647e92951f72c9c77c1d801af633",
           "version": "1.0.0"
         },
         {
@@ -184,7 +184,7 @@
         "display_name": "VASP MVP Core Recipe Pack",
         "pack_id": "vasp-mvp-core",
         "schema_version": "1.0",
-        "sha256": "dad041b9859d74cc0a3196dd8aa1bf2acc7a3f27d9a3a360729b04db7072d936",
+        "sha256": "807cda3148f8ccba6ab8431c68b4735310814013e48e9c8b2644a15e74880cff",
         "version": "1.0.0"
       },
       "revision": 1,
@@ -235,7 +235,7 @@
           "order": 40,
           "recipe_id": "modifier.dftu",
           "selection_reason": "用户启用 DFT+U；L/U/J 必须由用户输入并确认",
-          "sha256": "f925c8f351610bef8e71019dbfc0d8b947dfa1d62e3b020a7e9b1a39ff66b6dc",
+          "sha256": "d463a5e96ecef5c26c933df0999106461d12647e92951f72c9c77c1d801af633",
           "version": "1.0.0"
         },
         {
@@ -275,7 +275,7 @@
         "display_name": "VASP MVP Core Recipe Pack",
         "pack_id": "vasp-mvp-core",
         "schema_version": "1.0",
-        "sha256": "dad041b9859d74cc0a3196dd8aa1bf2acc7a3f27d9a3a360729b04db7072d936",
+        "sha256": "807cda3148f8ccba6ab8431c68b4735310814013e48e9c8b2644a15e74880cff",
         "version": "1.0.0"
       },
       "revision": 1,
@@ -315,7 +315,7 @@
           "order": 40,
           "recipe_id": "modifier.dftu",
           "selection_reason": "用户启用 DFT+U；L/U/J 必须由用户输入并确认",
-          "sha256": "f925c8f351610bef8e71019dbfc0d8b947dfa1d62e3b020a7e9b1a39ff66b6dc",
+          "sha256": "d463a5e96ecef5c26c933df0999106461d12647e92951f72c9c77c1d801af633",
           "version": "1.0.0"
         },
         {
