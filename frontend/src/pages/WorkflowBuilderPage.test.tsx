@@ -113,6 +113,39 @@ beforeEach(() => {
 });
 
 describe('WorkflowBuilderPage', () => {
+  it('样品名编辑、空白回退与实际 POSCAR 首行进入同一确认快照和请求', async () => {
+    useFastMocks();
+    const user = userEvent.setup();
+    renderPage();
+    await uploadAndEnterConfirm(user);
+    const name = screen.getByRole('textbox', { name: '样品名称' });
+    await user.clear(name);
+    expect(screen.getByText(/POSCAR 首行预览：Fe2O3/)).toBeInTheDocument();
+    await user.type(name, '氧化物样品');
+    expect(screen.getByText(/POSCAR 首行预览：氧化物样品/)).toBeInTheDocument();
+    await openSummaryModal(user);
+    expect(screen.getAllByText('氧化物样品').length).toBeGreaterThanOrEqual(2);
+    await confirmAndWaitPlan(user);
+    expect(planBodies[0].workflow.sample_name).toBe('氧化物样品');
+  });
+
+  it('名称含控制字符时阻止确认，修正后可以继续', async () => {
+    useFastMocks();
+    const user = userEvent.setup();
+    renderPage();
+    await uploadAndEnterConfirm(user);
+    const name = screen.getByRole('textbox', { name: '样品名称' });
+    fireEvent.change(name, { target: { value: 'name\u200b' } });
+    expect(screen.getByText(/不允许换行或控制字符/)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '下一步：确认摘要' }));
+    expect(screen.queryByText('最终确认：工作流参数摘要')).not.toBeInTheDocument();
+    expect(planBodies).toHaveLength(0);
+    fireEvent.change(name, { target: { value: '  ' } });
+    await openSummaryModal(user);
+    await confirmAndWaitPlan(user);
+    expect(planBodies[0].workflow.sample_name).toBe('Fe2O3');
+  });
+
   it('bootstrap 开启能带时允许 static → band，正常请求不包含客户端强开字段', async () => {
     useFastMocks();
     server.use(http.get(`${API}/bootstrap`, () => HttpResponse.json({ ENABLE_BAND_WORKFLOW: true })));

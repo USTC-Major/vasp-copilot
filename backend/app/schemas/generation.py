@@ -8,7 +8,10 @@ bundle manifest 以及库级请求 ``WorkflowGenerateRequest``。
 from __future__ import annotations
 
 from enum import Enum
+from functools import reduce
 import math
+from math import gcd
+import unicodedata
 from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -22,6 +25,13 @@ from backend.app.schemas.recipe import (
 
 class _StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+def reduced_formula(elements: List[str], counts: List[int]) -> str:
+    """Chemical formula from validated species counts, without changing sites."""
+    divisor = max(reduce(gcd, counts) if counts else 1, 1)
+    return "".join(element + (str(count // divisor) if count // divisor != 1 else "")
+                   for element, count in zip(elements, counts))
 
 
 class PatchOperation(str, Enum):
@@ -113,6 +123,7 @@ class StructureContext(_StrictModel):
     coordinate_mode: str = "direct"
     poscar_text: Optional[str] = None
     source_sha256: Optional[str] = None
+    source_material_id: Optional[str] = None
     transition_metals: List[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -289,6 +300,7 @@ class WorkflowGenerateRequest(_StrictModel):
 
     workflow_id: str = "wf_local"
     structure: StructureContext
+    sample_name: Optional[str] = None
     requested_tasks: List[TaskType] = Field(default_factory=lambda: [TaskType.RELAX])
     goal_text: Optional[str] = None
     material_assumptions: MaterialAssumptions = Field(default_factory=MaterialAssumptions)
@@ -299,3 +311,19 @@ class WorkflowGenerateRequest(_StrictModel):
     element_initial_moments: Dict[str, float] = Field(default_factory=dict)
     enable_band_workflow: bool = False
     confirm: bool = True
+
+    @model_validator(mode="after")
+    def _valid_sample_name(self) -> "WorkflowGenerateRequest":
+        if self.sample_name is None:
+            return self
+        if any(unicodedata.category(ch).startswith("C") or ch in "\u2028\u2029"
+               for ch in self.sample_name):
+            raise ValueError("sample_name must not contain control or line-separator characters")
+        value = self.sample_name.strip()
+        if not value:
+            self.sample_name = reduced_formula(self.structure.elements, self.structure.counts)
+            return self
+        if len(value) > 256:
+            raise ValueError("sample_name must be at most 256 Unicode characters")
+        self.sample_name = value
+        return self

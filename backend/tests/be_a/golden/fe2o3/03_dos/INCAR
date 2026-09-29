@@ -1,3 +1,4 @@
+# VASP-Copilot | 03_dos | non-self-consistent density-of-states calculation
 EDIFF = 1e-05
 EMAX = 10
 EMIN = -10

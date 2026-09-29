@@ -4356,6 +4356,17 @@
             ],
             "title": "Source Sha256"
           },
+          "source_material_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Material Id"
+          },
           "transition_metals": {
             "items": {
               "type": "string"
@@ -4519,6 +4530,17 @@
             "type": "string",
             "title": "Workflow Id",
             "default": "wf_local"
+          },
+          "sample_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sample Name"
           },
           "structure": {
             "anyOf": [

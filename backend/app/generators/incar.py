@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, Optional
 
 from backend.app.recipes.errors import BeAError, DftuConfirmationRequired
@@ -30,9 +31,37 @@ class IncarGenerator:
         parameters: Dict[str, Any],
         structure: StructureContext,
         dftu: Optional[DftuSettings] = None,
+        step_id: Optional[str] = None,
+        task: Optional[str] = None,
     ) -> str:
         self._validate(parameters, structure, dftu)
-        return self._serializer.serialize(dict(parameters))
+        body = self._serializer.serialize(dict(parameters))
+        if step_id is None:
+            return body
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", step_id):
+            raise ValueError("step_id must be a safe single-line identifier")
+        return f"# VASP-Copilot | {step_id} | {self._purpose(parameters, task)}\n" + body
+
+    @staticmethod
+    def _purpose(parameters: Dict[str, Any], task: Optional[str]) -> str:
+        """Describe the final resolved INCAR, including user overrides."""
+        nsw = parameters.get("NSW", 0)
+        icharg = parameters.get("ICHARG")
+        if type(nsw) not in (int, float) or nsw < 0:
+            return "calculation; inspect INCAR parameters"
+        if nsw > 0:
+            if parameters.get("IBRION") in (1, 2, 3) and icharg in (None, 0, 1, 2):
+                return "ionic relaxation"
+            return "calculation; inspect INCAR parameters"
+        if icharg in (10, 11, 12):
+            mode = "non-self-consistent"
+        elif icharg in (None, 0, 1, 2):
+            mode = "self-consistent"
+        else:
+            return "calculation; inspect INCAR parameters"
+        target = {"dos": "density-of-states calculation",
+                  "band": "band calculation"}.get(task, "static calculation")
+        return f"{mode} {target}"
 
     # --- 一致性检查 ---
 

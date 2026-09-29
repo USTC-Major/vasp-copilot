@@ -152,7 +152,7 @@ export const workflowsApi = {
       body,
     }),
 
-  planFromNl: (body: { structure_id: string; goals: string[]; assumptions?: Record<string, unknown> }) =>
+  planFromNl: (body: { structure_id: string; goals: string[]; assumptions?: Record<string, unknown>; workflow?: { sample_name: string } }) =>
     request<{ request_id: string } & import('../types/generated-api').WorkflowPlan & { ai?: { enabled: boolean; degraded: boolean; user_needs: string; requested_tasks: string[]; explanations: { step: string; label: string; explanation: string }[] } }>('/workflows/plan_from_nl', {
       method: 'POST',
       body,
