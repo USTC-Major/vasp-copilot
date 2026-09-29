@@ -20,7 +20,7 @@ SETTINGS = '/api/v1/toolbox/settings'
 SEARCH = '/api/v1/materials/search'
 IMPORT = '/api/v1/materials/import'
 DOC = {
-    'material_id': 'mp-fake-si',
+    'material_id': 'mp-149',
     'structure': {
         'lattice': {'matrix': [[3.0, 0.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 3.0]]},
         'sites': [{'species': [{'element': 'Si'}], 'abc': [0.0, 0.0, 0.0]}],
@@ -35,10 +35,10 @@ class FakeMP:
         self.keys.append(api_key)
 
     def search(self, criteria, limit=20):
-        return [{'material_id': 'mp-fake-si', 'formula': 'Si'}]
+        return [{'material_id': 'mp-149', 'formula': 'Si'}]
 
     def get_structure_doc(self, material_id):
-        assert material_id == 'mp-fake-si'
+        assert material_id == 'mp-149'
         return DOC
 
     def close(self):
@@ -71,7 +71,7 @@ def _search(runtime):
 
 
 def _import(runtime):
-    return runtime.client.post(IMPORT, json={'material_id': 'mp-fake-si'})
+    return runtime.client.post(IMPORT, json={'material_id': 'mp-149'})
 
 
 def _status(runtime):
@@ -96,7 +96,7 @@ def test_http_replace_clear_immediately_changes_search_and_import(runtime, caplo
         assert runtime.client.get(SETTINGS).json()['settings']['materials_project']['configured'] is True
         result = _search(runtime)
         assert result.status_code == 200, result.text
-        assert result.json()['data']['materials'][0]['material_id'] == 'mp-fake-si'
+        assert result.json()['data']['materials'][0]['material_id'] == 'mp-149'
         imported = _import(runtime)
         assert imported.status_code == 200, imported.text
         data = imported.json()['data']
@@ -168,7 +168,7 @@ def test_legacy_value_is_eligible_only_until_managed_clear(runtime):
     assert len(FakeMP.keys) == previous_calls
 
 
-@pytest.mark.parametrize('route,payload', [(SEARCH, {'query': 'Si'}), (IMPORT, {'material_id': 'mp-fake-si'})])
+@pytest.mark.parametrize('route,payload', [(SEARCH, {'query': 'Si'}), (IMPORT, {'material_id': 'mp-149'})])
 def test_provider_read_failure_is_503_not_unconfigured(runtime, monkeypatch, route, payload):
     backend = secrets._get_backend()
 

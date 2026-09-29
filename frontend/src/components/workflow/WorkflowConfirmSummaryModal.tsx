@@ -55,6 +55,8 @@ const WorkflowConfirmSummaryModal: React.FC<WorkflowConfirmSummaryModalProps> = 
           <Descriptions.Item label="结构">
             {snapshot.structure.formula}（{snapshot.structure.elements.join('、')}）
           </Descriptions.Item>
+          <Descriptions.Item label="样品名称">{snapshot.sample_name}</Descriptions.Item>
+          <Descriptions.Item label="POSCAR 首行">{snapshot.poscar_comment}</Descriptions.Item>
           <Descriptions.Item label="计算任务">
             {snapshot.requested_tasks.join(' → ')}
           </Descriptions.Item>

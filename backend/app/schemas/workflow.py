@@ -169,6 +169,8 @@ class StructureBlock(_StrictModel):
     elements: List[str]
     counts: List[int]
     source_sha256: Optional[str] = None
+    source_material_id: Optional[str] = None
+    sample_name: Optional[str] = None
 
 
 class GoalBlock(_StrictModel):

@@ -120,6 +120,7 @@ export interface StructureSummary {
   magnetism_hint: MagnetismHint;
   source_format: string;
   source_sha256: string;
+  source_material_id?: string | null;
   standardized?: boolean;
   warnings: StructureWarning[];
 }
@@ -168,7 +169,8 @@ export interface MaterialsImportResponse {
   normalized_poscar_file_id: string;
   file_id: string;
   material_id: string;
-  summary: string;
+  display_material_id?: string;
+  summary: StructureSummary;
 }
 export interface WorkflowGoal {
   original_text: string;

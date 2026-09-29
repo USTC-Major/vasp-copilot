@@ -10,11 +10,28 @@ BE-A 不解析结构（parsers/** 属于他人目录）：
 from __future__ import annotations
 
 from backend.app.recipes.errors import BeAError
-from backend.app.schemas.generation import StructureContext
+from backend.app.schemas.generation import StructureContext, reduced_formula
+from backend.app.material_identity import display_material_id, valid_material_id
+
+
+def default_sample_name(structure: StructureContext) -> str:
+    """Use the reduced composition from validated species counts."""
+    return reduced_formula(structure.elements, structure.counts)
+
+
+def _bounded_comment(value: str) -> str:
+    """Product compatibility policy: at most 40 UTF-8 bytes, whole code points.
+
+    VASP documents 40 characters. The byte limit is our conservative choice
+    for UTF-8 interoperability, not a claim that VASP specifies 40 bytes.
+    """
+    encoded = value.encode("utf-8")[:40]
+    return encoded.decode("utf-8", errors="ignore")
 
 
 class PoscarGenerator:
-    def generate(self, structure: StructureContext, normalize: bool = False) -> str:
+    def generate(self, structure: StructureContext, normalize: bool = False,
+                 sample_name: str | None = None) -> str:
         text = structure.poscar_text
         if not text:
             raise BeAError(
@@ -22,9 +39,18 @@ class PoscarGenerator:
                 code="UPSTREAM_OUTPUT_MISSING",
                 details={"structure_id": structure.structure_id},
             )
-        if not normalize:
-            return self._verbatim(text)
-        return self._normalize(text)
+        rendered = self._normalize(text) if normalize else self._verbatim(text)
+        if sample_name is None and structure.source_material_id is None:
+            return rendered
+        if structure.source_material_id and not valid_material_id(structure.source_material_id):
+            raise BeAError("invalid persisted Materials Project source ID",
+                           code="MP_INVALID_MATERIAL_ID")
+        name = sample_name if sample_name is not None else default_sample_name(structure)
+        prefix = (display_material_id(structure.source_material_id) + " "
+                  if structure.source_material_id else "")
+        comment = _bounded_comment(prefix + name)
+        _, _, body = rendered.partition("\n")
+        return comment + "\n" + body
 
     @staticmethod
     def _verbatim(text: str) -> str:

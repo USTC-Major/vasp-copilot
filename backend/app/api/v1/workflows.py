@@ -64,6 +64,7 @@ class WorkflowConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     workflow_id: str = "wf_local"
+    sample_name: Optional[str] = None
     structure: Optional[StructureContext] = None
     requested_tasks: List[TaskType] = Field(default_factory=lambda: [TaskType.RELAX])
     goal_text: Optional[str] = None
@@ -81,6 +82,7 @@ class WorkflowConfig(BaseModel):
     def to_request(self, structure: StructureContext) -> WorkflowGenerateRequest:
         return WorkflowGenerateRequest(
             workflow_id=self.workflow_id,
+            sample_name=self.sample_name,
             structure=structure,
             requested_tasks=self.requested_tasks,
             goal_text=self.goal_text,
@@ -194,10 +196,11 @@ def _resolve_workflow(req: WorkflowApiRequest, config: WorkflowConfig) -> Workfl
             return config.to_request(validated_structure_context(structure))
         except InputValidationError as exc:
             raise ValidationError(exc.code, str(exc)) from exc
-    if config.structure is not None and config.structure.poscar_text:
-        return build(config.structure)
     if req.structure_id:
         return build(_structure_from_file_store(req.structure_id))
+    if config.structure is not None and config.structure.poscar_text:
+        # A direct client structure may carry arbitrary source metadata.
+        return build(config.structure.model_copy(update={"source_material_id": None}))
     if req.diagnosis_id:
         return build(_structure_from_diagnosis(req.diagnosis_id))
     raise ConflictError(
@@ -331,6 +334,7 @@ async def plan_from_nl(
             elements=list(trusted.elements), counts=list(trusted.counts),
             source_file=record.summary.source_file,
             structure_id=req.structure_id,
+            source_material_id=record.summary.source_material_id,
         )
     except InputValidationError as exc:
         raise ValidationError(exc.code, str(exc)) from exc
@@ -352,6 +356,7 @@ async def plan_from_nl(
     # 映射 NLP 计划到 WorkflowConfig -> WorkflowGenerateRequest
     config = WorkflowConfig(
         workflow_id=req.workflow_id or _new_workflow_id(),
+        sample_name=req.workflow.sample_name if req.workflow else None,
         requested_tasks=[TaskType(t) for t in nl_plan.requested_tasks],
         goal_text=goals_text,
         material_assumptions=MaterialAssumptions(

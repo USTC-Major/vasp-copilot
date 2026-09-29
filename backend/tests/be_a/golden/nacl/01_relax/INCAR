@@ -1,3 +1,4 @@
+# VASP-Copilot | 01_relax | ionic relaxation
 ALGO = Normal
 EDIFF = 0.0001
 EDIFFG = -0.02
