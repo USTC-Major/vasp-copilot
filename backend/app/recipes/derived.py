@@ -82,12 +82,16 @@ def generate_magmom_from_structure(inputs: Dict[str, Any]) -> List[float]:
 def generate_ldau_arrays(inputs: Dict[str, Any]) -> Dict[str, List[float]]:
     """按 POSCAR 元素顺序生成 LDAUL/LDAUU/LDAUJ。
 
-    inputs: elements, dftu_entries=[{element,l,u_ev,j_ev}]。
+    inputs: elements, dftu_entries, dftu_input_mode.
     未施加 U 的元素显式为 L=-1, U=0, J=0（10.5 节）。
     """
 
     elements: Sequence[str] = inputs["elements"]
     entries: Sequence[Dict[str, Any]] = inputs.get("dftu_entries") or []
+    input_mode = inputs.get("dftu_input_mode")
+    if input_mode not in (None, "u_eff", "u_j"):
+        raise DerivedParameterUnresolved("unsupported DFT+U input mode",
+                                         details={"input_mode": input_mode})
     entry_by_element: Dict[str, Dict[str, Any]] = {}
     for entry in entries:
         element = entry["element"]
@@ -95,6 +99,10 @@ def generate_ldau_arrays(inputs: Dict[str, Any]) -> Dict[str, List[float]]:
             raise DerivedParameterUnresolved(
                 f"DFT+U entry for unknown element {element!r}",
                 details={"element": element, "structure_elements": list(elements)},
+            )
+        if element in entry_by_element:
+            raise DerivedParameterUnresolved(
+                f"duplicate DFT+U element {element!r}", details={"element": element}
             )
         entry_by_element[element] = entry
     ldau_l: List[float] = []
@@ -107,15 +115,29 @@ def generate_ldau_arrays(inputs: Dict[str, Any]) -> Dict[str, List[float]]:
             ldau_u.append(0.0)
             ldau_j.append(0.0)
         else:
-            ldau_l.append(float(entry["l"]))
-            ldau_u.append(float(entry["u_ev"]))
-            ldau_j.append(float(entry.get("j_ev", 0.0)))
+            channel = entry["l"]
+            if type(channel) is not int or channel not in (2, 3):
+                raise DerivedParameterUnresolved("DFT+U supports d/f channels only",
+                                                 details={"element": element, "l": channel})
+            ldau_l.append(float(channel))
+            if input_mode == "u_eff":
+                ldau_u.append(_finite_number(entry.get("u_eff_ev"), field="u_eff_ev"))
+                ldau_j.append(0.0)
+            else:
+                ldau_u.append(_finite_number(entry.get("u_ev"), field="u_ev"))
+                j_value = entry.get("j_ev", 0.0) if input_mode is None else entry.get("j_ev")
+                ldau_j.append(_finite_number(j_value, field="j_ev"))
     if len(ldau_l) != len(elements) or len(ldau_u) != len(elements) or len(ldau_j) != len(elements):
         raise DerivedParameterUnresolved(
             "LDAU array length mismatch",
             details={"elements": list(elements)},
         )
     return {"LDAUL": ldau_l, "LDAUU": ldau_u, "LDAUJ": ldau_j}
+
+
+def generate_ldautype(inputs: Dict[str, Any]) -> Dict[str, int]:
+    """Legacy and new Dudarev use 2; explicit Liechtenstein uses 1."""
+    return {"LDAUTYPE": 1 if inputs.get("dftu_form") == "liechtenstein" else 2}
 
 
 def generate_dftu_lmaxmix(inputs: Dict[str, Any]) -> Dict[str, int]:
@@ -434,6 +456,7 @@ def derive_encut_from_precision(inputs: Dict[str, Any]) -> float:
 DERIVED_FUNCTIONS: Dict[str, Callable[[Dict[str, Any]], Any]] = {
     "generate_magmom_from_structure": generate_magmom_from_structure,
     "generate_ldau_arrays": generate_ldau_arrays,
+    "generate_ldautype": generate_ldautype,
     "generate_dftu_lmaxmix": generate_dftu_lmaxmix,
     "generate_kpoint_grid": generate_kpoint_grid,
     "derive_system_label": derive_system_label,

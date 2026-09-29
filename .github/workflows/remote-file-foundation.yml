@@ -141,6 +141,7 @@ jobs:
             backend/tests/test_chat_api.py \
             backend/tests/test_workflow_api.py \
             backend/tests/be_a/test_kpoints.py \
+            backend/tests/be_a/test_dftu_forms.py \
             backend/tests/be_a/test_pipeline_contract.py \
             backend/tests/be_a/test_golden.py \
             backend/tests/be_a/test_bundle_zip.py \
@@ -164,6 +165,7 @@ jobs:
               "backend.tests.ai_mode.test_rw3_backend_fixes",
               "backend.tests.test_materials_api",
               "backend.tests.test_mp_credentials_integration",
+              "backend.tests.be_a.test_dftu_forms",
               "backend.tests.test_mp_natural_search",
               "backend.tests.ai_mode.test_secret_storage",
               "backend.tests.ai_mode.test_server",

@@ -11,6 +11,7 @@ import tempfile
 import zipfile
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.api.v1 import deps
@@ -198,6 +199,50 @@ def test_band_rejects_relax_and_missing_static(monkeypatch):
             "workflow": {"requested_tasks": tasks}})
         assert response.status_code == 409
         assert response.json()["error"]["code"] == code
+
+
+@pytest.mark.parametrize("dftu,kind,u,j", [
+    ({"enabled": True, "form": "dudarev", "input_mode": "u_eff",
+      "entries": [{"element": "Ce", "l": 3, "u_eff_ev": 4.0,
+                   "source_note": "new Ueff", "confirmed_by_user": True}]}, 2, 4, 0),
+    ({"enabled": True, "form": "liechtenstein", "input_mode": "u_j",
+      "entries": [{"element": "Ce", "l": 3, "u_ev": 5.0, "j_ev": 1.0,
+                   "source_note": "separate U/J", "confirmed_by_user": True}]}, 1, 5, 1),
+    ({"enabled": True, "entries": [{"element": "Ce", "l": 3,
+      "u_ev": 5.0, "j_ev": 1.0, "source_note": "legacy U/J", "confirmed_by_user": True}]},
+     2, 5, 1),
+])
+def test_dftu_forms_plan_replay_and_download(dftu, kind, u, j):
+    poscar = "Ce\n1\n5 0 0\n0 5 0\n0 0 5\nCe\n1\nDirect\n0 0 0\n"
+    payload = {"workflow": {"structure": {"formula": "Ce", "elements": ["Ce"],
+                 "counts": [1], "poscar_text": poscar},
+                "requested_tasks": ["static"], "dftu": dftu}}
+    planned = client.post("/api/v1/workflows/plan", json=payload)
+    assert planned.status_code == 200, planned.text
+    data = planned.json()["data"]
+    assert data["dftu"]["form"] == dftu.get("form")
+    assert data["dftu"]["input_mode"] == dftu.get("input_mode")
+    assert data["recipe_compositions"][0]["resolved_parameters"]["LDAUTYPE"] == kind
+    generated = client.post("/api/v1/workflows/generate", json={"workflow_id": data["workflow_id"]})
+    assert generated.status_code == 200, generated.text
+    archive = zipfile.ZipFile(io.BytesIO(client.get(generated.json()["data"]["download_url"]).content))
+    incar = archive.read("02_static/INCAR").decode()
+    assert f"LDAUTYPE = {kind}" in incar
+    assert f"LDAUU = {u}" in incar
+    assert f"LDAUJ = {j}" in incar
+    import json as _json
+    plan_file = _json.loads(archive.read("workflow_plan.json"))
+    assert plan_file["dftu"] == data["dftu"]
+
+
+def test_liechtenstein_missing_j_rejected_at_api():
+    payload = {"workflow": {"requested_tasks": ["static"],
+      "structure": {"formula": "Ce", "elements": ["Ce"], "counts": [1],
+        "poscar_text": "Ce\n1\n5 0 0\n0 5 0\n0 0 5\nCe\n1\nDirect\n0 0 0\n"},
+      "dftu": {"enabled": True, "form": "liechtenstein", "input_mode": "u_j",
+        "entries": [{"element": "Ce", "l": 3, "u_ev": 5, "confirmed_by_user": True}]}}}
+    response = client.post("/api/v1/workflows/plan", json=payload)
+    assert response.status_code == 422
 
 
 def test_diagnosis_without_poscar_404():

@@ -222,13 +222,14 @@ describe('WorkflowBuilderPage', () => {
     // 启用 DFT+U 并填写一条确认条目
     const switches = screen.getAllByRole('switch');
     await user.click(switches[2]);
+    await selectOption(screen.getByRole('combobox', { name: 'DFT+U 形式' }), 'Liechtenstein（U/J）');
     await user.click(screen.getByRole('button', { name: '添加 DFT+U 条目' }));
     const comboboxes = screen.getAllByRole('combobox');
-    await selectOption(comboboxes[3], 'Fe');
-    await selectOption(comboboxes[4], 'd (L=2)');
+    await selectOption(comboboxes[4], 'Fe');
+    await selectOption(comboboxes[5], 'd (L=2)');
     await user.type(screen.getByPlaceholderText('U 值'), '5.3');
     await user.type(screen.getByPlaceholderText('J 值'), '1');
-    await user.click(screen.getByRole('checkbox', { name: '我已确认该条目的 L/U/J' }));
+    await user.click(screen.getByRole('checkbox', { name: '我已确认该条目的形式、L 与输入值' }));
 
     // 调整 scheduler
     fireEvent.change(screen.getByPlaceholderText('HH:MM:SS'), { target: { value: '08:00:00' } });
@@ -251,6 +252,8 @@ describe('WorkflowBuilderPage', () => {
     // F6: DFT+U 完整进入请求体
     expect(body.workflow.dftu).toEqual({
       enabled: true,
+      form: 'liechtenstein',
+      input_mode: 'u_j',
       entries: [{
         element: 'Fe', l: 2, u_ev: 5.3, j_ev: 1,
         source_note: 'user_input', confirmed_by_user: true,
@@ -270,6 +273,30 @@ describe('WorkflowBuilderPage', () => {
     const entry = body.workflow.dftu.entries[0];
     expect(modalScope.textContent).toContain(`${entry.element}：L=${entry.l}，U=${entry.u_ev} eV`);
     expect(modalScope.textContent).toContain(body.workflow.scheduler.walltime);
+  });
+
+  it('Dudarev 确认摘要与请求使用相同 Ueff 和实际 LDAU 值', async () => {
+    useFastMocks();
+    const user = userEvent.setup();
+    renderPage();
+    await uploadAndEnterConfirm(user);
+    await user.click(screen.getAllByRole('switch')[2]);
+    await selectOption(screen.getByRole('combobox', { name: 'DFT+U 形式' }), 'Dudarev（Ueff）');
+    await user.click(screen.getByRole('button', { name: '添加 DFT+U 条目' }));
+    await selectOption(screen.getAllByRole('combobox')[4], 'Fe');
+    await selectOption(screen.getAllByRole('combobox')[5], 'd (L=2)');
+    await user.type(screen.getByPlaceholderText('Ueff 值'), '4.6');
+    await user.click(screen.getByRole('checkbox', { name: '我已确认该条目的形式、L 与输入值' }));
+    await openSummaryModal(user);
+    expect(screen.getByText(/Dudarev（Ueff 输入；LDAUTYPE=2）/)).toBeInTheDocument();
+    expect(screen.getByText(/Ueff=4.6 eV → LDAUU=4.6, LDAUJ=0/)).toBeInTheDocument();
+    await confirmAndWaitPlan(user);
+    expect(planBodies[0].workflow.dftu).toEqual({
+      enabled: true,
+      form: 'dudarev',
+      input_mode: 'u_eff',
+      entries: [{ element: 'Fe', l: 2, u_eff_ev: 4.6, source_note: 'user_input', confirmed_by_user: true }],
+    });
   });
 
   it('F8: 取消最终确认不发送请求并回到表单', async () => {
@@ -355,6 +382,15 @@ describe('确认状态防伪（fail-closed）', () => {
     expect(canBuildConfirmSnapshot({ ...baseForm, dftu: { enabled: false, entries: [] } })).toBe(true);
   });
 
+  it('无明确形式且无旧 U/J 记录时快照守卫拒绝提交', () => {
+    expect(canBuildConfirmSnapshot({ ...baseForm, dftu: {
+      enabled: true, entries: [{ element: 'Fe', l: 2, u_eff_ev: 4, confirmed_by_user: true }],
+    } })).toBe(false);
+    expect(canBuildConfirmSnapshot({ ...baseForm, dftu: {
+      enabled: true, form: 'liechtenstein', input_mode: 'u_eff', entries: [entry(true)],
+    } })).toBe(false);
+  });
+
   it('快照中的 confirmed_by_user 必须来自表单实际值（不得伪造）', () => {
     const unconfirmed = buildSnapshot(
       { ...baseForm, dftu: { enabled: true, entries: [entry(false)] } }, summary
@@ -364,6 +400,19 @@ describe('确认状态防伪（fail-closed）', () => {
       { ...baseForm, dftu: { enabled: true, entries: [entry(true)] } }, summary
     );
     expect(confirmed.dftu.entries[0].confirmed_by_user).toBe(true);
+  });
+
+  it('旧 initialValues 缺少形式时构造旧请求，原 U/J、source_note 与确认值原样保留', () => {
+    const legacy = buildSnapshot({
+      ...baseForm,
+      dftu: { enabled: true, entries: [{
+        element: 'Fe', l: 2, u_ev: 5.3, j_ev: 1, source_note: 'archived-source', confirmed_by_user: true,
+      }] },
+    }, summary);
+    expect(legacy.dftu).toEqual({ enabled: true, entries: [{
+      element: 'Fe', l: 2, u_ev: 5.3, j_ev: 1, source_note: 'archived-source', confirmed_by_user: true,
+    }] });
+    expect(legacy.dftu.entries[0]).not.toHaveProperty('u_eff_ev');
   });
 
   it('生产代码不得出现无条件的 confirmed_by_user: true', () => {

@@ -64,12 +64,27 @@ const WorkflowConfirmSummaryModal: React.FC<WorkflowConfirmSummaryModalProps> = 
           <Descriptions.Item label="精度">{snapshot.precision}</Descriptions.Item>
           <Descriptions.Item label="DFT+U">
             {snapshot.dftu.enabled ? (
-              snapshot.dftu.entries.map((entry, idx) => (
-                <div key={idx}>
-                  {entry.element}：L={entry.l}，U={entry.u_ev} eV，J={entry.j_ev} eV
-                  <Tag color="green" style={{ marginLeft: 8 }}>已由用户确认</Tag>
+              <>
+                <div>
+                  {snapshot.dftu.form === 'dudarev'
+                    ? 'Dudarev（Ueff 输入；LDAUTYPE=2）'
+                    : snapshot.dftu.form === 'liechtenstein'
+                      ? 'Liechtenstein（U/J 输入；LDAUTYPE=1）'
+                      : '旧版 Dudarev U/J 输入（LDAUTYPE=2，原值保留）'}
                 </div>
-              ))
+                {snapshot.dftu.entries.map((entry, idx) => {
+                  const values = snapshot.dftu.form === 'dudarev'
+                    ? `Ueff=${entry.u_eff_ev} eV → LDAUU=${entry.u_eff_ev}, LDAUJ=0`
+                    : `U=${entry.u_ev} eV，J=${entry.j_ev} eV → LDAUU=${entry.u_ev}, LDAUJ=${entry.j_ev}`;
+                  return (
+                    <div key={idx}>
+                      {entry.element}：L={entry.l}，{values}
+                      {entry.source_note && <span>（来源：{entry.source_note}）</span>}
+                      {entry.confirmed_by_user && <Tag color="green" style={{ marginLeft: 8 }}>已由用户确认</Tag>}
+                    </div>
+                  );
+                })}
+              </>
             ) : (
               // DFT+U 关闭时后端不生成 LDAU 相关参数；“派生 L=-1/U=0/J=0”
               // 仅适用于启用 DFT+U 但部分 POSCAR 元素未配置条目的情形，不得混淆。

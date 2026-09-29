@@ -27,7 +27,7 @@ from backend.app.generators.kpoints import KpointsGenerator
 from backend.app.generators.poscar import PoscarGenerator
 from backend.app.generators.script import ScriptGenerator
 from backend.app.recipes.composer import ComposeRequest, RecipeComposer
-from backend.app.recipes.derived import BAND_LINE_DIVISIONS, KPPA_TABLE, generate_kpoint_grid
+from backend.app.recipes.derived import BAND_LINE_DIVISIONS, KPPA_TABLE, generate_kpoint_grid, generate_ldau_arrays
 from backend.app.recipes.errors import BeAError, DftuConfirmationRequired, RecipeConfirmationRequired
 from backend.app.recipes.registry import RecipeRegistry, default_registry
 from backend.app.recipes.selector import RecipeSelector
@@ -157,6 +157,7 @@ class WorkflowGenerationPipeline:
                 for key in sorted(composition.resolved_parameters)
             }
 
+        self._validate_dftu_compositions(request, compositions)
         self._validate_band_compositions(request, compositions)
 
         self._gating.evaluate(steps, inheritance)
@@ -288,6 +289,7 @@ class WorkflowGenerationPipeline:
                 confirmations.append(pending.model_dump(mode="json"))
             conflicts.extend(c.model_dump(mode="json") for c in composition.conflicts)
 
+        self._validate_dftu_compositions(request, compositions)
         self._validate_band_compositions(request, compositions)
         warnings = self._collect_warnings(compositions)
         warnings.extend(self._band_warnings(request))
@@ -306,6 +308,19 @@ class WorkflowGenerationPipeline:
 
     def _validate_plan_input(self, request: WorkflowGenerateRequest) -> None:
         self._validate_structure(request)
+        if request.dftu.enabled:
+            if not request.dftu.entries:
+                raise DftuConfirmationRequired(
+                    "已启用 DFT+U，但没有元素参数；请填写至少一个元素并确认。",
+                    details={"dftu": request.dftu.model_dump(mode="json")},
+                )
+            unknown = sorted({entry.element for entry in request.dftu.entries}
+                             - set(request.structure.elements))
+            if unknown:
+                raise BeAError("DFT+U 元素不在当前 POSCAR 中；请删除对应条目后重新确认。",
+                                code="DFTU_ELEMENT_NOT_IN_STRUCTURE",
+                                details={"unknown_elements": unknown,
+                                         "structure_elements": request.structure.elements})
         if TaskType.BAND in request.requested_tasks and request.material_assumptions.soc:
             raise BeAError("本批不支持 SOC 能带；请关闭 SOC 后重新规划 PBE／PBE+U 能带。",
                             code="BAND_COMBINATION_UNSUPPORTED", details={"combination": "SOC"})
@@ -321,11 +336,6 @@ class WorkflowGenerationPipeline:
     def _validate_request(self, request: WorkflowGenerateRequest) -> None:
         self._validate_plan_input(request)
         if request.dftu.enabled:
-            if not request.dftu.entries:
-                raise DftuConfirmationRequired(
-                    "DFT+U enabled but no entries provided",
-                    details={"dftu": request.dftu.model_dump(mode="json")},
-                )
             if not request.dftu.all_confirmed:
                 unconfirmed = [
                     entry.element for entry in request.dftu.entries
@@ -372,6 +382,36 @@ class WorkflowGenerationPipeline:
             manifest = self._registry.get(entry.ref)
             keys.update(confirmation.key for confirmation in manifest.confirmations)
         return keys
+
+    @staticmethod
+    def _validate_dftu_compositions(
+        request: WorkflowGenerateRequest, compositions: Dict[str, RecipeComposition]
+    ) -> None:
+        """Compare the final, patched INCAR parameters with the confirmed form."""
+        expected: Dict[str, Any] = {}
+        if request.dftu.enabled:
+            expected = {"LDAU": True,
+                        "LDAUTYPE": 1 if request.dftu.form == "liechtenstein" else 2}
+            expected.update(generate_ldau_arrays({
+                "elements": request.structure.elements,
+                "dftu_entries": [entry.model_dump(mode="json") for entry in request.dftu.entries],
+                "dftu_input_mode": request.dftu.input_mode,
+            }))
+        for step_id, composition in compositions.items():
+            final = composition.resolved_parameters
+            for tag in ("LDAU", "LDAUTYPE", "LDAUL", "LDAUU", "LDAUJ"):
+                actual = final.get(tag)
+                desired = expected.get(tag)
+                if actual == desired:
+                    continue
+                source = next((item for item in composition.provenance
+                               if item.get("parameter") == tag), None)
+                raise BeAError(
+                    "最终 DFT+U 参数与已确认的形式或数值不一致；请检查覆盖来源后重新规划并确认。",
+                    code="DFTU_FINAL_PARAMETERS_MISMATCH",
+                    details={"step_id": step_id, "parameter": tag,
+                             "expected": desired, "actual": actual, "provenance": source},
+                )
 
     @staticmethod
     def _validate_band_compositions(
@@ -424,8 +464,8 @@ class WorkflowGenerationPipeline:
                 or any(type(l) not in (int, float) or l not in (-1, 2, 3) for l in channels)):
             raise BeAError("本批 PBE+U 能带只支持 d/f 轨道；请核对 LDAUL 后重新确认。",
                             code="BAND_COMBINATION_UNSUPPORTED", details={"LDAUL": channels})
-        if static.get("LDAU") is not True or band.get("LDAU") is not True or static.get("LDAUTYPE") != 2:
-            raise BeAError("band 需要已确认的现有 Dudarev DFT+U 设置；请检查最终参数后重新确认。",
+        if static.get("LDAU") is not True or band.get("LDAU") is not True or static.get("LDAUTYPE") not in (1, 2):
+            raise BeAError("band 需要已确认的 Dudarev 或 Liechtenstein DFT+U 设置；请检查最终参数后重新确认。",
                             code="BAND_DFTU_INCONSISTENT")
         minimum = 6 if 3 in channels else 4
         for step_id, parameters in (("02_static", static), ("04_band", band)):
@@ -479,6 +519,8 @@ class WorkflowGenerationPipeline:
             "dftu_entries": [
                 entry.model_dump(mode="json") for entry in request.dftu.entries
             ],
+            "dftu_form": request.dftu.form,
+            "dftu_input_mode": request.dftu.input_mode,
             "lattice": lattice,
         }
 
@@ -597,6 +639,8 @@ class WorkflowGenerationPipeline:
             ),
             dftu=DftuBlock(
                 enabled=request.dftu.enabled,
+                form=request.dftu.form,
+                input_mode=request.dftu.input_mode,
                 entries=[entry.model_dump(mode="json") for entry in request.dftu.entries],
             ),
             scheduler=SchedulerBlock(

@@ -1,5 +1,5 @@
 {
-  "bundle_sha256": "8b4c30f1f10e6f30f190a841637994e05ce0b2b0d3ab82c954b59b53cee8fa20",
+  "bundle_sha256": "0605ec4f744988dccf0b1ade38ed90ddf8a50900192ed6098bd08f3dbeb05d26",
   "created_at": "2026-08-10T00:00:00Z",
   "files": [
     {
@@ -59,12 +59,12 @@
     },
     {
       "path": "workflow_plan.json",
-      "sha256": "37893e5cf63c8503c384fceb9aaf866bbfabebea15d2938b7cf8b112b4f65426",
-      "size_bytes": 8478
+      "sha256": "9d5d6ad75ccdece6e3738bb6ad8fb939b48134b61a0ccd1aad1fba2fe233f62f",
+      "size_bytes": 8520
     }
   ],
   "generator_version": "0.1.0",
-  "recipe_pack_sha256": "807cda3148f8ccba6ab8431c68b4735310814013e48e9c8b2644a15e74880cff",
+  "recipe_pack_sha256": "3f67b649afdd798a5eeb47ecbf64e3242e10a9ddc6ddf3ba200308d9b9351c01",
   "recipe_pack_version": "1.0.0",
   "revision": 1,
   "workflow_id": "wf_nacl"
