@@ -16,9 +16,12 @@
         "j_ev": 0.0,
         "l": 2,
         "source_note": "用户课题组设置",
+        "u_eff_ev": null,
         "u_ev": 4.0
       }
-    ]
+    ],
+    "form": null,
+    "input_mode": null
   },
   "file_inheritance_plan": {
     "dependencies": [
@@ -93,7 +96,7 @@
         "display_name": "VASP MVP Core Recipe Pack",
         "pack_id": "vasp-mvp-core",
         "schema_version": "1.0",
-        "sha256": "dad041b9859d74cc0a3196dd8aa1bf2acc7a3f27d9a3a360729b04db7072d936",
+        "sha256": "3f67b649afdd798a5eeb47ecbf64e3242e10a9ddc6ddf3ba200308d9b9351c01",
         "version": "1.0.0"
       },
       "revision": 1,
@@ -144,7 +147,7 @@
           "order": 40,
           "recipe_id": "modifier.dftu",
           "selection_reason": "用户启用 DFT+U；L/U/J 必须由用户输入并确认",
-          "sha256": "f925c8f351610bef8e71019dbfc0d8b947dfa1d62e3b020a7e9b1a39ff66b6dc",
+          "sha256": "120628d52c0ca8fd245ce950628a909f3e27609c18f26b036a317b89e96fa317",
           "version": "1.0.0"
         },
         {
@@ -184,7 +187,7 @@
         "display_name": "VASP MVP Core Recipe Pack",
         "pack_id": "vasp-mvp-core",
         "schema_version": "1.0",
-        "sha256": "dad041b9859d74cc0a3196dd8aa1bf2acc7a3f27d9a3a360729b04db7072d936",
+        "sha256": "3f67b649afdd798a5eeb47ecbf64e3242e10a9ddc6ddf3ba200308d9b9351c01",
         "version": "1.0.0"
       },
       "revision": 1,
@@ -235,7 +238,7 @@
           "order": 40,
           "recipe_id": "modifier.dftu",
           "selection_reason": "用户启用 DFT+U；L/U/J 必须由用户输入并确认",
-          "sha256": "f925c8f351610bef8e71019dbfc0d8b947dfa1d62e3b020a7e9b1a39ff66b6dc",
+          "sha256": "120628d52c0ca8fd245ce950628a909f3e27609c18f26b036a317b89e96fa317",
           "version": "1.0.0"
         },
         {
@@ -275,7 +278,7 @@
         "display_name": "VASP MVP Core Recipe Pack",
         "pack_id": "vasp-mvp-core",
         "schema_version": "1.0",
-        "sha256": "dad041b9859d74cc0a3196dd8aa1bf2acc7a3f27d9a3a360729b04db7072d936",
+        "sha256": "3f67b649afdd798a5eeb47ecbf64e3242e10a9ddc6ddf3ba200308d9b9351c01",
         "version": "1.0.0"
       },
       "revision": 1,
@@ -315,7 +318,7 @@
           "order": 40,
           "recipe_id": "modifier.dftu",
           "selection_reason": "用户启用 DFT+U；L/U/J 必须由用户输入并确认",
-          "sha256": "f925c8f351610bef8e71019dbfc0d8b947dfa1d62e3b020a7e9b1a39ff66b6dc",
+          "sha256": "120628d52c0ca8fd245ce950628a909f3e27609c18f26b036a317b89e96fa317",
           "version": "1.0.0"
         },
         {
@@ -560,6 +563,8 @@
       "O"
     ],
     "formula": "Fe2O3",
+    "sample_name": null,
+    "source_material_id": null,
     "source_sha256": "97fd3eb52215eb5d9c221579ab61fbf34f494eb0dd0354a2d2be865be308b972",
     "structure_id": "str_fe2o3"
   },

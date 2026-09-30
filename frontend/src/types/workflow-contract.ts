@@ -44,15 +44,18 @@ export interface SchedulerResponseBlock {
 export interface DftuEntryRequest {
   element: string;
   l: number;
-  u_ev: number;
-  j_ev: number;
-  source_note: string;
+  u_eff_ev?: number | null;
+  u_ev?: number | null;
+  j_ev?: number | null;
+  source_note?: string | null;
   confirmed_by_user: boolean;
 }
 
 /** 请求侧：DFT+U 设置。 */
 export interface DftuSettingsRequest {
   enabled: boolean;
+  form?: 'dudarev' | 'liechtenstein' | null;
+  input_mode?: 'u_eff' | 'u_j' | null;
   entries: DftuEntryRequest[];
 }
 
@@ -67,6 +70,7 @@ export interface MaterialAssumptionsRequest {
 export interface WorkflowPlanRequestBody {
   structure_id: string;
   workflow: {
+    sample_name?: string;
     requested_tasks: string[];
     goal_text?: string | null;
     material_assumptions: MaterialAssumptionsRequest;
@@ -80,6 +84,8 @@ export interface WorkflowPlanRequestBody {
 /** 最终确认摘要的不可变快照：Modal 展示与实际发送 payload 同源。 */
 export interface WorkflowConfirmSnapshot {
   structure: { formula: string; elements: string[] };
+  sample_name: string;
+  poscar_comment: string;
   requested_tasks: string[];
   electronic_type: WorkflowElectronicType;
   magnetic: boolean;

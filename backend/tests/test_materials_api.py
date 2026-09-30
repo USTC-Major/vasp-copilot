@@ -135,11 +135,50 @@ def test_materials_import_with_fake(client, monkeypatch):
     data = r.json()["data"]
     assert data["structure_id"].startswith("str_")
     assert data["material_id"] == "mp-12345"
+    assert data["summary"]["source_material_id"] == "mp-12345"
     assert data["summary"]["formula"] == "Na4Cl4"
     assert data["summary"]["elements"] == ["Na", "Cl"]
     assert data["summary"]["counts"] == [4, 4]
     assert data["summary"]["atom_count"] == 8
     assert abs(data["summary"]["lattice"]["volume"] - 133.2) < 1.0
+
+
+def test_import_accepts_verified_numeric_to_alpha_alias(client, monkeypatch):
+    _enable_mp(monkeypatch)
+    class AliasClient(FakeMpClient):
+        def get_structure_doc(self, material_id):
+            doc = copy.deepcopy(_STRUCTURE_DOC)
+            doc["material_id"] = "mp-aaaabwmb"
+            return doc
+    monkeypatch.setattr(mp_service, "MaterialsProjectClient", AliasClient)
+    r = client.post("/api/v1/materials/import", json={"material_id": "mp-32761"})
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["material_id"] == "mp-32761"
+    assert r.json()["data"]["summary"]["source_material_id"] == "mp-aaaabwmb"
+    record = deps.file_store.get_structure(r.json()["data"]["structure_id"])
+    assert record.summary.source_material_id == "mp-aaaabwmb"
+    assert record.summary.source_file == "MaterialsProject/mp-32761"
+    reloaded = FileStore(root=deps.file_store._root, ttl_seconds=3600)
+    restored = reloaded.get_structure(record.structure_id)
+    assert restored.summary.source_material_id == "mp-aaaabwmb"
+    assert restored.summary.source_file == "MaterialsProject/mp-32761"
+
+
+def test_import_rejects_mismatched_or_unsafe_id(client, monkeypatch):
+    _enable_mp(monkeypatch)
+    class WrongClient(FakeMpClient):
+        def get_structure_doc(self, material_id):
+            doc = copy.deepcopy(_STRUCTURE_DOC)
+            doc["material_id"] = "mp-99999"
+            return doc
+    monkeypatch.setattr(mp_service, "MaterialsProjectClient", WrongClient)
+    r = client.post("/api/v1/materials/import", json={"material_id": "mp-32761"})
+    assert r.status_code == 422
+    assert r.json()["error"]["code"] == "MP_ID_MISMATCH"
+    for bad in ("mp-" + "1" * 100, "mp-1\ninjected", "../../mp-1"):
+        r = client.post("/api/v1/materials/import", json={"material_id": bad})
+        assert r.status_code == 422
+        assert r.json()["error"]["code"] == "MP_INVALID_MATERIAL_ID"
 
 
 def test_materials_import_back_analyze_roundtrip(client, monkeypatch):

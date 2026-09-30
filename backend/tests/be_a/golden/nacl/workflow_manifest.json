@@ -1,16 +1,16 @@
 {
-  "bundle_sha256": "656c1cceab7b43dc198eda20caddbb5f3d7e8c9b817fd8950eaa164ca821620c",
+  "bundle_sha256": "bee95e30f73155d6c5569960217ec44ce2772dca564816cfcd3b0d17dc44d603",
   "created_at": "2026-08-10T00:00:00Z",
   "files": [
     {
       "path": "01_relax/INCAR",
-      "sha256": "b37644e3994e575caa0fce7fad0388fb0f050c8d45fb5329f5c361d8de6c3373",
-      "size_bytes": 202
+      "sha256": "513a6281c34e30d5b4f0b1b7c29f149d3feba9e895c987c600b88bd7e795dd6c",
+      "size_bytes": 247
     },
     {
       "path": "01_relax/KPOINTS",
-      "sha256": "244e41fdf37e47715e13f69448b7b621382e685f1ca4a06bb79b968d6ab0cde0",
-      "size_bytes": 70
+      "sha256": "44505329af3a984f77a2202b87e0a38aef667d1e8928aef3298bbfd32e341807",
+      "size_bytes": 78
     },
     {
       "path": "01_relax/POSCAR",
@@ -19,18 +19,18 @@
     },
     {
       "path": "01_relax/submit.sh",
-      "sha256": "77976d17b288e2bc3d9ee394f4cef24aaf02b566a6ace85e32586bba711bf465",
-      "size_bytes": 332
+      "sha256": "4f2cbb5a9143d0432c07ab8fe48748ac23d8caa29c0e36b17e7657d84a7ea9dd",
+      "size_bytes": 327
     },
     {
       "path": "02_static/INCAR",
-      "sha256": "556a4b0cc0528c951e68b09ec1699c4560bfeede4ba2b42b3827a6410abb40b0",
-      "size_bytes": 171
+      "sha256": "b186b92318d6e27f30a8e760ad5231fc97b22f0e6676796537cec2e16da6ff0b",
+      "size_bytes": 235
     },
     {
       "path": "02_static/KPOINTS",
-      "sha256": "74bb59e71cada017d6a52375f6cf5fb00325da466a67b33c56d5c663c903d0b1",
-      "size_bytes": 71
+      "sha256": "b4ea21c7b5d32b26394b9754fdd40dfb28c84835705a12b3d604263612ab022d",
+      "size_bytes": 79
     },
     {
       "path": "02_static/POSCAR",
@@ -39,8 +39,8 @@
     },
     {
       "path": "02_static/submit.sh",
-      "sha256": "77976d17b288e2bc3d9ee394f4cef24aaf02b566a6ace85e32586bba711bf465",
-      "size_bytes": 332
+      "sha256": "4f2cbb5a9143d0432c07ab8fe48748ac23d8caa29c0e36b17e7657d84a7ea9dd",
+      "size_bytes": 327
     },
     {
       "path": "INPUT_CHECK_REPORT.md",
@@ -59,12 +59,12 @@
     },
     {
       "path": "workflow_plan.json",
-      "sha256": "66c1d6d731f225dbace32dc1529f1dacf731f6c435eba093356164338f3625e6",
-      "size_bytes": 8478
+      "sha256": "b80565a3196b09509cfcd2c9e1d8d46fa4cdda78660fa291f9bb3b960b3ae7fe",
+      "size_bytes": 8577
     }
   ],
   "generator_version": "0.1.0",
-  "recipe_pack_sha256": "dad041b9859d74cc0a3196dd8aa1bf2acc7a3f27d9a3a360729b04db7072d936",
+  "recipe_pack_sha256": "3f67b649afdd798a5eeb47ecbf64e3242e10a9ddc6ddf3ba200308d9b9351c01",
   "recipe_pack_version": "1.0.0",
   "revision": 1,
   "workflow_id": "wf_nacl"

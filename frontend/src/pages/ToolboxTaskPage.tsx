@@ -8,6 +8,7 @@ import ToolboxResultsPanel from '../components/toolbox/ToolboxResultsPanel';
 import AiDirectoryPicker from '../components/ai/AiDirectoryPicker';
 import { toolboxApi } from '../api/client';
 import { useToolboxRunTool, useToolboxTaskDetail } from '../hooks/useApi';
+import { formatMaterialId } from '../utils/materialId';
 import type { ToolboxIncarEntry, ToolboxJob, ToolboxPlanJobInput } from '../types/toolbox';
 
 const { Title, Text, Paragraph } = Typography;
@@ -393,9 +394,30 @@ const ToolboxTaskPage: React.FC = () => {
               dataSource={mpRows}
               renderItem={(row, index) => {
                 const materialId = String(row.material_id ?? row.materialId ?? row.id ?? '');
-                const title = String((row.formula_pretty ?? row.formula ?? materialId) || `候选 ${index + 1}`);
+                const displayMaterialId = formatMaterialId(materialId);
+                const title = String((row.formula_pretty ?? row.formula ?? displayMaterialId) || `候选 ${index + 1}`);
                 const detailText = [row.symmetry, row.energy_above_hull, row.band_gap].filter((value) => value !== undefined).map(String).join(' · ');
-                return <List.Item actions={[<Button key="import" disabled={!materialId} onClick={() => void runTool('mp_import_poscar', { material_id: materialId, ...(mpJob ? { job_key: mpJob } : {}) })}>预览并请求写入确认</Button>]}><List.Item.Meta title={title} description={<><Text code>{materialId}</Text>{detailText && <Text type="secondary"> · {detailText}</Text>}</>} /></List.Item>;
+                return (
+                  <List.Item
+                    style={{ flexWrap: 'wrap', gap: 8 }}
+                    actions={[<Button key="import" disabled={!materialId} onClick={() => void runTool('mp_import_poscar', { material_id: materialId, ...(mpJob ? { job_key: mpJob } : {}) })}>预览并请求写入确认</Button>]}
+                  >
+                    <List.Item.Meta
+                      style={{ flex: '1 1 220px', minWidth: 0, overflowWrap: 'anywhere' }}
+                      title={title}
+                      description={(
+                        <Space direction="vertical" size={0} style={{ width: '100%' }}>
+                          <div><Text code>{displayMaterialId}</Text>{detailText && <Text type="secondary"> · {detailText}</Text>}</div>
+                          {displayMaterialId !== materialId && (
+                            <Text type="secondary" style={{ fontSize: 12 }}>
+                              API ID: <Text type="secondary" copyable={{ text: materialId }}>{materialId}</Text>
+                            </Text>
+                          )}
+                        </Space>
+                      )}
+                    />
+                  </List.Item>
+                );
               }}
             />
           )}

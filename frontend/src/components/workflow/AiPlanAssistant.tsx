@@ -41,6 +41,7 @@ export interface AiPlanAssistantResult {
 
 interface AiPlanAssistantProps {
   structureId: string;
+  sampleName: string;
   formula?: string;
   elements?: string[];
   onAccepted: (result: AiPlanAssistantResult) => void;
@@ -55,6 +56,7 @@ const TASK_LABELS: Record<string, string> = {
 
 const AiPlanAssistant: React.FC<AiPlanAssistantProps> = ({
   structureId,
+  sampleName,
   formula,
   elements,
   onAccepted,
@@ -73,7 +75,7 @@ const AiPlanAssistant: React.FC<AiPlanAssistantProps> = ({
     setResult(null);
     setConfirmed(false);
     try {
-      const resp = await workflowsApi.planFromNl({ structure_id: structureId, goals: [text] });
+      const resp = await workflowsApi.planFromNl({ structure_id: structureId, goals: [text], workflow: { sample_name: sampleName.trim() } });
       setResult(resp as unknown as AiPlanAssistantResult);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'AI 规划失败');

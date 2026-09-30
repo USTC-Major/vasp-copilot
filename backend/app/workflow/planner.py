@@ -118,8 +118,20 @@ class WorkflowPlanner:
             unique.append(task)
         if TaskType.BAND in unique and not enable_band_workflow:
             raise BeAError(
-                "band workflow requested but ENABLE_BAND_WORKFLOW is false",
+                "服务端尚未启用能带工作流（ENABLE_BAND_WORKFLOW=false）；请联系管理员启用后重新规划。",
                 code=BAND_WORKFLOW_DISABLED,
                 details={"flag": "ENABLE_BAND_WORKFLOW"},
+            )
+        if TaskType.BAND in unique and TaskType.STATIC not in unique:
+            raise BeAError(
+                "能带计算需要先完成静态自洽计算以产生 CHGCAR；请同时选择 static 和 band。",
+                code="BAND_STATIC_REQUIRED",
+                details={"required_task": "static", "runtime_output": "CHGCAR"},
+            )
+        if TaskType.BAND in unique and TaskType.RELAX in unique:
+            raise BeAError(
+                "弛豫可能改变晶胞，当前无法为结果预生成可靠能带路径。请先完成 relax，再上传最终 CONTCAR，重新规划并确认 static→band。",
+                code="BAND_FINAL_STRUCTURE_REQUIRED",
+                details={"required_structure": "final CONTCAR", "tasks": ["static", "band"]},
             )
         return sorted(unique, key=lambda task: TASK_ORDER[task])

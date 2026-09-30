@@ -9,7 +9,9 @@
   "created_at": "2026-08-10T00:00:00Z",
   "dftu": {
     "enabled": false,
-    "entries": []
+    "entries": [],
+    "form": null,
+    "input_mode": null
   },
   "file_inheritance_plan": {
     "dependencies": [
@@ -59,7 +61,7 @@
         "display_name": "VASP MVP Core Recipe Pack",
         "pack_id": "vasp-mvp-core",
         "schema_version": "1.0",
-        "sha256": "dad041b9859d74cc0a3196dd8aa1bf2acc7a3f27d9a3a360729b04db7072d936",
+        "sha256": "3f67b649afdd798a5eeb47ecbf64e3242e10a9ddc6ddf3ba200308d9b9351c01",
         "version": "1.0.0"
       },
       "revision": 1,
@@ -120,7 +122,7 @@
         "display_name": "VASP MVP Core Recipe Pack",
         "pack_id": "vasp-mvp-core",
         "schema_version": "1.0",
-        "sha256": "dad041b9859d74cc0a3196dd8aa1bf2acc7a3f27d9a3a360729b04db7072d936",
+        "sha256": "3f67b649afdd798a5eeb47ecbf64e3242e10a9ddc6ddf3ba200308d9b9351c01",
         "version": "1.0.0"
       },
       "revision": 1,
@@ -277,6 +279,8 @@
       "Cl"
     ],
     "formula": "NaCl",
+    "sample_name": null,
+    "source_material_id": null,
     "source_sha256": "239ea69d604219fee6a424cb4b003e48d3941fb718e5e1c6732a40902987c612",
     "structure_id": "str_nacl"
   },

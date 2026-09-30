@@ -22,6 +22,8 @@ class StructureSummary(BaseModel):
 
     structure_id: Optional[str] = None
     source_file: str = ""
+    # Written only by the server after a successful Materials Project import.
+    source_material_id: Optional[str] = None
     formula: str = ""
     elements: List[str] = []
     counts: List[int] = []
@@ -83,6 +85,7 @@ def build_structure_summary(
     elements: List[str],
     counts: List[int],
     source_file: str = "POSCAR",
+    source_material_id: Optional[str] = None,
     structure_id: Optional[str] = None,
     validated: Optional[PoscarInfo] = None,
 ) -> StructureSummary:
@@ -96,6 +99,7 @@ def build_structure_summary(
     return StructureSummary(
         structure_id=structure_id,
         source_file=source_file,
+        source_material_id=source_material_id,
         formula=_derive_formula(elements, counts),
         elements=list(elements),
         counts=list(counts),
@@ -138,5 +142,6 @@ def to_structure_context(summary: StructureSummary) -> StructureContext:
         lattice=summary.lattice,
         poscar_text=summary.poscar_text,
         source_sha256=summary.source_sha256,
+        source_material_id=summary.source_material_id,
         transition_metals=list(summary.transition_metals),
     )

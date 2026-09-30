@@ -17,6 +17,7 @@ from backend.input_validation import InputValidationError, validate_poscar
 from ...core.errors import ValidationError, err
 from ...schemas.api import ApiEnvelope
 from ...schemas.structure import build_structure_summary
+from ...material_identity import display_material_id, valid_material_id
 from .deps import file_store, get_request_id, settings
 
 router = APIRouter()
@@ -72,6 +73,7 @@ def _compact_summary(summary) -> Dict[str, Any]:
         "magnetism_hint": ("possible" if summary.transition_metals else "none"),
         "source_format": "poscar",
         "source_sha256": summary.source_sha256,
+        "source_material_id": summary.source_material_id,
         "standardized": False,
         "warnings": [],
     }
@@ -132,6 +134,8 @@ async def import_material(
     if not material_id:
         raise ValidationError("MP_EMPTY_MATERIAL_ID",
                               "缺少 material_id")
+    if not valid_material_id(material_id):
+        raise ValidationError("MP_INVALID_MATERIAL_ID", "Materials Project 材料编号格式无效")
     mp_api_key = _runtime_mp_api_key(request)
 
     from ...services.materials_project import MaterialsProjectClient
@@ -146,6 +150,11 @@ async def import_material(
     finally:
         client.close()
 
+    returned_id = doc.get("material_id") if isinstance(doc, dict) else None
+    if (not isinstance(returned_id, str) or not valid_material_id(returned_id)
+            or display_material_id(returned_id) != display_material_id(material_id)):
+        raise ValidationError("MP_ID_MISMATCH", "Materials Project 返回的材料编号与请求不一致")
+
     try:
         poscar_text = _structure_to_poscar(doc, material_id)
     except (ValueError, TypeError, KeyError, IndexError, OverflowError) as exc:
@@ -156,6 +165,7 @@ async def import_material(
             poscar_text=poscar_text,
             elements=list(parsed.elements), counts=list(parsed.counts),
             source_file="MaterialsProject/" + material_id, validated=parsed,
+            source_material_id=returned_id,
         )
     except InputValidationError as exc:
         raise ValidationError(exc.code, str(exc)) from exc
@@ -173,6 +183,7 @@ async def import_material(
         "normalized_poscar_file_id": stored.file_id,
         "file_id": stored.file_id,
         "material_id": material_id,
+        "display_material_id": display_material_id(material_id),
     })
 
 

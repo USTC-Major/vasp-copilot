@@ -64,6 +64,7 @@ class WorkflowConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     workflow_id: str = "wf_local"
+    sample_name: Optional[str] = None
     structure: Optional[StructureContext] = None
     requested_tasks: List[TaskType] = Field(default_factory=lambda: [TaskType.RELAX])
     goal_text: Optional[str] = None
@@ -73,12 +74,15 @@ class WorkflowConfig(BaseModel):
     scheduler: SchedulerSettings = Field(default_factory=SchedulerSettings)
     patches: List[ParameterPatch] = Field(default_factory=list)
     element_initial_moments: Dict[str, float] = Field(default_factory=dict)
+    # Legacy input is accepted for compatibility, but the API replaces it with
+    # the effective server capability before planning or generating.
     enable_band_workflow: bool = False
     confirm: bool = True
 
     def to_request(self, structure: StructureContext) -> WorkflowGenerateRequest:
         return WorkflowGenerateRequest(
             workflow_id=self.workflow_id,
+            sample_name=self.sample_name,
             structure=structure,
             requested_tasks=self.requested_tasks,
             goal_text=self.goal_text,
@@ -186,15 +190,17 @@ def _structure_from_file_store(structure_id: str) -> StructureContext:
 
 
 def _resolve_workflow(req: WorkflowApiRequest, config: WorkflowConfig) -> WorkflowGenerateRequest:
+    config.enable_band_workflow = settings.feature_flags.band_feature
     def build(structure: StructureContext) -> WorkflowGenerateRequest:
         try:
             return config.to_request(validated_structure_context(structure))
         except InputValidationError as exc:
             raise ValidationError(exc.code, str(exc)) from exc
-    if config.structure is not None and config.structure.poscar_text:
-        return build(config.structure)
     if req.structure_id:
         return build(_structure_from_file_store(req.structure_id))
+    if config.structure is not None and config.structure.poscar_text:
+        # A direct client structure may carry arbitrary source metadata.
+        return build(config.structure.model_copy(update={"source_material_id": None}))
     if req.diagnosis_id:
         return build(_structure_from_diagnosis(req.diagnosis_id))
     raise ConflictError(
@@ -238,6 +244,9 @@ async def generate(
         # Frontend calls generate with only {workflow_id}: replay the plan request.
         if req.workflow_id:
             workflow = workflow_service.replay_request(req.workflow_id)
+            workflow = workflow.model_copy(update={
+                "enable_band_workflow": settings.feature_flags.band_feature,
+            })
             patches = req.patches or config.patches
             if patches:
                 workflow = workflow.model_copy(update={"patches": patches})
@@ -325,6 +334,7 @@ async def plan_from_nl(
             elements=list(trusted.elements), counts=list(trusted.counts),
             source_file=record.summary.source_file,
             structure_id=req.structure_id,
+            source_material_id=record.summary.source_material_id,
         )
     except InputValidationError as exc:
         raise ValidationError(exc.code, str(exc)) from exc
@@ -346,6 +356,7 @@ async def plan_from_nl(
     # 映射 NLP 计划到 WorkflowConfig -> WorkflowGenerateRequest
     config = WorkflowConfig(
         workflow_id=req.workflow_id or _new_workflow_id(),
+        sample_name=req.workflow.sample_name if req.workflow else None,
         requested_tasks=[TaskType(t) for t in nl_plan.requested_tasks],
         goal_text=goals_text,
         material_assumptions=MaterialAssumptions(

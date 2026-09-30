@@ -1,16 +1,16 @@
 {
-  "bundle_sha256": "f6cf0c208b18a227a0f2c3c4086e8596683fe53bd326fd6648abd2d70e006851",
+  "bundle_sha256": "15dd47f71f32def08bfce9fa0bc2a69f94cf6b3593cfd1621a342457e5e720f3",
   "created_at": "2026-08-10T00:00:00Z",
   "files": [
     {
       "path": "01_relax/INCAR",
-      "sha256": "4ce9ceb32e553169b84a21dcb04c55be261f1a13501013b5d0a75e68f924d3e2",
-      "size_bytes": 307
+      "sha256": "542534cdc9a2e044cff5e0197c235e5f028ae00904efd506068892c2fb63b9c0",
+      "size_bytes": 352
     },
     {
       "path": "01_relax/KPOINTS",
-      "sha256": "66125fe661af94555069b29625b9b5fe597483c3de44f05b1a28b42b7ccae98e",
-      "size_bytes": 71
+      "sha256": "62d13bcd03deb854309205528ae66f4a5d4032f9423be503d4c9dd75c663d721",
+      "size_bytes": 79
     },
     {
       "path": "01_relax/POSCAR",
@@ -19,18 +19,18 @@
     },
     {
       "path": "01_relax/submit.sh",
-      "sha256": "19178ebac281191b1ab281f6228b3918c88d8c62d6d7671c3c49279b39ff4285",
-      "size_bytes": 299
+      "sha256": "005f1dfd915b8c4caa332b93840b9a82f0ce9b2fd77b603b454225d57bc658a7",
+      "size_bytes": 294
     },
     {
       "path": "02_static/INCAR",
-      "sha256": "0936953b220cec290cfd89f99a14a2836af8f17f565d9921fed0ce433399e016",
-      "size_bytes": 276
+      "sha256": "1607a4049f67ceb3e91c70b06d8132265690a59d040e4b7663b42153a38681ba",
+      "size_bytes": 340
     },
     {
       "path": "02_static/KPOINTS",
-      "sha256": "61f8ea8bbbd2811eebb436f5855c0cf039f5b660c7fcaefc42edf609b96c7872",
-      "size_bytes": 72
+      "sha256": "0d348b276d9837f23d4f08284045388beb56994f75005328d9456667453e6685",
+      "size_bytes": 80
     },
     {
       "path": "02_static/POSCAR",
@@ -39,18 +39,18 @@
     },
     {
       "path": "02_static/submit.sh",
-      "sha256": "ad031a9400da1fd4ccbdcbcf7c00a177a9cf2d560afc6b7d4badfebc80967960",
-      "size_bytes": 300
+      "sha256": "9310a01dd9e3a3a56d0347f36058cde4cca6ddc160f79268c40e38b6d6f54294",
+      "size_bytes": 295
     },
     {
       "path": "03_dos/INCAR",
-      "sha256": "1853f404210d6cc8f9c0f9952171c7aa869d761ff78858eb063f393921966416",
-      "size_bytes": 313
+      "sha256": "e91cee0e84210f6ad037198d0c6ba1ed19cb5170098611325f4c6f81d85aadc2",
+      "size_bytes": 389
     },
     {
       "path": "03_dos/KPOINTS",
-      "sha256": "269b2eac31b81ca4f5383038a32339981098d2836a8ebbac6f46cb82374dd477",
-      "size_bytes": 71
+      "sha256": "33e3d62c62b522e8c5667e1237407a5a34a24e157908ce9e7c3631fa382997ae",
+      "size_bytes": 79
     },
     {
       "path": "03_dos/POSCAR",
@@ -59,13 +59,13 @@
     },
     {
       "path": "03_dos/submit.sh",
-      "sha256": "8ba3a42234dee6d0cfe6c848533335188c3d77b8b23c97e070972e1887221974",
-      "size_bytes": 297
+      "sha256": "2065114759792d7767961a52ff50361e0309215895dccfddb86ba55fa38c9abc",
+      "size_bytes": 292
     },
     {
       "path": "INPUT_CHECK_REPORT.md",
-      "sha256": "613510d782eb77eeef3fca94cc38c70a78edda7a0259c44994807136e165ba4a",
-      "size_bytes": 9125
+      "sha256": "10d3226846ca9df27013228a04566cb453b05b2aa5e52efc8eb129fa4f949593",
+      "size_bytes": 9191
     },
     {
       "path": "POTCAR_REQUIRED.md",
@@ -79,12 +79,12 @@
     },
     {
       "path": "workflow_plan.json",
-      "sha256": "e6447fc23cfabc2474ab1137de9cca46dad601db33ebfe2c817de25b495f241e",
-      "size_bytes": 16384
+      "sha256": "da87d6157055e43855f6bc8101b13e9f1020cc6476de18f7b4799a380629c64b",
+      "size_bytes": 16509
     }
   ],
   "generator_version": "0.1.0",
-  "recipe_pack_sha256": "dad041b9859d74cc0a3196dd8aa1bf2acc7a3f27d9a3a360729b04db7072d936",
+  "recipe_pack_sha256": "3f67b649afdd798a5eeb47ecbf64e3242e10a9ddc6ddf3ba200308d9b9351c01",
   "recipe_pack_version": "1.0.0",
   "revision": 1,
   "workflow_id": "wf_fe2o3"

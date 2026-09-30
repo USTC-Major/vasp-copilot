@@ -1,3 +1,4 @@
+# VASP-Copilot | 02_static | self-consistent static calculation
 EDIFF = 0.0001
 ENCUT = 400
 IBRION = -1

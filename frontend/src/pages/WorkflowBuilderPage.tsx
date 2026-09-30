@@ -3,7 +3,7 @@
 // ============================================================
 
 import React, { useState, useCallback, useMemo, useRef } from 'react';
-import { Steps, Button, Space, Card, Result, Typography } from 'antd';
+import { Steps, Button, Space, Card, Result, Typography, Input, Alert } from 'antd';
 import { ReloadOutlined, DownloadOutlined, ArrowRightOutlined, ArrowLeftOutlined, RobotOutlined, GlobalOutlined } from '@ant-design/icons';
 import StructureUploadPanel from '../components/upload/StructureUploadPanel';
 import MaterialsProjectPanel from '../components/upload/MaterialsProjectPanel';
@@ -15,9 +15,10 @@ import ParameterPatchEditor from '../components/recipes/ParameterPatchEditor';
 import GeneratedFilesPreview from '../components/workflow/GeneratedFilesPreview';
 import ErrorAlert from '../components/common/ErrorAlert';
 import AiPlanAssistant, { type AiPlanAssistantResult } from '../components/workflow/AiPlanAssistant';
-import { useWorkflowPlan, useWorkflowGenerate, useWorkflowDownload } from '../hooks/useApi';
+import { useWorkflowPlan, useWorkflowGenerate, useWorkflowDownload, useFeatureFlags } from '../hooks/useApi';
 import type { StructureSummary, WorkflowPlan, FileTreeNode, ParameterPatch } from '../types/generated-api';
 import type { WorkflowStatus } from '../types/enums';
+import { formatMaterialId } from '../utils/materialId';
 import type {
   DftuSettingsRequest,
   WorkflowConfirmSnapshot,
@@ -38,17 +39,95 @@ const ALLOWED_PARAMS: { parameter: string; type: string; minimum?: number; maxim
 
 type StepKey = 'upload' | 'confirm' | 'plan' | 'edit' | 'generate' | 'download';
 
+const defaultSampleName = (summary: StructureSummary): string => {
+  const divisor = summary.counts.reduce((a, b) => {
+    let x = a; let y = b;
+    while (y) { [x, y] = [y, x % y]; }
+    return x;
+  }, 0) || 1;
+  return summary.elements.map((element, index) => {
+    const count = summary.counts[index] / divisor;
+    return `${element}${count === 1 ? '' : count}`;
+  }).join('');
+};
+
+const effectiveSampleName = (summary: StructureSummary, value: string): string =>
+  value.trim() || defaultSampleName(summary);
+
+const sampleNameValid = (value: string): boolean => {
+  if (/[\p{C}\u2028\u2029]/u.test(value)) return false;
+  const trimmed = value.trim();
+  return Array.from(trimmed).length <= 256;
+};
+
+const poscarComment = (summary: StructureSummary, name: string): string => {
+  const full = `${summary.source_material_id ? `${formatMaterialId(summary.source_material_id)} ` : ''}${effectiveSampleName(summary, name)}`;
+  let result = '';
+  const encoder = new TextEncoder();
+  for (const character of full) {
+    if (encoder.encode(result + character).length > 40) break;
+    result += character;
+  }
+  return result;
+};
+
+const SampleNameEditor: React.FC<{
+  summary: StructureSummary;
+  value: string;
+  onChange: (value: string) => void;
+}> = ({ summary, value, onChange }) => {
+  const materialId = summary.source_material_id;
+  const preview = poscarComment(summary, value);
+  return (
+    <Card size="small" title="样品名称 / POSCAR 首行" style={{ marginBottom: 16 }}>
+      <Input aria-label="样品名称" value={value}
+        onChange={(event) => onChange(event.target.value)} placeholder="留空则使用化学式" />
+      {!sampleNameValid(value) && <Alert style={{ marginTop: 8 }} type="error" showIcon
+        message="名称最多 256 个 Unicode 字符，不允许换行或控制字符；留空则使用化学式。" />}
+      <Typography.Text type="secondary" style={{ display: 'block', marginTop: 8 }}>
+        POSCAR 首行预览：{preview}。为兼容 UTF-8，首行保守限制为 40 字节，完整名称保存在工作流元数据中。
+      </Typography.Text>
+      {materialId ? (
+        <Typography.Text type="secondary" style={{ display: 'block' }}>
+          来源：Materials Project {materialId}
+          {formatMaterialId(materialId) !== materialId
+            ? `；可信旧数字编号 ${formatMaterialId(materialId)}`
+            : /^mp-[a-z]{1,8}$/.test(materialId)
+              ? '；此 AlphaID 无可信旧数字编号，保留原值'
+              : ''}
+        </Typography.Text>
+      ) : (
+        <Typography.Text type="secondary" style={{ display: 'block' }}>
+          无经验证的 MP 编号；旧文件标题中的编号不会自动转换。如需确认来源，请重新从 Materials Project 导入。
+        </Typography.Text>
+      )}
+    </Card>
+  );
+};
+
 /** 表单数据 → 不可变快照（Modal 展示与实际 payload 同源，避免显示与发送不一致）。 */
-const buildSnapshot = (data: ParameterConfirmFormData, summary: StructureSummary): WorkflowConfirmSnapshot => {
+const buildSnapshot = (data: ParameterConfirmFormData, summary: StructureSummary,
+                       sampleName: string = defaultSampleName(summary)): WorkflowConfirmSnapshot => {
+  const entries = data.dftu?.entries ?? [];
+  const isLegacyDftu = data.dftu.enabled && !data.dftu.form &&
+    entries.some((entry) => entry.u_ev != null || entry.j_ev != null);
   const dftu: DftuSettingsRequest = data.dftu.enabled
     ? {
         enabled: true,
-        entries: data.dftu.entries.map((entry) => ({
+        ...(data.dftu.form === 'legacy' || isLegacyDftu ? {} : {
+          form: data.dftu.form === 'liechtenstein' ? 'liechtenstein' as const : 'dudarev' as const,
+          input_mode: data.dftu.form === 'liechtenstein' ? 'u_j' as const : 'u_eff' as const,
+        }),
+        entries: entries.map((entry) => ({
           element: entry.element as string,
           l: entry.l as number,
-          u_ev: entry.u_ev as number,
-          j_ev: entry.j_ev as number,
-          source_note: 'user_input',
+          ...(data.dftu.form === 'legacy' || isLegacyDftu
+            ? { u_ev: entry.u_ev, j_ev: entry.j_ev }
+            : data.dftu.form === 'liechtenstein'
+              ? { u_ev: entry.u_ev, j_ev: entry.j_ev }
+              : { u_eff_ev: entry.u_eff_ev }),
+          ...(entry.source_note !== undefined ? { source_note: entry.source_note } :
+            data.dftu.form === 'legacy' || isLegacyDftu ? {} : { source_note: 'user_input' }),
           // 必须复制表单真实确认状态，禁止在此处生成/伪造用户确认。
           confirmed_by_user: entry.confirmed_by_user === true,
         })),
@@ -60,6 +139,8 @@ const buildSnapshot = (data: ParameterConfirmFormData, summary: StructureSummary
       formula: summary.formula,
       elements: summary.elements,
     },
+    sample_name: effectiveSampleName(summary, sampleName),
+    poscar_comment: poscarComment(summary, sampleName),
     requested_tasks: data.tasks,
     electronic_type: data.electronic_type,
     magnetic: data.magnetic,
@@ -78,12 +159,21 @@ const buildSnapshot = (data: ParameterConfirmFormData, summary: StructureSummary
 
 /** Fail-closed 守卫：DFT+U 启用时，任一条目未获用户真实确认即不允许构造确认快照。 */
 export const canBuildConfirmSnapshot = (data: Pick<ParameterConfirmFormData, 'dftu'>): boolean =>
-  !data.dftu.enabled || data.dftu.entries.every((entry) => entry.confirmed_by_user === true);
+  !data.dftu.enabled || (() => {
+    const { form, input_mode, entries = [] } = data.dftu;
+    const explicit = (form === 'dudarev' && input_mode === 'u_eff') ||
+      (form === 'liechtenstein' && input_mode === 'u_j');
+    const legacy = (form === 'legacy' || form == null) && input_mode == null &&
+      entries.every((entry) => entry.u_ev != null && entry.u_eff_ev == null);
+    return entries.length > 0 && (explicit || legacy) &&
+      entries.every((entry) => entry.confirmed_by_user === true);
+  })();
 
 /** 快照 → 后端嵌套契约请求体（confirm=true 已在最终确认 Modal 中由用户点击确认）。 */
 const buildPlanBody = (structureId: string, snapshot: WorkflowConfirmSnapshot): WorkflowPlanRequestBody => ({
   structure_id: structureId,
   workflow: {
+    sample_name: snapshot.sample_name,
     requested_tasks: snapshot.requested_tasks,
     goal_text: snapshot.requested_tasks.join('、'),
     material_assumptions: {
@@ -103,6 +193,7 @@ const WorkflowBuilderPage: React.FC = () => {
   const [currentStep, setCurrentStep] = useState<StepKey>('upload');
   const [structureId, setStructureId] = useState<string | null>(null);
   const [summary, setSummary] = useState<StructureSummary | null>(null);
+  const [sampleName, setSampleName] = useState('');
   const [workflowPlan, setWorkflowPlan] = useState<WorkflowPlan | null>(null);
   const [workflowId, setWorkflowId] = useState<string | null>(null);
   const [fileTree, setFileTree] = useState<FileTreeNode | null>(null);
@@ -117,10 +208,33 @@ const WorkflowBuilderPage: React.FC = () => {
   const planMutation = useWorkflowPlan();
   const generateMutation = useWorkflowGenerate();
   const downloadMutation = useWorkflowDownload();
+  const featureFlags = useFeatureFlags();
+  const bandWorkflowEnabled = featureFlags.data?.ENABLE_BAND_WORKFLOW === true && !featureFlags.isError;
+  const bandWorkflowStatus = featureFlags.isError
+    ? 'error'
+    : featureFlags.isLoading
+      ? 'loading'
+      : bandWorkflowEnabled
+        ? 'enabled'
+        : 'disabled';
 
   const handleStructureAnalyzed = useCallback((structId: string, structSummary: StructureSummary) => {
     setStructureId(structId);
     setSummary(structSummary);
+    setSampleName(defaultSampleName(structSummary));
+    setWorkflowPlan(null);
+    setWorkflowId(null);
+    setFileTree(null);
+    setPatches([]);
+  }, []);
+
+  const handleSampleNameChange = useCallback((value: string) => {
+    setSampleName(value);
+    setConfirmSnapshot(null);
+    setWorkflowPlan(null);
+    setWorkflowId(null);
+    setFileTree(null);
+    setPatches([]);
   }, []);
 
   const handleAiAccepted = useCallback((result: AiPlanAssistantResult) => {
@@ -132,16 +246,27 @@ const WorkflowBuilderPage: React.FC = () => {
   }, []);
 
   const handleFormSubmit = useCallback((data: ParameterConfirmFormData) => {
-    if (!structureId || !summary) return;
+    if (!structureId || !summary || !sampleNameValid(sampleName)) return;
     // Fail-closed：DFT+U 启用且任一条目未获用户真实确认时，
     // 不构造确认快照、不打开最终确认 Modal（表单校验之外的二道防线）。
     if (!canBuildConfirmSnapshot(data)) return;
+    if (data.tasks.includes('band') && (
+      !bandWorkflowEnabled ||
+      data.tasks.includes('relax') ||
+      data.tasks.includes('static') === false ||
+      data.soc
+    )) return;
     // 不直接调 API：先冻结快照并打开最终确认 Modal。
-    setConfirmSnapshot(buildSnapshot(data, summary));
-  }, [structureId, summary]);
+    setConfirmSnapshot(buildSnapshot(data, summary, sampleName));
+  }, [structureId, summary, sampleName, bandWorkflowEnabled]);
 
   const handleModalConfirm = useCallback(async () => {
     if (submitLock.current || !confirmSnapshot || !structureId) return;
+    // 能力读取失败或服务端关闭后，旧 band 确认快照立即失效；保留表单选择供用户处理。
+    if (confirmSnapshot.requested_tasks.includes('band') && !bandWorkflowEnabled) {
+      setConfirmSnapshot(null);
+      return;
+    }
     submitLock.current = true;
     try {
       const plan = await planMutation.mutateAsync(buildPlanBody(structureId, confirmSnapshot));
@@ -156,7 +281,7 @@ const WorkflowBuilderPage: React.FC = () => {
     } finally {
       submitLock.current = false;
     }
-  }, [structureId, confirmSnapshot, planMutation]);
+  }, [structureId, confirmSnapshot, planMutation, bandWorkflowEnabled]);
 
   const handleModalCancel = useCallback(() => {
     if (submitLock.current) return;
@@ -252,12 +377,14 @@ const WorkflowBuilderPage: React.FC = () => {
           )}
           {summary && (
             <Card style={{ marginTop: 16 }}>
+              <SampleNameEditor summary={summary} value={sampleName} onChange={handleSampleNameChange} />
               <Space wrap>
                 <Button
                   type="primary"
                   size="large"
                   icon={<ArrowRightOutlined />}
                   onClick={() => setCurrentStep('confirm')}
+                  disabled={!sampleNameValid(sampleName)}
                 >
                   下一步：确认参数
                 </Button>
@@ -273,10 +400,12 @@ const WorkflowBuilderPage: React.FC = () => {
             </Card>
           )}
 
-          {summary && showAiPanel && (
+          {summary && showAiPanel && sampleNameValid(sampleName) && (
             <div style={{ marginTop: 16 }}>
               <AiPlanAssistant
+                key={`${summary.structure_id}:${effectiveSampleName(summary, sampleName)}`}
                 structureId={summary.structure_id}
+                sampleName={effectiveSampleName(summary, sampleName)}
                 formula={summary.formula}
                 elements={summary.elements}
                 onAccepted={handleAiAccepted}
@@ -288,13 +417,18 @@ const WorkflowBuilderPage: React.FC = () => {
 
       {/* Step 2: 确认参数 */}
       {currentStep === 'confirm' && summary && (
+        <>
+        <SampleNameEditor summary={summary} value={sampleName} onChange={handleSampleNameChange} />
         <ParameterConfirmForm
           elements={summary.elements}
           transitionMetals={summary.transition_metals}
+          bandWorkflowStatus={bandWorkflowStatus}
+          onRetryBandCapability={() => { void featureFlags.refetch(); }}
           onSubmit={handleFormSubmit}
           isGenerating={planMutation.isPending}
           onBack={() => setCurrentStep('upload')}
         />
+        </>
       )}
 
       {/* 最终确认摘要：展示内容与发送 payload 同源于 confirmSnapshot */}

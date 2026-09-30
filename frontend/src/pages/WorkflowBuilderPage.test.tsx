@@ -54,6 +54,7 @@ const renderPage = () => {
       </ConfigProvider>
     </QueryClientProvider>
   );
+  return queryClient;
 };
 
 /** 上传文件并进入“确认参数”步骤。 */
@@ -74,6 +75,14 @@ const selectOption = async (combobox: HTMLElement, title: string) => {
     return el as HTMLElement;
   });
   fireEvent.click(option);
+};
+
+const removeTask = (task: 'relax' | 'dos') => {
+  const item = Array.from(document.querySelectorAll('.ant-select-selection-item'))
+    .find((el) => el.textContent?.toLowerCase().includes(`(${task})`));
+  const remove = item?.querySelector('.ant-select-selection-item-remove');
+  if (!remove) throw new Error(`selected task ${task} not found`);
+  fireEvent.click(remove);
 };
 
 const openSummaryModal = async (user: ReturnType<typeof userEvent.setup>) => {
@@ -104,6 +113,124 @@ beforeEach(() => {
 });
 
 describe('WorkflowBuilderPage', () => {
+  it('样品名编辑、空白回退与实际 POSCAR 首行进入同一确认快照和请求', async () => {
+    useFastMocks();
+    const user = userEvent.setup();
+    renderPage();
+    await uploadAndEnterConfirm(user);
+    const name = screen.getByRole('textbox', { name: '样品名称' });
+    await user.clear(name);
+    expect(screen.getByText(/POSCAR 首行预览：Fe2O3/)).toBeInTheDocument();
+    await user.type(name, '氧化物样品');
+    expect(screen.getByText(/POSCAR 首行预览：氧化物样品/)).toBeInTheDocument();
+    await openSummaryModal(user);
+    expect(screen.getAllByText('氧化物样品').length).toBeGreaterThanOrEqual(2);
+    await confirmAndWaitPlan(user);
+    expect(planBodies[0].workflow.sample_name).toBe('氧化物样品');
+  });
+
+  it('名称含控制字符时阻止确认，修正后可以继续', async () => {
+    useFastMocks();
+    const user = userEvent.setup();
+    renderPage();
+    await uploadAndEnterConfirm(user);
+    const name = screen.getByRole('textbox', { name: '样品名称' });
+    fireEvent.change(name, { target: { value: 'name\u200b' } });
+    expect(screen.getByText(/不允许换行或控制字符/)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '下一步：确认摘要' }));
+    expect(screen.queryByText('最终确认：工作流参数摘要')).not.toBeInTheDocument();
+    expect(planBodies).toHaveLength(0);
+    fireEvent.change(name, { target: { value: '  ' } });
+    await openSummaryModal(user);
+    await confirmAndWaitPlan(user);
+    expect(planBodies[0].workflow.sample_name).toBe('Fe2O3');
+  });
+
+  it('bootstrap 开启能带时允许 static → band，正常请求不包含客户端强开字段', async () => {
+    useFastMocks();
+    server.use(http.get(`${API}/bootstrap`, () => HttpResponse.json({ ENABLE_BAND_WORKFLOW: true })));
+    const user = userEvent.setup();
+    renderPage();
+    await uploadAndEnterConfirm(user);
+
+    removeTask('relax');
+    removeTask('dos');
+    await selectOption(screen.getAllByRole('combobox')[0], '能带 (band)');
+    await waitFor(() => expect(document.querySelector('.ant-select-selection-item[title="能带 (band)"]')).toBeInTheDocument());
+    expect(await screen.findByText(/本批使用默认 PBE 设置/)).toBeInTheDocument();
+    await openSummaryModal(user);
+    expect(screen.getByText('static → band')).toBeInTheDocument();
+    await confirmAndWaitPlan(user);
+    const body = planBodies[0];
+    expect(body.workflow.requested_tasks).toEqual(['static', 'band']);
+    expect('enable_band_workflow' in body.workflow).toBe(false);
+  });
+
+  it('bootstrap 关闭时只禁用 band，其他任务仍可确认提交', async () => {
+    useFastMocks();
+    server.use(http.get(`${API}/bootstrap`, () => HttpResponse.json({ ENABLE_BAND_WORKFLOW: false })));
+    const user = userEvent.setup();
+    renderPage();
+    await uploadAndEnterConfirm(user);
+    expect(await screen.findByText('服务端当前未开放能带工作流；其他计算任务仍可使用。')).toBeInTheDocument();
+
+    const taskSelect = screen.getAllByRole('combobox')[0];
+    fireEvent.mouseDown(taskSelect);
+    await waitFor(() => expect(document.querySelector('.ant-select-item-option[title="服务端当前未开放能带工作流"]'))
+      .toHaveClass('ant-select-item-option-disabled'));
+    expect(document.querySelector('.ant-select-item-option[title="结构优化 (relax)"]'))
+      .not.toHaveClass('ant-select-item-option-disabled');
+    fireEvent.keyDown(taskSelect, { key: 'Escape' });
+
+    await openSummaryModal(user);
+    await confirmAndWaitPlan(user);
+    expect(planBodies[0].workflow.requested_tasks).toEqual(['relax', 'static', 'dos']);
+    expect(planBodies[0].workflow.confirm).toBe(true);
+  });
+
+  it('bootstrap 读取失败时可重试，成功后启用 band 选项', async () => {
+    useFastMocks();
+    let bootstrapCalls = 0;
+    server.use(http.get(`${API}/bootstrap`, () => {
+      bootstrapCalls += 1;
+      return bootstrapCalls === 1
+        ? HttpResponse.json({ message: 'unavailable' }, { status: 503 })
+        : HttpResponse.json({ ENABLE_BAND_WORKFLOW: true });
+    }));
+    const user = userEvent.setup();
+    renderPage();
+    await uploadAndEnterConfirm(user);
+    expect(await screen.findByText('服务端功能配置读取失败，能带暂不可用。')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '重试读取' }));
+    await waitFor(() => expect(screen.queryByText('服务端功能配置读取失败，能带暂不可用。')).not.toBeInTheDocument());
+
+    removeTask('relax');
+    await selectOption(screen.getAllByRole('combobox')[0], '能带 (band)');
+    await waitFor(() => expect(document.querySelector('.ant-select-selection-item[title="能带 (band)"]')).toBeInTheDocument());
+    expect(await screen.findByText(/本批使用默认 PBE 设置/)).toBeInTheDocument();
+  });
+
+  it('band 快照打开后能力变为 false 时拒绝旧确认并返回保留 band 的表单', async () => {
+    useFastMocks();
+    server.use(http.get(`${API}/bootstrap`, () => HttpResponse.json({ ENABLE_BAND_WORKFLOW: true })));
+    const user = userEvent.setup();
+    const queryClient = renderPage();
+    await uploadAndEnterConfirm(user);
+    removeTask('relax');
+    removeTask('dos');
+    await selectOption(screen.getAllByRole('combobox')[0], '能带 (band)');
+    await waitFor(() => expect(document.querySelector('.ant-select-selection-item[title="能带 (band)"]')).toBeInTheDocument());
+    await openSummaryModal(user);
+
+    queryClient.setQueryData(['featureFlags'], { ENABLE_BAND_WORKFLOW: false });
+    await user.click(screen.getByRole('button', { name: /确认并生成工作流计划/ }));
+    await finishModalLeave();
+    expect(planBodies).toHaveLength(0);
+    expect(Array.from(document.querySelectorAll('.ant-select-selection-item'))
+      .some((item) => item.textContent?.includes('能带 (band)'))).toBe(true);
+    expect(screen.getByText('服务端当前未开放能带工作流；其他计算任务仍可使用。')).toBeInTheDocument();
+  });
+
   it('F3: DFT+U 关闭时 payload 携带 enabled:false 与空 entries', async () => {
     useFastMocks();
     const user = userEvent.setup();
@@ -128,13 +255,14 @@ describe('WorkflowBuilderPage', () => {
     // 启用 DFT+U 并填写一条确认条目
     const switches = screen.getAllByRole('switch');
     await user.click(switches[2]);
+    await selectOption(screen.getByRole('combobox', { name: 'DFT+U 形式' }), 'Liechtenstein（U/J）');
     await user.click(screen.getByRole('button', { name: '添加 DFT+U 条目' }));
     const comboboxes = screen.getAllByRole('combobox');
-    await selectOption(comboboxes[3], 'Fe');
-    await selectOption(comboboxes[4], 'd (L=2)');
+    await selectOption(comboboxes[4], 'Fe');
+    await selectOption(comboboxes[5], 'd (L=2)');
     await user.type(screen.getByPlaceholderText('U 值'), '5.3');
     await user.type(screen.getByPlaceholderText('J 值'), '1');
-    await user.click(screen.getByRole('checkbox', { name: '我已确认该条目的 L/U/J' }));
+    await user.click(screen.getByRole('checkbox', { name: '我已确认该条目的形式、L 与输入值' }));
 
     // 调整 scheduler
     fireEvent.change(screen.getByPlaceholderText('HH:MM:SS'), { target: { value: '08:00:00' } });
@@ -157,6 +285,8 @@ describe('WorkflowBuilderPage', () => {
     // F6: DFT+U 完整进入请求体
     expect(body.workflow.dftu).toEqual({
       enabled: true,
+      form: 'liechtenstein',
+      input_mode: 'u_j',
       entries: [{
         element: 'Fe', l: 2, u_ev: 5.3, j_ev: 1,
         source_note: 'user_input', confirmed_by_user: true,
@@ -176,6 +306,30 @@ describe('WorkflowBuilderPage', () => {
     const entry = body.workflow.dftu.entries[0];
     expect(modalScope.textContent).toContain(`${entry.element}：L=${entry.l}，U=${entry.u_ev} eV`);
     expect(modalScope.textContent).toContain(body.workflow.scheduler.walltime);
+  });
+
+  it('Dudarev 确认摘要与请求使用相同 Ueff 和实际 LDAU 值', async () => {
+    useFastMocks();
+    const user = userEvent.setup();
+    renderPage();
+    await uploadAndEnterConfirm(user);
+    await user.click(screen.getAllByRole('switch')[2]);
+    await selectOption(screen.getByRole('combobox', { name: 'DFT+U 形式' }), 'Dudarev（Ueff）');
+    await user.click(screen.getByRole('button', { name: '添加 DFT+U 条目' }));
+    await selectOption(screen.getAllByRole('combobox')[4], 'Fe');
+    await selectOption(screen.getAllByRole('combobox')[5], 'd (L=2)');
+    await user.type(screen.getByPlaceholderText('Ueff 值'), '4.6');
+    await user.click(screen.getByRole('checkbox', { name: '我已确认该条目的形式、L 与输入值' }));
+    await openSummaryModal(user);
+    expect(screen.getByText(/Dudarev（Ueff 输入；LDAUTYPE=2）/)).toBeInTheDocument();
+    expect(screen.getByText(/Ueff=4.6 eV → LDAUU=4.6, LDAUJ=0/)).toBeInTheDocument();
+    await confirmAndWaitPlan(user);
+    expect(planBodies[0].workflow.dftu).toEqual({
+      enabled: true,
+      form: 'dudarev',
+      input_mode: 'u_eff',
+      entries: [{ element: 'Fe', l: 2, u_eff_ev: 4.6, source_note: 'user_input', confirmed_by_user: true }],
+    });
   });
 
   it('F8: 取消最终确认不发送请求并回到表单', async () => {
@@ -261,6 +415,15 @@ describe('确认状态防伪（fail-closed）', () => {
     expect(canBuildConfirmSnapshot({ ...baseForm, dftu: { enabled: false, entries: [] } })).toBe(true);
   });
 
+  it('无明确形式且无旧 U/J 记录时快照守卫拒绝提交', () => {
+    expect(canBuildConfirmSnapshot({ ...baseForm, dftu: {
+      enabled: true, entries: [{ element: 'Fe', l: 2, u_eff_ev: 4, confirmed_by_user: true }],
+    } })).toBe(false);
+    expect(canBuildConfirmSnapshot({ ...baseForm, dftu: {
+      enabled: true, form: 'liechtenstein', input_mode: 'u_eff', entries: [entry(true)],
+    } })).toBe(false);
+  });
+
   it('快照中的 confirmed_by_user 必须来自表单实际值（不得伪造）', () => {
     const unconfirmed = buildSnapshot(
       { ...baseForm, dftu: { enabled: true, entries: [entry(false)] } }, summary
@@ -270,6 +433,19 @@ describe('确认状态防伪（fail-closed）', () => {
       { ...baseForm, dftu: { enabled: true, entries: [entry(true)] } }, summary
     );
     expect(confirmed.dftu.entries[0].confirmed_by_user).toBe(true);
+  });
+
+  it('旧 initialValues 缺少形式时构造旧请求，原 U/J、source_note 与确认值原样保留', () => {
+    const legacy = buildSnapshot({
+      ...baseForm,
+      dftu: { enabled: true, entries: [{
+        element: 'Fe', l: 2, u_ev: 5.3, j_ev: 1, source_note: 'archived-source', confirmed_by_user: true,
+      }] },
+    }, summary);
+    expect(legacy.dftu).toEqual({ enabled: true, entries: [{
+      element: 'Fe', l: 2, u_ev: 5.3, j_ev: 1, source_note: 'archived-source', confirmed_by_user: true,
+    }] });
+    expect(legacy.dftu.entries[0]).not.toHaveProperty('u_eff_ev');
   });
 
   it('生产代码不得出现无条件的 confirmed_by_user: true', () => {
