@@ -5,7 +5,9 @@
 import React, { useState } from 'react';
 import { Card, Input, Button, Space, Tag, Typography, Spin, Alert } from 'antd';
 import { RobotOutlined, SendOutlined } from '@ant-design/icons';
-import { useDiagnosisExplain, useLlmConfig } from '../../hooks/useApi';
+import { Link } from 'react-router-dom';
+import { ApiError } from '../../api/client';
+import { useDiagnosisCapabilities, useDiagnosisExplain } from '../../hooks/useApi';
 
 const { Text, Paragraph } = Typography;
 const { TextArea } = Input;
@@ -18,17 +20,59 @@ interface LlmExplainPanelProps {
 
 const LlmExplainPanel: React.FC<LlmExplainPanelProps> = ({ diagnosisId }) => {
   const [question, setQuestion] = useState('');
-  const [answers, setAnswers] = useState<{ q: string; a: string; degraded?: boolean }[]>([]);
+  const [localError, setLocalError] = useState<string | null>(null);
+  const [answers, setAnswers] = useState<{ q: string; a: string; truncated?: boolean }[]>([]);
   const explainMutation = useDiagnosisExplain();
-  const { data: llmConfig } = useLlmConfig(true);
-  const enabled = Boolean(llmConfig?.usable);
+  const capabilitiesQuery = useDiagnosisCapabilities();
+  const capabilities = capabilitiesQuery.data;
+  const enabled = Boolean(capabilities?.available);
+  const reasonCode = capabilities?.reason_code;
+  const explainFailed = Boolean(localError || explainMutation.isError);
+  const explainErrorCode = explainMutation.error instanceof ApiError
+    ? explainMutation.error.code
+    : undefined;
+  const diagnosisNotReady = explainErrorCode === 'AI_MODE_DIAGNOSIS_NOT_READY';
+  const diagnosisNotFound = explainErrorCode === 'AI_MODE_DIAGNOSIS_NOT_FOUND';
+
+  const status = capabilitiesQuery.isLoading
+    ? { color: 'processing', label: '检查中' }
+    : capabilitiesQuery.isError
+      ? { color: 'red', label: 'AI 服务不可达' }
+      : explainFailed
+        ? diagnosisNotReady
+          ? { color: 'orange', label: '诊断未完成' }
+          : diagnosisNotFound
+            ? { color: 'red', label: '诊断不存在' }
+            : { color: 'red', label: '模型调用失败' }
+      : capabilities?.available
+        ? { color: 'green', label: '可用' }
+        : { color: 'orange', label: reasonCode === 'AI_MODE_DIAGNOSIS_DISABLED' ? '已关闭' : reasonCode === 'AI_MODE_DIAGNOSIS_FAKE_PROVIDER' ? '离线假模型' : reasonCode === 'AI_MODE_DIAGNOSIS_PROVIDER_INVALID' ? '配置无效' : '未配置' };
+
+  const unavailableMessage = capabilitiesQuery.isError
+    ? 'AI 服务暂时不可达；原有诊断报告仍可查看。'
+    : reasonCode === 'AI_MODE_DIAGNOSIS_DISABLED'
+      ? '智能模式已关闭；原有诊断报告仍可查看。'
+      : reasonCode === 'AI_MODE_DIAGNOSIS_FAKE_PROVIDER'
+        ? '当前为离线假模型，不能用于诊断解释；请在统一智能模式设置中配置真实模型。'
+        : reasonCode === 'AI_MODE_DIAGNOSIS_PROVIDER_INVALID'
+          ? 'LLM provider 配置无效，请到模型设置修正后重试。'
+          : '尚未配置可用的统一智能模式模型，请先到模型设置完成配置。';
 
   const handleAsk = async (text?: string) => {
     const q = (text ?? question).trim();
     if (!q || explainMutation.isPending) return;
-    const answer = await explainMutation.mutateAsync({ diagnosisId, question: q });
-    setAnswers((prev) => [...prev, { q, a: answer.answer, degraded: answer.degraded }]);
-    setQuestion('');
+    setLocalError(null);
+    explainMutation.reset();
+    try {
+      const answer = await explainMutation.mutateAsync({ diagnosisId, question: q });
+      if (answer.ok !== true || !answer.answer?.trim()) {
+        throw new Error('解释接口未返回可展示的回答');
+      }
+      setAnswers((prev) => [...prev, { q, a: answer.answer, truncated: answer.context_truncated }]);
+      setQuestion('');
+    } catch (error) {
+      setLocalError(error instanceof Error ? error.message : '调用解释接口失败');
+    }
   };
 
   return (
@@ -37,21 +81,22 @@ const LlmExplainPanel: React.FC<LlmExplainPanelProps> = ({ diagnosisId }) => {
         <Space>
           <RobotOutlined />
           LLM 通俗解释 / 追问
-          {enabled ? (
-            <Tag color="green">已启用</Tag>
-          ) : (
-            <Tag color="orange">未启用</Tag>
-          )}
+          <Tag color={status.color}>{status.label}</Tag>
         </Space>
       }
       style={{ marginTop: 16 }}
     >
-      {!enabled && (
+      {!enabled && !capabilitiesQuery.isLoading && (
         <Alert
           type="info"
           showIcon
           style={{ marginBottom: 12 }}
-          message="后端尚未启用 LLM：点击右上角「模型设置」填写接口地址 / Key / 模型名（本地服务 Key 填任意非空值即可），或在 backend/.env 配置后重启后端。"
+          message={unavailableMessage}
+          action={capabilitiesQuery.isError
+            ? <Button size="small" onClick={() => void capabilitiesQuery.refetch()}>重试</Button>
+            : reasonCode === 'AI_MODE_DIAGNOSIS_DISABLED' || reasonCode === 'AI_MODE_DIAGNOSIS_NOT_CONFIGURED' || reasonCode === 'AI_MODE_DIAGNOSIS_FAKE_PROVIDER' || reasonCode === 'AI_MODE_DIAGNOSIS_PROVIDER_INVALID'
+              ? <Link to="/ai/settings">打开模型设置</Link>
+              : undefined}
         />
       )}
 
@@ -63,12 +108,9 @@ const LlmExplainPanel: React.FC<LlmExplainPanelProps> = ({ diagnosisId }) => {
               <Text>{item.q}</Text>
             </Paragraph>
             <div style={{ background: '#f6f8fa', padding: 12, borderRadius: 6 }}>
-              {item.degraded ? (
-                <Text type="secondary">{item.a}</Text>
-              ) : (
-                <Text>{item.a}</Text>
-              )}
+              <Text>{item.a}</Text>
             </div>
+            {item.truncated && <Text type="warning" style={{ fontSize: 12 }}>解释上下文已裁剪，回答可能未包含全部诊断证据。</Text>}
           </div>
         ))}
 
@@ -78,8 +120,19 @@ const LlmExplainPanel: React.FC<LlmExplainPanelProps> = ({ diagnosisId }) => {
           </div>
         )}
 
-        {explainMutation.isError && (
-          <Alert type="error" showIcon message={explainMutation.error?.message || '调用解释接口失败'} />
+        {explainFailed && (
+          <Alert
+            type="error"
+            showIcon
+            message={diagnosisNotReady
+              ? '请先运行诊断后再解释。'
+              : diagnosisNotFound
+                ? '诊断记录不存在，请返回诊断列表重新选择。'
+                : localError || explainMutation.error?.message || '调用解释接口失败'}
+            action={!diagnosisNotReady && !diagnosisNotFound
+              ? <Button size="small" onClick={() => void handleAsk(question)}>重试</Button>
+              : undefined}
+          />
         )}
 
         <Space.Compact style={{ width: '100%' }}>
@@ -99,13 +152,14 @@ const LlmExplainPanel: React.FC<LlmExplainPanelProps> = ({ diagnosisId }) => {
             type="primary"
             icon={<SendOutlined />}
             loading={explainMutation.isPending}
+            disabled={!enabled}
             onClick={() => handleAsk()}
           >
             发送
           </Button>
         </Space.Compact>
 
-        <Button onClick={() => handleAsk(question || DEFAULT_QUESTION)} disabled={explainMutation.isPending}>
+        <Button onClick={() => handleAsk(question || DEFAULT_QUESTION)} disabled={explainMutation.isPending || !enabled}>
           一键通俗解释
         </Button>
       </Space>

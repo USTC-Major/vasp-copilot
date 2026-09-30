@@ -563,6 +563,11 @@ async function aiRequest<T>(endpoint: string, options: RequestOptions = {}, resp
 
 export const aiApi = {
   ping: () => aiRequest<{ mode: string; enabled: boolean; version: string }>("/ping"),
+  getDiagnosisCapabilities: () =>
+    aiRequest<{ mode: 'ai'; enabled: boolean; configured: boolean; available: boolean; reason_code: string }>("/diagnosis/capabilities"),
+  explainDiagnosis: (diagnosisId: string, question: string) =>
+    aiRequest<{ mode: 'ai'; ok: boolean; diagnosis_id: string; answer: string; evidence_source: string; context_truncated: boolean }>(
+      "/diagnosis/explain", { method: "POST", body: { diagnosis_id: diagnosisId, question } }),
   interpretMaterial: (query: string) =>
     aiRequest<import('../types/materials').MaterialInterpretation>("/materials/interpret", { method: "POST", body: { query } }),
 

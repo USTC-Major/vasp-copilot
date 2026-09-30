@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { vi } from "vitest";
+import { beforeEach, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 import { Modal } from "antd";
 import { useState } from "react";
@@ -8,6 +8,7 @@ import AiSettingsPage from "./AiSettingsPage";
 
 const mocks = vi.hoisted(() => ({
   save: vi.fn().mockResolvedValue({}),
+  test: vi.fn().mockResolvedValue({ ok: true, message: "测试成功" }),
   secret: vi.fn().mockResolvedValue({}),
   refetch: vi.fn().mockImplementation(() => Promise.resolve({ data: mocks.data })),
   secretError: null as Error | null,
@@ -35,10 +36,16 @@ vi.mock("../hooks/useApi", () => ({
     };
   },
   useAiSettingsSave: () => ({ mutateAsync: mocks.save }),
-  useAiSettingsTest: () => ({ mutateAsync: vi.fn() }),
+  useAiSettingsTest: () => ({ mutateAsync: mocks.test, isPending: false, variables: undefined }),
   useAiSecretStatus: () => ({ data: mocks.secretError ? undefined : { secrets: { llm: false, mp: false, ssh: false } }, error: mocks.secretError, refetch: mocks.refetch }),
   useAiSecretUpdate: () => ({ mutateAsync: mocks.secret }),
 }));
+
+beforeEach(() => {
+  mocks.refetch.mockImplementation(() => Promise.resolve({ data: mocks.data }));
+  mocks.save.mockClear();
+  mocks.test.mockClear();
+});
 
 // antd 的静态 Modal 不在 Testing Library 的自动清理范围内：不显式销毁会残留到
 // 下一条用例，导致确认框重复、点到旧对话框的按钮。
@@ -75,6 +82,11 @@ it("回显并保存本机密钥路径，不调用密钥内容替换接口；可�
     ssh_identity_file: "/trusted/demo_key", ssh_known_hosts_path: "/trusted/hosts",
   })));
   expect(mocks.secret).not.toHaveBeenCalled();
+  // 模拟第一次保存已写入服务端；第二次清空时应继续走正常保存而不是冲突分支。
+  mocks.refetch.mockResolvedValue({ data: { settings: {
+    ...mocks.data.settings,
+    ssh: { ...mocks.data.settings.ssh, identity_file: "/trusted/demo_key" },
+  } } });
   await user.clear(input);
   await user.click(screen.getByRole("button", { name: "保存设置" }));
   await waitFor(() => expect(mocks.save).toHaveBeenLastCalledWith(expect.objectContaining({
@@ -169,4 +181,34 @@ it("保存前无法读取最新设置时不写入", async () => {
   render(<MemoryRouter><AiSettingsPage /></MemoryRouter>);
   await user.click(await screen.findByRole("button", { name: "保存设置" }));
   await waitFor(() => expect(mocks.save).not.toHaveBeenCalled());
+});
+
+it("连接测试只针对已保存配置，存在未保存修改时先提示保存", async () => {
+  mocks.test.mockClear();
+  const user = userEvent.setup();
+  render(<MemoryRouter><AiSettingsPage /></MemoryRouter>);
+  await user.click(await screen.findByRole("button", { name: "测试 LLM（已保存配置）" }));
+  expect(await screen.findByText("测试成功")).toBeInTheDocument();
+  mocks.test.mockClear();
+  const model = await screen.findByPlaceholderText("gpt-4o");
+  await user.clear(model);
+  await user.type(model, "changed-model");
+  expect(screen.queryByText("测试成功")).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "测试 LLM（已保存配置）" }));
+  expect(await screen.findByText("当前表单有未保存修改。请先点击“保存设置”，再测试已保存配置。")).toBeInTheDocument();
+  expect(mocks.test).not.toHaveBeenCalled();
+});
+
+it("最大作业数和轮询间隔执行范围校验", async () => {
+  mocks.save.mockClear();
+  const user = userEvent.setup();
+  render(<MemoryRouter><AiSettingsPage /></MemoryRouter>);
+  const maxJobs = await screen.findByRole("spinbutton", { name: "最大作业数" });
+  const interval = screen.getByRole("spinbutton", { name: "监控轮询间隔（秒）" });
+  fireEvent.change(maxJobs, { target: { value: "0" } });
+  fireEvent.change(interval, { target: { value: "9" } });
+  await user.click(screen.getByRole("button", { name: "保存设置" }));
+  expect(await screen.findByText("最大作业数必须是至少为 1 的整数")).toBeInTheDocument();
+  expect(await screen.findByText("轮询间隔必须是 10–3600 秒的整数")).toBeInTheDocument();
+  expect(mocks.save).not.toHaveBeenCalled();
 });

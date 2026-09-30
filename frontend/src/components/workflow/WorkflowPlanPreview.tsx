@@ -9,7 +9,6 @@ import {
   ReactFlow,
   Background,
   Controls,
-  MiniMap,
   MarkerType,
   type Node,
   type Edge,
@@ -31,6 +30,8 @@ const TASK_COLORS: Record<string, string> = {
   band: '#fa8c16',
 };
 
+const NODE_WIDTH = 220;
+
 const WorkflowPlanPreview: React.FC<WorkflowPlanPreviewProps> = ({ steps, dependencies }) => {
   const nodes: Node[] = useMemo(() => {
     return steps.map((step, idx) => ({
@@ -40,12 +41,15 @@ const WorkflowPlanPreview: React.FC<WorkflowPlanPreviewProps> = ({ steps, depend
       data: {
         label: (
           <div style={{
+            width: '100%',
+            height: '100%',
+            boxSizing: 'border-box',
             padding: '8px 12px',
             border: `2px solid ${step.runnable ? TASK_COLORS[step.task] || '#999' : '#d9d9d9'}`,
             borderRadius: 8,
             background: step.runnable ? '#fff' : '#f5f5f5',
-            minWidth: 180,
             opacity: step.runnable ? 1 : 0.6,
+            overflowWrap: 'anywhere',
           }}>
             <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 4 }}>
               {step.label}
@@ -72,7 +76,7 @@ const WorkflowPlanPreview: React.FC<WorkflowPlanPreviewProps> = ({ steps, depend
               </div>
             )}
             {step.produces.length > 0 && (
-              <div style={{ marginTop: 4, fontSize: 10, color: '#666' }}>
+              <div style={{ marginTop: 4, fontSize: 10, color: '#666', whiteSpace: 'normal' }}>
                 产出: {step.produces.join(', ')}
               </div>
             )}
@@ -83,6 +87,7 @@ const WorkflowPlanPreview: React.FC<WorkflowPlanPreviewProps> = ({ steps, depend
         background: 'transparent',
         border: 'none',
         padding: 0,
+        width: NODE_WIDTH,
       },
     }));
   }, [steps]);
@@ -123,11 +128,11 @@ const WorkflowPlanPreview: React.FC<WorkflowPlanPreviewProps> = ({ steps, depend
           nodes={nodes}
           edges={edges}
           fitView
+          fitViewOptions={{ padding: 0.2, includeHiddenNodes: false }}
           attributionPosition="bottom-left"
         >
           <Background />
           <Controls showInteractive={false} />
-          <MiniMap />
         </ReactFlow>
       </div>
 
