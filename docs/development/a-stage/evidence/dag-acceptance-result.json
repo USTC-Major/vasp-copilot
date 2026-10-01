@@ -1,23 +1,19 @@
 {
   "steps": [
     "loaded /workflow, upload input attached",
-    "structure analyzed; next-button appeared",
+    "structure analyzed; go-confirm button appeared",
     "in confirm-parameter form",
     "confirm modal opened",
     "DAG rendered"
   ],
   "interactions": {
-    "nodeSelectedAfterClick": false,
+    "nodeSelectedAfterClick": true,
     "nodeTransformBefore": "translate(50px, 50px)",
-    "nodeTransformAfter": "translate(50px, 50px)",
-    "dragDelta": {
-      "dx": 0,
-      "dy": 0
-    },
-    "dragMoved": false,
+    "nodeTransformAfter": "translate(138.095px, 94.0476px)",
+    "dragMoved": true,
+    "viewportTransformBefore": "translate(29.5676px, 9.77568px) scale(1.24865)",
+    "viewportTransformAfter": "translate(-90.4372px, -51.7359px) scale(2)",
     "wheelChangedViewport": true,
-    "viewportTransformBefore": "matrix(1.24865, 0, 0, 1.24865, 29.5676, 9.77568)",
-    "viewportTransformAfter": "matrix(2, 0, 0, 2, -90.4372, -67.9827)",
     "stillOperableAfterZoom": true
   },
   "screenshots": [
@@ -30,76 +26,29 @@
     "Warning: [antd: Card] `bordered` is deprecated. Please use `variant` instead.",
     "Warning: [antd: Alert] `message` is deprecated. Please use `title` instead."
   ],
-  "nodes": 3,
-  "edges": 2,
-  "nodeLabels": [
-    {
-      "id": "01_relax",
-      "width": 275
-    },
-    {
-      "id": "02_static",
-      "width": 275
-    },
-    {
-      "id": "03_dos",
-      "width": 275
-    }
-  ],
-  "minimapPresent": false,
-  "controlsPresent": true,
-  "viewportNormal": {
-    "width": 1280,
-    "height": 800
-  },
-  "modalWrapCount": 0,
-  "modalMaskCount": 0,
-  "nodeClass": "react-flow__node react-flow__node-default nopan selectable draggable",
-  "nodeHasDraggable": true,
-  "nodeHasSelectable": true,
-  "hitTest": " | closestNode=true",
-  "wrap": {
-    "overflowWrap": "normal",
-    "whiteSpace": "normal",
-    "nodeScrollWidth": 220,
-    "nodeClientWidth": 220,
-    "noHorizontalClip": true
-  },
   "narrow": {
-    "scrollWidth": 459,
+    "scrollWidth": 390,
     "clientWidth": 390,
     "innerWidth": 390,
-    "bodyScrollWidth": 459,
-    "offenders": [
-      {
-        "tag": "span",
-        "cls": "",
-        "left": 323,
-        "right": 443,
-        "w": 120
-      },
-      {
-        "tag": "div",
-        "cls": "ant-space css-dev-only-do-not-override-149w44n ant",
-        "left": 140,
-        "right": 459,
-        "w": 319
-      },
-      {
-        "tag": "div",
-        "cls": "ant-space-item",
-        "left": 284,
-        "right": 459,
-        "w": 175
-      },
-      {
-        "tag": "button",
-        "cls": "ant-btn css-dev-only-do-not-override-149w44n css-v",
-        "left": 284,
-        "right": 459,
-        "w": 175
-      }
-    ],
-    "horizontalOverflow": true
+    "horizontalOverflow": false,
+    "offenders": []
+  },
+  "nodes": 3,
+  "edges": 2,
+  "minimapPresent": false,
+  "controlsPresent": true,
+  "nodeClass": "react-flow__node react-flow__node-default nopan selectable draggable",
+  "hitTest": {
+    "point": {
+      "x": 315.3513488769531,
+      "y": 347.5715667724609
+    },
+    "hit": {
+      "tag": "DIV",
+      "cls": "",
+      "closestNode": true,
+      "inTag": false,
+      "inButton": false
+    }
   }
 }

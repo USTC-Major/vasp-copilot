@@ -30,6 +30,8 @@ vi.mock("@xyflow/react", () => ({
   Controls: () => <div data-testid="controls" />,
   MiniMap: () => <div data-testid="minimap" />,
   MarkerType: { ArrowClosed: "arrowclosed" },
+  applyNodeChanges: (_changes: unknown[], nodes: unknown[]) => nodes,
+  applyEdgeChanges: (_changes: unknown[], edges: unknown[]) => edges,
 }));
 
 const steps: WorkflowStep[] = [{
