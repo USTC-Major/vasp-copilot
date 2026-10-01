@@ -2,7 +2,7 @@
 // 自定义 Hooks — TanStack Query 封装
 // ============================================================
 
-import { useQuery, useMutation } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   filesApi, structureApi, workflowsApi,
   diagnosisApi, recipesApi, hpcApi, llmApi, chatApi, materialsApi, aiApi, toolboxApi,
@@ -120,7 +120,16 @@ export function useDiagnosisFixDownload() {
 export function useDiagnosisExplain() {
   return useMutation({
     mutationFn: ({ diagnosisId, question }: { diagnosisId: string; question: string }) =>
-      diagnosisApi.explain(diagnosisId, question),
+      aiApi.explainDiagnosis(diagnosisId, question),
+  });
+}
+
+export function useDiagnosisCapabilities() {
+  return useQuery({
+    queryKey: ['diagnosisCapabilities'],
+    queryFn: () => aiApi.getDiagnosisCapabilities(),
+    staleTime: 15 * 1000,
+    retry: false,
   });
 }
 
@@ -308,8 +317,12 @@ export function useAiSettings(enabled: boolean) {
 }
 
 export function useAiSettingsSave() {
+  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (patch: Record<string, unknown>) => aiApi.saveSettings(patch),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['diagnosisCapabilities'] });
+    },
   });
 }
 
@@ -330,9 +343,15 @@ export function useAiSecretStatus(enabled: boolean) {
 }
 
 export function useAiSecretUpdate() {
+  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ kind, action, value }: { kind: "llm" | "mp" | "ssh"; action: "replace" | "clear"; value?: string }) =>
       aiApi.updateSecret(kind, action, value),
+    onSuccess: (_data, variables) => {
+      if (variables.kind === 'llm') {
+        void queryClient.invalidateQueries({ queryKey: ['diagnosisCapabilities'] });
+      }
+    },
   });
 }
 export function useAiProjectSettings(projectId: string, enabled: boolean) {

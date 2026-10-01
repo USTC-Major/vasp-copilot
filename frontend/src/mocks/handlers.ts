@@ -774,8 +774,9 @@ handlers.push(...aiHandlers, ...toolboxHandlers);
 let mockAiSettings = {
   enabled: true,
   max_jobs: 20,
+  poll_interval_seconds: 60,
   message_char_limit: 2000,
-  llm: { base_url: "https://api.openai.com/v1", model: "gpt-4o", provider: "auto", api_key: "" },
+  llm: { base_url: "https://api.openai.com/v1", model: "gpt-4o", provider: "auto", api_key: "", enable_thinking: false },
   materials_project: { api_key: "" },
   ssh: { name: "", host: "", port: 22, username: "" },
 };
@@ -791,6 +792,11 @@ const mockPublicAiSettings = () => ({
 const AI_SETTINGS_BASE = "/ai/v1";
 
 const aiSettingsHandlers = [
+  http.get(`${AI_SETTINGS_BASE}/diagnosis/capabilities`, () => HttpResponse.json({ mode: "ai", enabled: true, configured: true, available: true, reason_code: "AI_MODE_DIAGNOSIS_READY" })),
+  http.post(`${AI_SETTINGS_BASE}/diagnosis/explain`, async ({ request }) => {
+    const body = await request.json() as { diagnosis_id?: string };
+    return HttpResponse.json({ mode: "ai", ok: true, diagnosis_id: body.diagnosis_id, answer: "这是演示用的诊断解释。", evidence_source: "toolbox_diagnosis", context_truncated: false });
+  }),
   http.get(`${AI_SETTINGS_BASE}/settings`, async () => {
     await delay(250);
     return HttpResponse.json({ mode: "ai", enabled: true, settings: mockPublicAiSettings(), writable: ["max_jobs", "llm_provider", "llm_base_url", "llm_model", "ssh_name", "ssh_host", "ssh_port", "ssh_username"] });
@@ -803,12 +809,14 @@ const aiSettingsHandlers = [
     mockAiSettings = {
       enabled: mockAiSettings.enabled,
       max_jobs: pick("max_jobs", mockAiSettings.max_jobs),
+      poll_interval_seconds: pick("poll_interval_seconds", mockAiSettings.poll_interval_seconds),
       message_char_limit: mockAiSettings.message_char_limit,
       llm: {
         ...mockAiSettings.llm,
         base_url: pick("llm_base_url", mockAiSettings.llm.base_url),
         model: pick("llm_model", mockAiSettings.llm.model),
         provider: pick("llm_provider", mockAiSettings.llm.provider),
+        enable_thinking: pick("llm_enable_thinking", mockAiSettings.llm.enable_thinking),
         api_key: mockAiSettings.llm.api_key,
       },
       materials_project: {

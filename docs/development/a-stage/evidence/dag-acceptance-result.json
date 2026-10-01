@@ -1,0 +1,54 @@
+{
+  "steps": [
+    "loaded /workflow, upload input attached",
+    "structure analyzed; go-confirm button appeared",
+    "in confirm-parameter form",
+    "confirm modal opened",
+    "DAG rendered"
+  ],
+  "interactions": {
+    "nodeSelectedAfterClick": true,
+    "nodeTransformBefore": "translate(50px, 50px)",
+    "nodeTransformAfter": "translate(138.095px, 94.0476px)",
+    "dragMoved": true,
+    "viewportTransformBefore": "translate(29.5676px, 9.77568px) scale(1.24865)",
+    "viewportTransformAfter": "translate(-90.4372px, -51.7359px) scale(2)",
+    "wheelChangedViewport": true,
+    "stillOperableAfterZoom": true
+  },
+  "screenshots": [
+    "dag-normal.png",
+    "dag-zoomed.png",
+    "dag-narrow.png"
+  ],
+  "consoleErrors": [
+    "Warning: [antd: Spin] `tip` is deprecated. Please use `description` instead.",
+    "Warning: [antd: Card] `bordered` is deprecated. Please use `variant` instead.",
+    "Warning: [antd: Alert] `message` is deprecated. Please use `title` instead."
+  ],
+  "narrow": {
+    "scrollWidth": 390,
+    "clientWidth": 390,
+    "innerWidth": 390,
+    "horizontalOverflow": false,
+    "offenders": []
+  },
+  "nodes": 3,
+  "edges": 2,
+  "minimapPresent": false,
+  "controlsPresent": true,
+  "nodeClass": "react-flow__node react-flow__node-default nopan selectable draggable",
+  "hitTest": {
+    "point": {
+      "x": 315.3513488769531,
+      "y": 347.5715667724609
+    },
+    "hit": {
+      "tag": "DIV",
+      "cls": "",
+      "closestNode": true,
+      "inTag": false,
+      "inButton": false
+    }
+  }
+}

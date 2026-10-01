@@ -2,17 +2,20 @@
 // WorkflowPlanPreview — React Flow DAG 步骤图
 // ============================================================
 
-import React, { useMemo } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Card, Tag, Space, Typography, Tooltip } from 'antd';
 import { ApartmentOutlined, MinusCircleOutlined } from '@ant-design/icons';
 import {
   ReactFlow,
   Background,
   Controls,
-  MiniMap,
   MarkerType,
+  applyNodeChanges,
+  applyEdgeChanges,
   type Node,
   type Edge,
+  type NodeChange,
+  type EdgeChange,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import type { WorkflowStep, FileInheritanceDependency } from '../../types/generated-api';
@@ -31,8 +34,10 @@ const TASK_COLORS: Record<string, string> = {
   band: '#fa8c16',
 };
 
+const NODE_WIDTH = 220;
+
 const WorkflowPlanPreview: React.FC<WorkflowPlanPreviewProps> = ({ steps, dependencies }) => {
-  const nodes: Node[] = useMemo(() => {
+  const derivedNodes: Node[] = useMemo(() => {
     return steps.map((step, idx) => ({
       id: step.step_id,
       type: 'default',
@@ -40,12 +45,15 @@ const WorkflowPlanPreview: React.FC<WorkflowPlanPreviewProps> = ({ steps, depend
       data: {
         label: (
           <div style={{
+            width: '100%',
+            height: '100%',
+            boxSizing: 'border-box',
             padding: '8px 12px',
             border: `2px solid ${step.runnable ? TASK_COLORS[step.task] || '#999' : '#d9d9d9'}`,
             borderRadius: 8,
             background: step.runnable ? '#fff' : '#f5f5f5',
-            minWidth: 180,
             opacity: step.runnable ? 1 : 0.6,
+            overflowWrap: 'anywhere',
           }}>
             <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 4 }}>
               {step.label}
@@ -72,7 +80,7 @@ const WorkflowPlanPreview: React.FC<WorkflowPlanPreviewProps> = ({ steps, depend
               </div>
             )}
             {step.produces.length > 0 && (
-              <div style={{ marginTop: 4, fontSize: 10, color: '#666' }}>
+              <div style={{ marginTop: 4, fontSize: 10, color: '#666', whiteSpace: 'normal' }}>
                 产出: {step.produces.join(', ')}
               </div>
             )}
@@ -83,11 +91,12 @@ const WorkflowPlanPreview: React.FC<WorkflowPlanPreviewProps> = ({ steps, depend
         background: 'transparent',
         border: 'none',
         padding: 0,
+        width: NODE_WIDTH,
       },
     }));
   }, [steps]);
 
-  const edges: Edge[] = useMemo(() => {
+  const derivedEdges: Edge[] = useMemo(() => {
     return dependencies.map((dep) => ({
       id: dep.dependency_id,
       source: dep.from_step_id,
@@ -106,28 +115,51 @@ const WorkflowPlanPreview: React.FC<WorkflowPlanPreviewProps> = ({ steps, depend
     }));
   }, [dependencies]);
 
+  // 受控节点/边状态：plan 变化时重置为派生结果，plan 之外把
+  // React Flow 产生的选中/拖动等 change 回写，交互才能落地。
+  const [nodes, setNodes] = useState<Node[]>(derivedNodes);
+  const [edges, setEdges] = useState<Edge[]>(derivedEdges);
+
+  useEffect(() => {
+    setNodes(derivedNodes);
+  }, [derivedNodes]);
+
+  useEffect(() => {
+    setEdges(derivedEdges);
+  }, [derivedEdges]);
+
+  const onNodesChange = useCallback(
+    (changes: NodeChange[]) => setNodes((nds) => applyNodeChanges(changes, nds)),
+    [],
+  );
+  const onEdgesChange = useCallback(
+    (changes: EdgeChange[]) => setEdges((eds) => applyEdgeChanges(changes, eds)),
+    [],
+  );
+
   return (
     <Card
       title={<span><ApartmentOutlined /> 工作流步骤计划 (DAG)</span>}
-      bordered={false}
-      extra={
-        <Space>
-          <Tag color="success">可运行</Tag>
-          <Tag color="default">等待上游</Tag>
-          <Tag color="error">阻塞</Tag>
-        </Space>
-      }
+      variant="borderless"
     >
+      <Space wrap size={4} style={{ marginBottom: 8 }}>
+        <Tag color="success">可运行</Tag>
+        <Tag color="default">等待上游</Tag>
+        <Tag color="error">阻塞</Tag>
+      </Space>
       <div style={{ width: '100%', height: 300, border: '1px solid #e8e8e8', borderRadius: 8 }}>
         <ReactFlow
           nodes={nodes}
           edges={edges}
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
+          nodesConnectable={false}
           fitView
+          fitViewOptions={{ padding: 0.2, includeHiddenNodes: false }}
           attributionPosition="bottom-left"
         >
           <Background />
           <Controls showInteractive={false} />
-          <MiniMap />
         </ReactFlow>
       </div>
 
@@ -136,7 +168,7 @@ const WorkflowPlanPreview: React.FC<WorkflowPlanPreviewProps> = ({ steps, depend
         <div style={{ marginTop: 8 }}>
           {dependencies.map((dep) => (
             <div key={dep.dependency_id} style={{ marginBottom: 4, fontSize: 13 }}>
-              <Space>
+              <Space wrap>
                 <Text code>{dep.from_step_id}/{dep.source_file}</Text>
                 <span>→</span>
                 <Text code>{dep.to_step_id}/{dep.target_file}</Text>

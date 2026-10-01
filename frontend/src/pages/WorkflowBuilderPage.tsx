@@ -540,7 +540,7 @@ const WorkflowBuilderPage: React.FC = () => {
 
       {/* 导航按钮 */}
       {currentStep !== 'download' && currentStep !== 'upload' && currentStep !== 'confirm' && (
-        <div style={{ marginTop: 24, display: 'flex', justifyContent: 'space-between' }}>
+        <div style={{ marginTop: 24, display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', rowGap: 8 }}>
           <Button
             icon={<ArrowLeftOutlined />}
             onClick={() => {
@@ -550,7 +550,7 @@ const WorkflowBuilderPage: React.FC = () => {
           >
             上一步
           </Button>
-          <Space>
+          <Space wrap>
             {currentStep === 'plan' && (
               <Button
                 onClick={() => setCurrentStep('edit')}

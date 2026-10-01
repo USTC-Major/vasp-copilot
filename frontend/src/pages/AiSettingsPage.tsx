@@ -1,6 +1,6 @@
 // 全局设置页 — secrets are write-only: status + replace/clear, never reveal.
 import React, { useEffect, useRef, useState } from "react";
-import { Card, Typography, Space, Button, Input, Col, Row, Spin, Collapse, Switch, Select, message, Alert, Modal } from "antd";
+import { Card, Typography, Space, Button, Input, Col, Row, Spin, Switch, Select, message, Alert, Modal } from "antd";
 import { Link } from "react-router-dom";
 import { LinkOutlined, SafetyCertificateOutlined, RocketOutlined } from "@ant-design/icons";
 import ErrorAlert from "../components/common/ErrorAlert";
@@ -35,6 +35,28 @@ interface Form {
   scheduler_backend: "slurm" | "paracloud";
   ssh_password: string;
 }
+
+type TestProvider = "llm" | "mp" | "ssh";
+type TestResult = { ok: boolean; message: string };
+
+const FORM_FIELDS: (keyof Form)[] = [
+  "max_jobs", "poll_interval_seconds", "llm_base_url", "llm_model", "llm_provider",
+  "llm_enable_thinking", "ssh_name", "ssh_host", "ssh_port", "ssh_username",
+  "ssh_known_hosts_path", "ssh_identity_file", "scheduler_backend",
+];
+
+const validateForm = (value: Form): Partial<Record<keyof Form, string>> => {
+  const errors: Partial<Record<keyof Form, string>> = {};
+  const maxJobs = Number(value.max_jobs);
+  if (!/^\d+$/.test(value.max_jobs.trim()) || !Number.isInteger(maxJobs) || maxJobs < 1) {
+    errors.max_jobs = "最大作业数必须是至少为 1 的整数";
+  }
+  const interval = Number(value.poll_interval_seconds);
+  if (!/^\d+$/.test(value.poll_interval_seconds.trim()) || !Number.isInteger(interval) || interval < 10 || interval > 3600) {
+    errors.poll_interval_seconds = "轮询间隔必须是 10–3600 秒的整数";
+  }
+  return errors;
+};
 
 /** 服务端设置 -> 表单值。密钥字段永远留空（写专用接口，不回显）。 */
 const toForm = (settings: AiSettingsOut): Form => ({
@@ -71,6 +93,9 @@ const AiSettingsPage: React.FC = () => {
     ssh: normalizeSecret(rawSecrets?.ssh),
   };
   const [form, setForm] = useState<Form>({} as Form);
+  const [fieldErrors, setFieldErrors] = useState<Partial<Record<keyof Form, string>>>({});
+  const [testResults, setTestResults] = useState<Partial<Record<TestProvider, TestResult>>>({});
+  const [testNotice, setTestNotice] = useState<string | null>(null);
   // 页面加载时服务端给过的值；保存前与最新值比对，避免用旧表单覆盖他处的改动。
   const loadedRef = useRef<Form | null>(null);
 
@@ -79,8 +104,9 @@ const AiSettingsPage: React.FC = () => {
       const next = toForm(settings);
       setForm(next);
       loadedRef.current = next;
+      setFieldErrors({});
     }
-  }, [settings, settingsQuery.data]);
+  }, [settings]);
 
   // Non-secret fields are replaceable (including clearing strings). Secrets use
   // the dedicated write-only endpoint and blank means "leave unchanged".
@@ -105,6 +131,12 @@ const AiSettingsPage: React.FC = () => {
     });
 
   const onSubmit = async () => {
+    const errors = validateForm(form);
+    if (Object.keys(errors).length > 0) {
+      setFieldErrors(errors);
+      message.error("请先修正设置中的数值错误");
+      return;
+    }
     try {
       // 保存前对齐一次服务端：页面加载后若他处改过配置，先确认再覆盖，
       // 避免用旧表单把新的 SSH 用户名等设置写回去。
@@ -142,20 +174,37 @@ const AiSettingsPage: React.FC = () => {
         if (value) await secretMutation.mutateAsync({ kind, action: "replace", value });
       }
       setForm((previous) => ({ ...previous, llm_api_key: "", mp_api_key: "", ssh_password: "" }));
+      loadedRef.current = { ...form, llm_api_key: "", mp_api_key: "", ssh_password: "" };
+      setTestResults({});
       settingsQuery.refetch();
       secretQuery.refetch();
+      setTestNotice(null);
       message.success("设置已保存（仅本地）");
     } catch (err) {
       message.error(err instanceof Error ? err.message : "保存失败");
     }
   };
 
-  const test = async (provider: string) => {
+  const hasUnsavedChanges = () => {
+    const loaded = loadedRef.current;
+    if (!loaded) return false;
+    if (form.llm_api_key || form.mp_api_key || form.ssh_password) return true;
+    return FORM_FIELDS.some((key) => String(form[key]) !== String(loaded[key]));
+  };
+
+  const test = async (provider: TestProvider) => {
+    if (hasUnsavedChanges()) {
+      setTestNotice("当前表单有未保存修改。请先点击“保存设置”，再测试已保存配置。");
+      return;
+    }
     try {
       const res = await testMutation.mutateAsync(provider);
-      message.info(`${provider.toUpperCase()} 连通测试：${res.message}`);
+      const result = { ok: Boolean(res?.ok), message: res?.message || "测试完成，但服务未返回详细说明" };
+      setTestResults((previous) => ({ ...previous, [provider]: result }));
+      setTestNotice(null);
     } catch (err) {
-      message.error(err instanceof Error ? err.message : "测试失败");
+      const result = { ok: false, message: err instanceof Error ? err.message : "测试失败" };
+      setTestResults((previous) => ({ ...previous, [provider]: result }));
     }
   };
 
@@ -163,6 +212,7 @@ const AiSettingsPage: React.FC = () => {
     try {
       await secretMutation.mutateAsync({ kind, action: "clear" });
       await secretQuery.refetch();
+      setTestResults({});
       message.success("密钥已清除");
     } catch (err) {
       message.error(err instanceof Error ? err.message : "清除失败");
@@ -189,7 +239,31 @@ const AiSettingsPage: React.FC = () => {
     </Row>
   );
 
-  const set = (k: keyof Form) => (e: React.ChangeEvent<HTMLInputElement>) => setForm((p) => ({ ...p, [k]: e.target.value }));
+  const set = (k: keyof Form) => (e: React.ChangeEvent<HTMLInputElement>) => {
+    setForm((p) => ({ ...p, [k]: e.target.value }));
+    setFieldErrors((previous) => ({ ...previous, [k]: undefined }));
+    setTestResults({});
+    setTestNotice(null);
+  };
+
+  const setNumber = (k: "max_jobs" | "poll_interval_seconds") => (e: React.ChangeEvent<HTMLInputElement>) => {
+    setForm((p) => ({ ...p, [k]: e.target.value }));
+    setFieldErrors((previous) => ({ ...previous, [k]: undefined }));
+    setTestResults({});
+    setTestNotice(null);
+  };
+
+  const testResult = (provider: TestProvider) => {
+    const result = testResults[provider];
+    if (!result) return null;
+    return <Alert type={result.ok ? "success" : "error"} showIcon message={result.message} style={{ marginTop: 12 }} />;
+  };
+
+  const testButton = (provider: TestProvider, label: string) => (
+    <Button onClick={() => test(provider)} loading={testMutation.isPending && testMutation.variables === provider}>
+      {label}
+    </Button>
+  );
 
   return (
     <div style={{ maxWidth: 860, margin: "0 auto", padding: "8px 0" }}>
@@ -203,14 +277,15 @@ const AiSettingsPage: React.FC = () => {
         <Button type="primary" size="large" onClick={onSubmit} loading={saveMutation.isPending}>保存设置</Button>
       </div>
 
-      {section("LLM 模型", <LinkOutlined />, (
+      {section("LLM", <LinkOutlined />, (
         <Row gutter={16}>
           <Col span={24}><Text strong>接口地址</Text><Input value={form.llm_base_url} onChange={set("llm_base_url")} placeholder="https://api.openai.com/v1" /></Col>
           <Col span={12}><Text strong>模型名称</Text><Input value={form.llm_model} onChange={set("llm_model")} placeholder="gpt-4o" /></Col>
           <Col span={12}><Text strong>provider</Text><Input value={form.llm_provider} onChange={set("llm_provider")} placeholder="auto" /></Col>
-          <Col span={24}><Text strong>API Key</Text><SecretInput hasSecret={secrets.llm.configured} manageable={secrets.llm.manageable} source={secrets.llm.source} value={form.llm_api_key} onChange={(v) => setForm((p) => ({ ...p, llm_api_key: v }))} onClear={clearSecret("llm")} placeholder={secrets.llm.configured ? "输入新值以整体替换" : "未配置 LLM key，填写后保存" } /></Col>
-          <Col span={24}><Space><Switch checked={form.llm_enable_thinking} onChange={(v) => setForm((p) => ({ ...p, llm_enable_thinking: v }))} />
+          <Col span={24}><Text strong>API Key</Text><SecretInput hasSecret={secrets.llm.configured} manageable={secrets.llm.manageable} source={secrets.llm.source} value={form.llm_api_key} onChange={(v) => { setForm((p) => ({ ...p, llm_api_key: v })); setTestResults({}); setTestNotice(null); }} onClear={clearSecret("llm")} placeholder={secrets.llm.configured ? "输入新值以整体替换" : "未配置 LLM key，填写后保存" } /></Col>
+          <Col span={24}><Space><Switch checked={form.llm_enable_thinking} onChange={(v) => { setForm((p) => ({ ...p, llm_enable_thinking: v })); setTestResults({}); setTestNotice(null); }} />
             <Text strong>深度思考</Text><Text type="secondary" style={{ fontSize: 12 }}>开启后请求体携带 thinking 参数，模型输出增量思考过程（是否支持以接入模型/网关为准）。</Text></Space></Col>
+          <Col span={24}>{testButton("llm", "测试 LLM（已保存配置）")}{testResult("llm")}</Col>
         </Row>
       ))}
 
@@ -220,33 +295,43 @@ const AiSettingsPage: React.FC = () => {
           <Col span={8}><Text strong>主机地址</Text><Input value={form.ssh_host} onChange={set("ssh_host")} placeholder="如：login.hpc.example.com" /></Col>
           <Col span={8}><Text strong>端口</Text><Input value={form.ssh_port} onChange={set("ssh_port")} /></Col>
           <Col span={12}><Text strong>用户名</Text><Input value={form.ssh_username} onChange={set("ssh_username")} /></Col>
-          <Col span={12}><Text strong>密码</Text><SecretInput hasSecret={secrets.ssh.configured} manageable={secrets.ssh.manageable} source={secrets.ssh.source} value={form.ssh_password} onChange={(v) => setForm((p) => ({ ...p, ssh_password: v }))} onClear={clearSecret("ssh")} placeholder={secrets.ssh.configured ? "输入新值以整体替换" : "未配置密码，填写后保存" } /></Col>
+          <Col span={12}><Text strong>密码</Text><SecretInput hasSecret={secrets.ssh.configured} manageable={secrets.ssh.manageable} source={secrets.ssh.source} value={form.ssh_password} onChange={(v) => { setForm((p) => ({ ...p, ssh_password: v })); setTestResults({}); setTestNotice(null); }} onClear={clearSecret("ssh")} placeholder={secrets.ssh.configured ? "输入新值以整体替换" : "未配置密码，填写后保存" } /></Col>
           <Col span={24}><Text strong>known_hosts 路径</Text><Input value={form.ssh_known_hosts_path} onChange={set("ssh_known_hosts_path")} placeholder="留空则使用系统 known_hosts" /></Col>
           <Col span={24}><Text strong>SSH 密钥文件路径（可选）</Text><Input aria-label="SSH 密钥文件路径" value={form.ssh_identity_file} onChange={set("ssh_identity_file")} placeholder="后端所在电脑上的绝对路径；只填路径，不粘贴私钥" /></Col>
-          <Col span={24}><Text strong>调度平台</Text><Select aria-label="调度平台" style={{ width: "100%" }} value={form.scheduler_backend} onChange={(v) => setForm(p => ({ ...p, scheduler_backend: v }))} options={[{ value: "slurm", label: "标准 Slurm（sbatch / squeue）" }, { value: "paracloud", label: "ParaCloud 云超算（cbatch / cqueue）" }]} /></Col>
+          <Col span={24}><Text strong>调度平台</Text><Select aria-label="调度平台" style={{ width: "100%" }} value={form.scheduler_backend} onChange={(v) => { setForm(p => ({ ...p, scheduler_backend: v })); setTestResults({}); setTestNotice(null); }} options={[{ value: "slurm", label: "标准 Slurm（sbatch / squeue）" }, { value: "paracloud", label: "ParaCloud 云超算（cbatch / cqueue）" }]} /></Col>
           <Col span={24}><Text type="secondary">按实际平台选择，不能仅凭命令存在判断。更换平台或SSH身份后必须重新预检和确认；已有作业应保持原连接配置。</Text></Col>
           <Col span={24}><Text type="secondary">填写密钥路径时仅使用该密钥，不回退密码或自动寻找其他密钥。当前不支持需口令解锁的密钥；换电脑需重新配置当地路径。</Text></Col>
           <Col span={24}><Text type="secondary" style={{ fontSize: 12 }}>SSH 仅信任系统或指定 known_hosts 中的主机密钥；未知或不匹配会在认证前拒绝。密码只可替换/清除。</Text></Col>
+          <Col span={24}>{testButton("ssh", "测试已保存的 SSH 配置")}{testResult("ssh")}</Col>
         </Row>
       ))}
 
-      {section("Materials Project & 作业数", <SafetyCertificateOutlined />, (
+      {section("Materials Project", <SafetyCertificateOutlined />, (
         <Row gutter={16}>
-          <Col span={12}><Text strong>MP API Key</Text><SecretInput hasSecret={secrets.mp.configured} manageable={secrets.mp.manageable} source={secrets.mp.source} value={form.mp_api_key} onChange={(v) => setForm((p) => ({ ...p, mp_api_key: v }))} onClear={clearSecret("mp")} placeholder={secrets.mp.configured ? "输入新值以整体替换" : "未配置，填写后保存" } /></Col>
-          <Col span={12}><Text strong>最大作业数</Text><Input value={form.max_jobs} onChange={set("max_jobs")} /></Col>
-          <Col span={24}><Text type="secondary" style={{ fontSize: 12 }}>最大作业数 = 同一超算账号「排队 + 运行中」总数上限，全局生效。</Text></Col>
-          <Col span={12}><Text strong>监控轮询间隔（秒）</Text><Input value={form.poll_interval_seconds} onChange={set("poll_interval_seconds")} placeholder="60" /></Col>
-          <Col span={24}><Text type="secondary" style={{ fontSize: 12 }}>Toolbox 按此间隔查询已提交作业状态；后续计算仍需人工准备和确认。下限 10 秒。</Text></Col>
+          <Col span={24}><Text strong>MP API Key</Text><SecretInput hasSecret={secrets.mp.configured} manageable={secrets.mp.manageable} source={secrets.mp.source} value={form.mp_api_key} onChange={(v) => { setForm((p) => ({ ...p, mp_api_key: v })); setTestResults({}); setTestNotice(null); }} onClear={clearSecret("mp")} placeholder={secrets.mp.configured ? "输入新值以整体替换" : "未配置，填写后保存" } /></Col>
+          <Col span={24}>{testButton("mp", "测试已保存的 Materials Project 配置")}{testResult("mp")}</Col>
         </Row>
       ))}
 
-      <Collapse defaultActiveKey={["1"]} items={[{ key: "1", label: "快速连通测试", children: (
-        <Space direction="vertical" style={{ width: "100%" }}>
-          <Button onClick={() => test("llm")} loading={testMutation.isPending && testMutation.variables === "llm"}>测试 LLM</Button>
-          <Button onClick={() => test("mp")} loading={testMutation.isPending && testMutation.variables === "mp"}>测试 Materials Project</Button>
-          <Button onClick={() => test("ssh")} loading={testMutation.isPending && testMutation.variables === "ssh"}>测试 SSH 连接</Button>
-        </Space>
-      ) }]} />
+      {section("作业执行／监控", <RocketOutlined />, (
+        <Row gutter={16}>
+          <Col xs={24} sm={12}>
+            <Text strong>最大作业数</Text>
+            <Input type="number" min={1} step={1} value={form.max_jobs} onChange={setNumber("max_jobs")} style={{ width: "100%" }} aria-label="最大作业数" />
+            <Text type="secondary" style={{ display: "block", fontSize: 12, marginTop: 4 }}>本软件提交时参考该超算账号排队和运行中的作业数量，并按此上限限制新提交。至少为 1。</Text>
+            {fieldErrors.max_jobs && <Text type="danger">{fieldErrors.max_jobs}</Text>}
+          </Col>
+          <Col xs={24} sm={12}>
+            <Text strong>监控轮询间隔（秒）</Text>
+            <Input type="number" min={10} max={3600} step={1} value={form.poll_interval_seconds} onChange={setNumber("poll_interval_seconds")} style={{ width: "100%" }} aria-label="监控轮询间隔（秒）" />
+            <Text type="secondary" style={{ display: "block", fontSize: 12, marginTop: 4 }}>影响已提交作业的状态查询频率；范围 10–3600 秒，默认 60 秒。</Text>
+            {fieldErrors.poll_interval_seconds && <Text type="danger">{fieldErrors.poll_interval_seconds}</Text>}
+          </Col>
+          <Col span={24}><Text type="secondary" style={{ fontSize: 12 }}>作业执行仍需按当前流程人工准备、预检和确认；设置页不会自动提交作业。</Text></Col>
+        </Row>
+      ))}
+
+      {testNotice && <Alert type="warning" showIcon message={testNotice} style={{ marginBottom: 16 }} />}
     </div>
   );
 };

@@ -186,6 +186,37 @@ def create_ai_mode_app() -> FastAPI:
                 "retryable": True,
             },
         })
+
+    @app.get("/ai/v1/diagnosis/capabilities")
+    def diagnosis_capabilities():
+        """Report diagnosis explanation readiness without pinging a model or SSH."""
+        from .diagnosis import capabilities
+        return capabilities(load_settings(secret_fields=("llm_api_key",)))
+
+    @app.post("/ai/v1/diagnosis/explain")
+    def diagnosis_explain(payload: dict):
+        """Explain a Toolbox diagnosis through the unified AI configuration."""
+        from .diagnosis import DiagnosisExplainError, explain
+
+        if not isinstance(payload, dict) or set(payload) != {"diagnosis_id", "question"}:
+            return JSONResponse(status_code=422, content={
+                "mode": "ai", "ok": False,
+                "error": {"code": "AI_MODE_DIAGNOSIS_BAD_REQUEST",
+                           "message": "请求必须只包含 diagnosis_id 和 question",
+                           "retryable": False},
+            })
+        try:
+            return explain(
+                payload.get("diagnosis_id", ""),
+                payload.get("question", ""),
+                load_settings(secret_fields=("llm_api_key",)),
+            )
+        except DiagnosisExplainError as exc:
+            return JSONResponse(status_code=exc.status, content={
+                "mode": "ai", "ok": False,
+                "error": {"code": exc.code, "message": exc.message,
+                           "retryable": exc.retryable},
+            })
     @app.get("/ai/v1/config")
     def get_config(request: Request):
         cfg = load_settings()
