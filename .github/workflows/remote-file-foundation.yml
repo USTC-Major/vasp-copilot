@@ -94,6 +94,7 @@ jobs:
           import backend.toolbox.reviewer
           import backend.toolbox.review_transport
           import backend.ai_mode.reviewer
+          import backend.ai_mode.diagnosis
           import backend.ai_mode.server
           print(
               f"pytest={pytest.__version__} httpx={httpx.__version__} "
@@ -164,6 +165,7 @@ jobs:
               "backend.tests.ai_mode.test_prompt_context",
               "backend.tests.ai_mode.test_rw2_credentials_settings",
               "backend.tests.ai_mode.test_rw3_backend_fixes",
+              "backend.tests.ai_mode.test_diagnosis_explain",
               "backend.tests.test_materials_api",
               "backend.tests.test_mp_credentials_integration",
               "backend.tests.be_a.test_dftu_forms",
@@ -332,6 +334,11 @@ jobs:
               ("src/hooks/useApi.toolboxRetry.test.tsx", "Toolbox writes with production QueryClient defaults > does not replay a tool request when the response is lost after receipt"),
               ("src/hooks/useApi.toolboxRetry.test.tsx", "Toolbox writes with production QueryClient defaults > does not replay consent on a business error response"),
               ("src/hooks/useApi.toolboxRetry.test.tsx", "AI writes with production QueryClient defaults > does not replay settings or secret writes on unavailable responses"),
+              ("src/components/diagnosis/LlmExplainPanel.test.tsx", "LlmExplainPanel > retries the default one-click question after failure"),
+              ("src/components/diagnosis/LlmExplainPanel.test.tsx", "LlmExplainPanel > retries the last submitted manual question, not an edited draft"),
+              ("src/components/diagnosis/LlmExplainPanel.test.tsx", "LlmExplainPanel > distinguishes a capabilities read failure from model unavailability"),
+              ("src/components/workflow/WorkflowPlanPreview.real.test.tsx", "WorkflowPlanPreview with the real ReactFlow implementation > renders a real selectable and draggable node without a minimap"),
+              ("src/components/workflow/WorkflowPlanPreview.real.test.tsx", "WorkflowPlanPreview with the real ReactFlow implementation > renders long labels in a narrow viewport without adding a minimap"),
           }
           cases = list(ET.parse(sys.argv[1]).iter("testcase"))
           observed = {}

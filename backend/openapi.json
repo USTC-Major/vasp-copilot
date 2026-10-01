@@ -1215,7 +1215,7 @@
     "/api/v1/materials/search": {
       "post": {
         "summary": "Search Materials",
-        "description": "List MP candidates matching a natural-language / formula query.",
+        "description": "List MP candidates only after every condition has been reviewed.",
         "operationId": "search_materials_api_v1_materials_search_post",
         "parameters": [
           {
@@ -3483,6 +3483,37 @@
         "title": "ApiEnvelope",
         "description": "带 request_id 的统一 API 响应（MVP 6）。"
       },
+      "BandGapRange": {
+        "properties": {
+          "min": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min"
+          },
+          "max": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "BandGapRange"
+      },
       "Body_upload_api_v1_diagnosis_upload_post": {
         "properties": {
           "file": {
@@ -3987,6 +4018,81 @@
         "type": "object",
         "title": "MaterialAssumptions"
       },
+      "MaterialCriteria": {
+        "properties": {
+          "formula": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Formula"
+          },
+          "elements": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Elements"
+          },
+          "chemsys": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chemsys"
+          },
+          "band_gap": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BandGapRange"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "is_stable": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Stable"
+          },
+          "is_metal": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Metal"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "MaterialCriteria"
+      },
       "ParameterPatch": {
         "properties": {
           "patch_id": {
@@ -4268,12 +4374,37 @@
             "title": "Query",
             "default": ""
           },
+          "criteria": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MaterialCriteria"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "confirmed": {
+            "type": "boolean",
+            "title": "Confirmed",
+            "default": false
+          },
+          "unresolved_conditions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Unresolved Conditions"
+          },
           "limit": {
             "type": "integer",
+            "maximum": 50.0,
+            "minimum": 1.0,
             "title": "Limit",
             "default": 20
           }
         },
+        "additionalProperties": false,
         "type": "object",
         "title": "SearchRequest"
       },

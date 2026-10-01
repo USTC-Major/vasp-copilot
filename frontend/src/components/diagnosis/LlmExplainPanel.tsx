@@ -2,7 +2,7 @@
 // LlmExplainPanel — LLM 通俗解释 / 追问
 // ============================================================
 
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { Card, Input, Button, Space, Tag, Typography, Spin, Alert } from 'antd';
 import { RobotOutlined, SendOutlined } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
@@ -22,10 +22,11 @@ const LlmExplainPanel: React.FC<LlmExplainPanelProps> = ({ diagnosisId }) => {
   const [question, setQuestion] = useState('');
   const [localError, setLocalError] = useState<string | null>(null);
   const [answers, setAnswers] = useState<{ q: string; a: string; truncated?: boolean }[]>([]);
+  const lastSubmittedQuestion = useRef<string | null>(null);
   const explainMutation = useDiagnosisExplain();
   const capabilitiesQuery = useDiagnosisCapabilities();
   const capabilities = capabilitiesQuery.data;
-  const enabled = Boolean(capabilities?.available);
+  const enabled = !capabilitiesQuery.isError && Boolean(capabilities?.available);
   const reasonCode = capabilities?.reason_code;
   const explainFailed = Boolean(localError || explainMutation.isError);
   const explainErrorCode = explainMutation.error instanceof ApiError
@@ -37,7 +38,7 @@ const LlmExplainPanel: React.FC<LlmExplainPanelProps> = ({ diagnosisId }) => {
   const status = capabilitiesQuery.isLoading
     ? { color: 'processing', label: '检查中' }
     : capabilitiesQuery.isError
-      ? { color: 'red', label: 'AI 服务不可达' }
+      ? { color: 'red', label: '状态读取失败' }
       : explainFailed
         ? diagnosisNotReady
           ? { color: 'orange', label: '诊断未完成' }
@@ -49,7 +50,7 @@ const LlmExplainPanel: React.FC<LlmExplainPanelProps> = ({ diagnosisId }) => {
         : { color: 'orange', label: reasonCode === 'AI_MODE_DIAGNOSIS_DISABLED' ? '已关闭' : reasonCode === 'AI_MODE_DIAGNOSIS_FAKE_PROVIDER' ? '离线假模型' : reasonCode === 'AI_MODE_DIAGNOSIS_PROVIDER_INVALID' ? '配置无效' : '未配置' };
 
   const unavailableMessage = capabilitiesQuery.isError
-    ? 'AI 服务暂时不可达；原有诊断报告仍可查看。'
+    ? '无法读取 AI 能力状态；原有诊断报告仍可查看，请重试读取状态。'
     : reasonCode === 'AI_MODE_DIAGNOSIS_DISABLED'
       ? '智能模式已关闭；原有诊断报告仍可查看。'
       : reasonCode === 'AI_MODE_DIAGNOSIS_FAKE_PROVIDER'
@@ -61,6 +62,7 @@ const LlmExplainPanel: React.FC<LlmExplainPanelProps> = ({ diagnosisId }) => {
   const handleAsk = async (text?: string) => {
     const q = (text ?? question).trim();
     if (!q || explainMutation.isPending) return;
+    lastSubmittedQuestion.current = q;
     setLocalError(null);
     explainMutation.reset();
     try {
@@ -130,7 +132,7 @@ const LlmExplainPanel: React.FC<LlmExplainPanelProps> = ({ diagnosisId }) => {
                 ? '诊断记录不存在，请返回诊断列表重新选择。'
                 : localError || explainMutation.error?.message || '调用解释接口失败'}
             action={!diagnosisNotReady && !diagnosisNotFound
-              ? <Button size="small" onClick={() => void handleAsk(question)}>重试</Button>
+              ? <Button size="small" onClick={() => void handleAsk(lastSubmittedQuestion.current ?? question)}>重试</Button>
               : undefined}
           />
         )}

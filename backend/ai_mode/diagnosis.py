@@ -101,11 +101,27 @@ def fetch_diagnosis(diagnosis_id: str, *, client: httpx.Client | None = None) ->
 def _pick_issue(issue: Any) -> dict[str, Any] | None:
     if not isinstance(issue, dict):
         return None
-    result = {key: issue[key] for key in (
-        "issue_id", "rule_id", "severity", "category", "title", "summary",
-        "auto_fixable", "confidence", "blocking", "possible_causes",
-        "related_issue_ids", "root_cause_candidate",
-    ) if key in issue}
+    result: dict[str, Any] = {}
+    for key in ("issue_id", "rule_id", "severity", "category"):
+        value = _safe_text(issue.get(key), 200)
+        if value:
+            result[key] = value
+    for key in ("title", "summary"):
+        value = _safe_text(issue.get(key))
+        if value:
+            result[key] = value
+    for key in ("auto_fixable", "confidence", "blocking"):
+        if key in issue and isinstance(issue[key], (bool, int, float)):
+            result[key] = issue[key]
+    causes = _safe_text_list(issue.get("possible_causes"), 1_000, 32)
+    if causes:
+        result["possible_causes"] = causes
+    related = _safe_text_list(issue.get("related_issue_ids"), 200, 32)
+    if related:
+        result["related_issue_ids"] = related
+    root_cause = _safe_text(issue.get("root_cause_candidate"), 500)
+    if root_cause:
+        result["root_cause_candidate"] = root_cause
     evidence = issue.get("evidence")
     if isinstance(evidence, list):
         result["evidence"] = [_pick_evidence(item) for item in evidence if isinstance(item, dict)]
@@ -113,13 +129,21 @@ def _pick_issue(issue: Any) -> dict[str, Any] | None:
         result["evidence"] = [_pick_evidence(evidence)]
     recommendations = issue.get("recommendations")
     if isinstance(recommendations, list):
-        result["recommendations"] = [
-            {key: item[key] for key in (
-                "action", "target", "parameter", "new_value", "rationale",
-                "requires_user_confirmation",
-            ) if key in item}
-            for item in recommendations if isinstance(item, dict)
-        ]
+        safe_recommendations = []
+        for item in recommendations[:32]:
+            if not isinstance(item, dict):
+                continue
+            safe_item: dict[str, Any] = {}
+            for key in ("action", "target", "parameter", "new_value", "rationale"):
+                value = _safe_text(item.get(key), 1_000)
+                if value:
+                    safe_item[key] = value
+            if isinstance(item.get("requires_user_confirmation"), bool):
+                safe_item["requires_user_confirmation"] = item["requires_user_confirmation"]
+            if safe_item:
+                safe_recommendations.append(safe_item)
+        if safe_recommendations:
+            result["recommendations"] = safe_recommendations
     return result
 
 
@@ -136,8 +160,26 @@ def _safe_text(value: Any, limit: int = 2_000) -> str | None:
         return None
     # Keep explanatory text useful while preventing evidence fields from
     # smuggling absolute workspace paths into the model context.
-    redacted = re.sub(r"(?:[A-Za-z]:)?[\\/](?:[^\s\\/]+[\\/])*[^\s]+", "[path]", value)
+    redacted = re.sub(
+        r"(?:[A-Za-z]:[\\/]|\\\\[^\s\\/]+[\\/]|/(?:[^\s/]+/)*)[^\s,;，。；、)]+",
+        "[path]",
+        value,
+    )
     return redacted[:limit]
+
+
+def _safe_text_list(value: Any, limit: int = 2_000, max_items: int = 32) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [text for item in value[:max_items] if (text := _safe_text(item, limit))]
+
+
+def _safe_scalar(value: Any, limit: int = 1_000) -> Any:
+    if isinstance(value, str):
+        return _safe_text(value, limit)
+    if isinstance(value, (bool, int, float)) or value is None:
+        return value
+    return _safe_text(str(value), limit)
 
 
 def _pick_evidence(evidence: dict[str, Any]) -> dict[str, Any]:
@@ -179,15 +221,25 @@ def project_evidence(result: dict[str, Any]) -> dict[str, Any]:
     """Keep a stable, small, non-sensitive explanation evidence projection."""
     projected: dict[str, Any] = {}
     for key in ("diagnosis_id", "diagnosis_status"):
-        if key in result:
-            projected[key] = result[key]
+        value = _safe_text(result.get(key), 200)
+        if value:
+            projected[key] = value
     summary = result.get("summary")
     if isinstance(summary, dict):
-        projected["summary"] = {key: summary[key] for key in (
-            "headline", "highest_severity", "issue_count"
-        ) if key in summary}
+        safe_summary: dict[str, Any] = {}
+        for key in ("headline", "highest_severity"):
+            value = _safe_text(summary.get(key), 2_000)
+            if value:
+                safe_summary[key] = value
+        if isinstance(summary.get("issue_count"), dict):
+            safe_summary["issue_count"] = {
+                str(key): value for key, value in summary["issue_count"].items()
+                if isinstance(value, (int, float))
+            }
+        if safe_summary:
+            projected["summary"] = safe_summary
     elif isinstance(summary, str):
-        projected["summary"] = summary[:2_000]
+        projected["summary"] = _safe_text(summary)
     if isinstance(result.get("issues"), list):
         issues = [item for item in (_pick_issue(x) for x in result["issues"]) if item]
         severity_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
@@ -204,61 +256,131 @@ def project_evidence(result: dict[str, Any]) -> dict[str, Any]:
         ][:100]
     next_step = result.get("next_step")
     if isinstance(next_step, dict):
+        suggested_task = _safe_text(next_step.get("suggested_task"), 500)
+        reason = _safe_text(next_step.get("reason"), 1_000)
         projected["next_step"] = {
             "allowed": next_step["allowed"] if isinstance(next_step.get("allowed"), bool) else False,
-            **({"suggested_task": _safe_text(next_step["suggested_task"], 500)}
-               if _safe_text(next_step.get("suggested_task"), 500) else {}),
-            **({"reason": _safe_text(next_step["reason"], 1_000)}
-               if _safe_text(next_step.get("reason"), 1_000) else {}),
+            **({"suggested_task": suggested_task} if suggested_task else {}),
+            **({"reason": reason} if reason else {}),
         }
     provenance = _pick_provenance(result.get("provenance"))
     if provenance:
         projected["provenance"] = provenance
     fixes = result.get("recommended_fixes")
     if isinstance(fixes, list):
-        projected["recommended_fixes"] = [
-            {key: fix[key] for key in (
-                "fix_id", "issue_ids", "fix_status", "strategy", "safe_to_generate",
-                "requires_user_confirmation", "warnings",
-            ) if key in fix} | {
-                **({"target_file": _safe_file_name(fix.get("target_file"))}
-                   if _safe_file_name(fix.get("target_file")) else {}),
-                **({"changes": [
-                    {key: change[key] for key in (
-                        "parameter", "operation", "old_value", "new_value"
-                    ) if key in change}
-                    for change in fix["changes"] if isinstance(change, dict)
-                ]} if isinstance(fix.get("changes"), list) else {}),
-                **({"warnings": [_safe_text(item, 500) for item in fix["warnings"] if _safe_text(item, 500)]}
-                   if isinstance(fix.get("warnings"), list) else {}),
-            }
-            for fix in fixes if isinstance(fix, dict)
-        ]
+        safe_fixes = []
+        for fix in fixes[:32]:
+            if not isinstance(fix, dict):
+                continue
+            safe_fix: dict[str, Any] = {}
+            for key in ("fix_id", "fix_status", "strategy"):
+                value = _safe_text(fix.get(key), 500)
+                if value:
+                    safe_fix[key] = value
+            for key in ("safe_to_generate", "requires_user_confirmation"):
+                if isinstance(fix.get(key), bool):
+                    safe_fix[key] = fix[key]
+            issue_ids = _safe_text_list(fix.get("issue_ids"), 200, 32)
+            if issue_ids:
+                safe_fix["issue_ids"] = issue_ids
+            target_file = _safe_file_name(fix.get("target_file"))
+            if target_file:
+                safe_fix["target_file"] = target_file
+            warnings = _safe_text_list(fix.get("warnings"), 500, 32)
+            if warnings:
+                safe_fix["warnings"] = warnings
+            if isinstance(fix.get("changes"), list):
+                changes = []
+                for change in fix["changes"][:32]:
+                    if not isinstance(change, dict):
+                        continue
+                    safe_change = {
+                        key: _safe_scalar(change[key], 1_000)
+                        for key in ("parameter", "operation", "old_value", "new_value")
+                        if key in change and _safe_scalar(change[key], 1_000) is not None
+                    }
+                    if safe_change:
+                        changes.append(safe_change)
+                if changes:
+                    safe_fix["changes"] = changes
+            if safe_fix:
+                safe_fixes.append(safe_fix)
+        if safe_fixes:
+            projected["recommended_fixes"] = safe_fixes
     return projected
 
 
 def _bounded_context(projected: dict[str, Any]) -> tuple[str, bool]:
-    raw = json.dumps(projected, ensure_ascii=False, separators=(",", ":"), default=str)
+    def encoded(value: dict[str, Any]) -> str:
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"), default=str)
+
+    raw = encoded(projected)
     if len(raw) <= MAX_DIAGNOSIS_CONTEXT:
         return raw, False
-    # Preserve the beginning of the deterministic projection and mark it as
-    # incomplete; the model must not claim that omitted evidence was absent.
-    return raw[:MAX_DIAGNOSIS_CONTEXT], True
+
+    # Keep the contract-critical parts first.  Lower-priority details are added
+    # only when they fit; this function always returns parseable JSON.
+    core: dict[str, Any] = {
+        key: projected[key] for key in ("diagnosis_id", "diagnosis_status", "summary")
+        if key in projected
+    }
+    if "missing_evidence" in projected:
+        core["missing_evidence"] = [
+            str(item)[:500] for item in projected["missing_evidence"][:32]
+        ]
+    issues = projected.get("issues", [])
+    blocking = [item for item in issues if isinstance(item, dict) and item.get("blocking")]
+    core["issues"] = []
+    for item in blocking:
+        compact = {
+            key: item[key]
+            for key in ("issue_id", "rule_id", "severity", "blocking", "title", "summary")
+            if key in item
+        }
+        candidate = dict(core)
+        candidate["issues"] = core["issues"] + [compact]
+        if len(encoded(candidate)) <= MAX_DIAGNOSIS_CONTEXT:
+            core = candidate
+            continue
+        if isinstance(compact.get("summary"), str):
+            compact["summary"] = compact["summary"][:500]
+        candidate["issues"] = core["issues"] + [compact]
+        if len(encoded(candidate)) <= MAX_DIAGNOSIS_CONTEXT:
+            core = candidate
+
+    truncated = encoded(core) != raw
+
+    for key in ("issues", "next_step", "recommended_fixes", "provenance"):
+        if key not in projected:
+            continue
+        candidate = dict(core)
+        candidate[key] = projected[key]
+        if len(encoded(candidate)) <= MAX_DIAGNOSIS_CONTEXT:
+            core = candidate
+        else:
+            truncated = True
+            if key == "issues":
+                # Add non-blocking issues one by one only when they fit.
+                for item in issues:
+                    if item in blocking:
+                        continue
+                    candidate = dict(core)
+                    candidate["issues"] = core.get("issues", []) + [item]
+                    if len(encoded(candidate)) > MAX_DIAGNOSIS_CONTEXT:
+                        break
+                    core = candidate
+    return encoded(core), truncated
 
 
 def _status(cfg: AiModeConfig) -> dict[str, Any]:
     enabled = bool(cfg.enabled)
     requested = (cfg.llm_provider or "auto").strip().lower()
-    try:
-        provider = resolve_provider(cfg)
-    except LLMError:
-        provider = None
     configured = bool(cfg.llm_base_url and cfg.llm_api_key and cfg.llm_model)
     if not enabled:
         reason = "AI_MODE_DIAGNOSIS_DISABLED"
-    elif provider is None:
+    elif requested not in {"auto", "fake", "openai"}:
         reason = "AI_MODE_DIAGNOSIS_PROVIDER_INVALID"
-    elif provider == "fake":
+    elif requested == "fake":
         reason = "AI_MODE_DIAGNOSIS_FAKE_PROVIDER"
     elif not configured:
         reason = "AI_MODE_DIAGNOSIS_NOT_CONFIGURED"
@@ -267,8 +389,8 @@ def _status(cfg: AiModeConfig) -> dict[str, Any]:
     return {
         "mode": "ai",
         "enabled": enabled,
-        "configured": configured and provider not in (None, "fake"),
-        "available": enabled and configured and provider not in (None, "fake"),
+        "configured": configured and requested != "fake" and requested in {"auto", "openai"},
+        "available": enabled and configured and requested in {"auto", "openai"},
         "reason_code": reason,
     }
 
