@@ -214,3 +214,230 @@ def test_auto_without_real_model_is_not_reported_as_fake_provider(monkeypatch, t
     assert state["available"] is False
     assert state["configured"] is False
     assert state["reason_code"] == "AI_MODE_DIAGNOSIS_NOT_CONFIGURED"
+
+
+def test_scientific_slashes_survive_evidence_projection():
+    from ai_mode.diagnosis import _bounded_context, project_evidence
+
+    science = "OUTCAR/job log 出现 ZHEGV/LAPACK；static/CHGCAR，eV/atom，FM/AFM，1/2"
+    causes = ["结构畸变/重叠", "结构/泛函/U 问题", "元素顺序/数量不一致"]
+    projected = project_evidence({
+        "summary": {"headline": science},
+        "issues": [{
+            "issue_id": "blocking", "blocking": True, "summary": science,
+            "possible_causes": causes,
+            "evidence": [{"file": "OUTCAR", "message": science, "excerpt": science}],
+            "recommendations": [{"rationale": science}],
+        }],
+        "missing_evidence": [science],
+        "next_step": {"allowed": False, "reason": science},
+        "recommended_fixes": [{"warnings": [science], "changes": [{"new_value": science}]}],
+    })
+    context, truncated = _bounded_context(projected)
+    parsed = json.loads(context)
+    assert parsed["summary"]["headline"] == science
+    assert parsed["issues"][0]["summary"] == science
+    assert parsed["issues"][0]["possible_causes"] == causes
+    assert parsed["issues"][0]["evidence"][0]["excerpt"] == science
+    assert parsed["issues"][0]["recommendations"][0]["rationale"] == science
+    assert parsed["missing_evidence"] == [science]
+    assert parsed["next_step"]["reason"] == science
+    assert parsed["recommended_fixes"][0]["changes"][0]["new_value"] == science
+    assert "[path]" not in context
+    assert truncated is False
+
+
+@pytest.mark.parametrize(("text", "expected"), [
+    ("see C:/private/OUTCAR", "see [path]"),
+    (r"读取C:\private\OUTCAR，ZHEGV/LAPACK 失败", "读取[path]，ZHEGV/LAPACK 失败"),
+    ("读取/tmp/OUTCAR；保留 eV/atom", "读取[path]；保留 eV/atom"),
+    ("路径：/home/用户/OUTCAR。", "路径：[path]。"),
+    ("证据 (/tmp/OUTCAR) 和 [/var/log/job.log]", "证据 ([path]) 和 [[path]]"),
+    ('路径 "C:/private/my run/OUTCAR" 缺失', '路径 "[path]" 缺失'),
+    ("路径 '/tmp/my run/OUTCAR' 缺失", "路径 '[path]' 缺失"),
+    ("路径 “/tmp/my run/OUTCAR” 缺失", "路径 “[path]” 缺失"),
+    (r"缺少 \\server\share\OUTCAR；static/CHGCAR", "缺少 [path]；static/CHGCAR"),
+    (r"读取\\server\share\OUTCAR。", "读取[path]。"),
+    ("路径 //server/share/OUTCAR", "路径 [path]"),
+    ("/OUTCAR 缺失，结构/泛函/U 问题", "[path] 缺失，结构/泛函/U 问题"),
+])
+def test_absolute_paths_are_redacted_at_prose_boundaries(text, expected):
+    from ai_mode.diagnosis import _bounded_context, project_evidence
+
+    context, truncated = _bounded_context(project_evidence({"summary": text}))
+    assert json.loads(context)["summary"] == expected
+    # Privacy redaction is distinct from omission caused by a context budget.
+    assert truncated is False
+
+
+def test_projection_marks_a_single_long_field_before_total_budget_is_reached():
+    from ai_mode.diagnosis import MAX_DIAGNOSIS_CONTEXT, _bounded_context, project_evidence
+
+    projected = project_evidence({
+        "issues": [{"issue_id": "blocking", "blocking": True, "summary": "x" * 25_000}],
+    })
+    context, truncated = _bounded_context(projected)
+    assert len(context) < MAX_DIAGNOSIS_CONTEXT
+    assert json.loads(context)["issues"][0]["summary"] == "x" * 2_000
+    assert truncated is True
+    assert set(json.loads(context)) == {"issues"}
+
+
+@pytest.mark.parametrize("field", [
+    "summary", "issue", "evidence", "recommendation", "cause", "missing",
+    "next_step", "fix", "warning", "change",
+])
+def test_nested_projection_field_budgets_mark_truncation(field):
+    from ai_mode.diagnosis import _bounded_context, project_evidence
+
+    long = "x" * 2_001
+    records = {
+        "summary": {"summary": {"headline": long}},
+        "issue": {"issues": [{"title": long}]},
+        "evidence": {"issues": [{"evidence": [{"message": long}]}]},
+        "recommendation": {"issues": [{"recommendations": [{"rationale": long}]}]},
+        "cause": {"issues": [{"possible_causes": [long]}]},
+        "missing": {"missing_evidence": [long]},
+        "next_step": {"next_step": {"reason": long}},
+        "fix": {"recommended_fixes": [{"strategy": long}]},
+        "warning": {"recommended_fixes": [{"warnings": [long]}]},
+        "change": {"recommended_fixes": [{"changes": [{"new_value": long}]}]},
+    }
+    context, truncated = _bounded_context(project_evidence(records[field]))
+    assert long not in context
+    assert truncated is True
+    assert json.loads(context)
+
+
+@pytest.mark.parametrize(("record", "path", "limit"), [
+    ({"missing_evidence": [f"missing-{i}" for i in range(101)]}, ("missing_evidence",), 100),
+    ({"issues": [{"possible_causes": [f"cause-{i}" for i in range(33)]}]}, ("issues", 0, "possible_causes"), 32),
+    ({"issues": [{"related_issue_ids": [f"i-{i}" for i in range(33)]}]}, ("issues", 0, "related_issue_ids"), 32),
+    ({"issues": [{"recommendations": [{"rationale": str(i)} for i in range(33)]}]}, ("issues", 0, "recommendations"), 32),
+    ({"recommended_fixes": [{"fix_id": f"f-{i}"} for i in range(33)]}, ("recommended_fixes",), 32),
+    ({"recommended_fixes": [{"warnings": [str(i) for i in range(33)]}]}, ("recommended_fixes", 0, "warnings"), 32),
+    ({"recommended_fixes": [{"issue_ids": [str(i) for i in range(33)]}]}, ("recommended_fixes", 0, "issue_ids"), 32),
+    ({"recommended_fixes": [{"changes": [{"new_value": str(i)} for i in range(33)]}]}, ("recommended_fixes", 0, "changes"), 32),
+])
+def test_projection_list_budgets_mark_truncation(record, path, limit):
+    from ai_mode.diagnosis import MAX_DIAGNOSIS_CONTEXT, _bounded_context, project_evidence
+
+    context, truncated = _bounded_context(project_evidence(record))
+    value = json.loads(context)
+    for key in path:
+        value = value[key]
+    assert len(value) == limit
+    assert len(context) < MAX_DIAGNOSIS_CONTEXT
+    assert truncated is True
+
+
+def test_projection_exact_limits_and_per_call_state():
+    from ai_mode.diagnosis import _bounded_context, project_evidence
+
+    record = {
+        "summary": {"headline": "s" * 2_000},
+        "issues": [{"summary": "i" * 2_000, "possible_causes": ["cause"] * 32}],
+        "missing_evidence": ["missing"] * 100,
+    }
+    assert _bounded_context(project_evidence({"summary": "x" * 2_001}))[1] is True
+    projected = project_evidence(record)
+    context, truncated = _bounded_context(projected)
+    assert json.loads(context) == record
+    assert truncated is False
+    assert isinstance(projected, dict)
+
+
+def test_total_budget_marks_truncation_without_projection_clipping():
+    from ai_mode.diagnosis import MAX_DIAGNOSIS_CONTEXT, _bounded_context, project_evidence
+
+    record = {
+        "issues": [{"issue_id": "blocking", "blocking": True, "summary": "blocked"}]
+        + [{"issue_id": str(i), "summary": "x" * 2_000} for i in range(20)],
+        "missing_evidence": ["OUTCAR missing"],
+    }
+    projected = project_evidence(record)
+    assert projected == record
+    context, truncated = _bounded_context(projected)
+    parsed = json.loads(context)
+    assert truncated is True
+    assert len(context) <= MAX_DIAGNOSIS_CONTEXT
+    assert parsed["issues"][0]["issue_id"] == "blocking"
+    assert parsed["missing_evidence"] == record["missing_evidence"]
+
+
+def test_initial_core_budget_accounts_for_json_escaping():
+    from ai_mode.diagnosis import MAX_DIAGNOSIS_CONTEXT, _bounded_context, project_evidence
+
+    projected = project_evidence({
+        "summary": {"headline": "\x00" * 2_000},
+        "issues": [{"issue_id": "blocking", "blocking": True, "summary": "blocked"}]
+        + [{"issue_id": str(i), "summary": "d" * 2_000} for i in range(10)],
+        "missing_evidence": ["\x00" * 500 for _ in range(32)],
+    })
+    context, truncated = _bounded_context(projected)
+    parsed = json.loads(context)
+    assert truncated is True
+    assert len(context) <= MAX_DIAGNOSIS_CONTEXT
+    assert parsed["issues"][0]["issue_id"] == "blocking"
+    assert parsed["missing_evidence"]
+    assert len(parsed["missing_evidence"]) < 32
+    assert len(parsed["issues"]) < 11
+    # The remaining space cannot hold another missing entry; optional details
+    # may fill that smaller remainder after missing evidence gets priority.
+    assert len(context) + 3_000 > MAX_DIAGNOSIS_CONTEXT
+
+
+def test_many_blocking_identities_leave_room_for_core_json_keys():
+    from ai_mode.diagnosis import MAX_DIAGNOSIS_CONTEXT, _bounded_context, project_evidence
+
+    projected = project_evidence({
+        "issues": [{
+            "issue_id": "\x00" * 198 + str(i), "blocking": True, "severity": "critical",
+        } for i in range(100)],
+        "missing_evidence": ["OUTCAR missing"],
+    })
+    context, truncated = _bounded_context(projected)
+    parsed = json.loads(context)
+    assert len(context) <= MAX_DIAGNOSIS_CONTEXT
+    assert truncated is True
+    assert parsed["issues"]
+    assert "missing_evidence" in parsed
+
+
+@pytest.mark.parametrize("case", ["complete", "field", "list", "total"])
+def test_model_prompt_and_response_agree_on_all_truncation_paths(client, monkeypatch, case):
+    import ai_mode.diagnosis as diagnosis
+    from ai_mode.llm.fake import FakeLLM
+
+    record = _diagnosis()
+    if case == "field":
+        record["issues"][0]["summary"] = "x" * 25_000
+    elif case == "list":
+        record["missing_evidence"] = [f"missing-{i}" for i in range(101)]
+    elif case == "total":
+        record["issues"] += [{"issue_id": str(i), "summary": "x" * 2_000} for i in range(20)]
+
+    captured = []
+
+    class RecordingLLM(FakeLLM):
+        def complete(self, messages, **kwargs):
+            captured.extend(messages)
+            return super().complete(messages, **kwargs)
+
+    monkeypatch.setattr(diagnosis, "fetch_diagnosis", lambda diagnosis_id, client=None: record)
+    monkeypatch.setattr(diagnosis, "build_client", lambda *args, **kwargs: RecordingLLM(queue=["解释结果"]))
+    response = client.post("/ai/v1/diagnosis/explain", json={"diagnosis_id": "diag_demo", "question": "解释证据"})
+    assert response.status_code == 200
+    expected_truncated = case != "complete"
+    assert response.json()["context_truncated"] is expected_truncated
+    prompt = captured[1]["content"]
+    marker = "否，已按优先级截断；不得声称未显示证据不存在" if expected_truncated else "是"
+    assert f"上下文是否完整：{marker}\n" in prompt
+    context = prompt.split("<context>\n", 1)[1].split("\n</context>", 1)[0]
+    parsed = json.loads(context)
+    assert len(context) <= diagnosis.MAX_DIAGNOSIS_CONTEXT
+    assert "truncated" not in parsed
+    if case == "field":
+        assert len(parsed["issues"][0]["summary"]) == 2_000
+    elif case == "list":
+        assert len(parsed["missing_evidence"]) == 100

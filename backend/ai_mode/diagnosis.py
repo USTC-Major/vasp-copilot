@@ -23,6 +23,14 @@ MAX_DIAGNOSIS_CONTEXT = 24_000
 MAX_QUESTION_LENGTH = 4_000
 
 
+class _ProjectedEvidence(dict[str, Any]):
+    """Per-projection budget state; the attribute is never serialized as evidence."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.truncated = False
+
+
 class DiagnosisExplainError(Exception):
     """An expected, user-facing diagnosis explanation failure."""
 
@@ -98,44 +106,44 @@ def fetch_diagnosis(diagnosis_id: str, *, client: httpx.Client | None = None) ->
             http.close()
 
 
-def _pick_issue(issue: Any) -> dict[str, Any] | None:
+def _pick_issue(issue: Any, state: _ProjectedEvidence) -> dict[str, Any] | None:
     if not isinstance(issue, dict):
         return None
     result: dict[str, Any] = {}
     for key in ("issue_id", "rule_id", "severity", "category"):
-        value = _safe_text(issue.get(key), 200)
+        value = _safe_text(issue.get(key), 200, state)
         if value:
             result[key] = value
     for key in ("title", "summary"):
-        value = _safe_text(issue.get(key))
+        value = _safe_text(issue.get(key), state=state)
         if value:
             result[key] = value
     for key in ("auto_fixable", "confidence", "blocking"):
         if key in issue and isinstance(issue[key], (bool, int, float)):
             result[key] = issue[key]
-    causes = _safe_text_list(issue.get("possible_causes"), 1_000, 32)
+    causes = _safe_text_list(issue.get("possible_causes"), 1_000, 32, state)
     if causes:
         result["possible_causes"] = causes
-    related = _safe_text_list(issue.get("related_issue_ids"), 200, 32)
+    related = _safe_text_list(issue.get("related_issue_ids"), 200, 32, state)
     if related:
         result["related_issue_ids"] = related
-    root_cause = _safe_text(issue.get("root_cause_candidate"), 500)
+    root_cause = _safe_text(issue.get("root_cause_candidate"), 500, state)
     if root_cause:
         result["root_cause_candidate"] = root_cause
     evidence = issue.get("evidence")
     if isinstance(evidence, list):
-        result["evidence"] = [_pick_evidence(item) for item in evidence if isinstance(item, dict)]
+        result["evidence"] = [_pick_evidence(item, state) for item in evidence if isinstance(item, dict)]
     elif isinstance(evidence, dict):
-        result["evidence"] = [_pick_evidence(evidence)]
+        result["evidence"] = [_pick_evidence(evidence, state)]
     recommendations = issue.get("recommendations")
     if isinstance(recommendations, list):
         safe_recommendations = []
-        for item in recommendations[:32]:
+        for item in _limited_items(recommendations, 32, state):
             if not isinstance(item, dict):
                 continue
             safe_item: dict[str, Any] = {}
             for key in ("action", "target", "parameter", "new_value", "rationale"):
-                value = _safe_text(item.get(key), 1_000)
+                value = _safe_text(item.get(key), 1_000, state)
                 if value:
                     safe_item[key] = value
             if isinstance(item.get("requires_user_confirmation"), bool):
@@ -155,45 +163,69 @@ def _safe_file_name(value: Any) -> str | None:
     return re.split(r"[\\/]", value)[-1] or None
 
 
-def _safe_text(value: Any, limit: int = 2_000) -> str | None:
+def _safe_text(value: Any, limit: int = 2_000,
+               state: _ProjectedEvidence | None = None) -> str | None:
     if not isinstance(value, str):
         return None
     # Keep explanatory text useful while preventing evidence fields from
     # smuggling absolute workspace paths into the model context.
+    # Quoted paths may contain spaces. Keep their delimiters and surrounding prose.
     redacted = re.sub(
-        r"(?:[A-Za-z]:[\\/]|\\\\[^\s\\/]+[\\/]|/(?:[^\s/]+/)*)[^\s,;，。；、)]+",
-        "[path]",
+        r'''(["'])(?:[A-Za-z]:[\\/]|\\\\|/)[^"'\r\n]+\1|“(?:[A-Za-z]:[\\/]|\\\\|/)[^”\r\n]+”|‘(?:[A-Za-z]:[\\/]|\\\\|/)[^’\r\n]+’''',
+        lambda match: match[0][0] + "[path]" + match[0][-1],
         value,
     )
+    redacted = re.sub(
+        # A slash inside a word/unit/fraction is not an absolute path. Also
+        # accept an ASCII root after Chinese prose (读取/tmp/OUTCAR), while
+        # preserving scientific phrases such as 结构/泛函/U.
+        r"(?:(?<![A-Za-z0-9_])[A-Za-z]:[\\/]|\\\\[^\s\\/]+[\\/]"
+        r"|(?<![\w./\\-])/|(?<=[\u4e00-\u9fff])/(?=[A-Za-z0-9_.~-]+/))"
+        r'''[^\s,;，。；、()（）\[\]{}<>"'“”‘’：]+''',
+        "[path]",
+        redacted,
+    )
+    if state is not None and len(redacted) > limit:
+        state.truncated = True
     return redacted[:limit]
 
 
-def _safe_text_list(value: Any, limit: int = 2_000, max_items: int = 32) -> list[str]:
+def _limited_items(value: list[Any], max_items: int,
+                   state: _ProjectedEvidence | None) -> list[Any]:
+    if state is not None and len(value) > max_items:
+        state.truncated = True
+    return value[:max_items]
+
+
+def _safe_text_list(value: Any, limit: int = 2_000, max_items: int = 32,
+                    state: _ProjectedEvidence | None = None) -> list[str]:
     if not isinstance(value, list):
         return []
-    return [text for item in value[:max_items] if (text := _safe_text(item, limit))]
+    return [text for item in _limited_items(value, max_items, state)
+            if (text := _safe_text(item, limit, state))]
 
 
-def _safe_scalar(value: Any, limit: int = 1_000) -> Any:
+def _safe_scalar(value: Any, limit: int = 1_000,
+                 state: _ProjectedEvidence | None = None) -> Any:
     if isinstance(value, str):
-        return _safe_text(value, limit)
+        return _safe_text(value, limit, state)
     if isinstance(value, (bool, int, float)) or value is None:
         return value
-    return _safe_text(str(value), limit)
+    return _safe_text(str(value), limit, state)
 
 
-def _pick_evidence(evidence: dict[str, Any]) -> dict[str, Any]:
+def _pick_evidence(evidence: dict[str, Any], state: _ProjectedEvidence) -> dict[str, Any]:
     result: dict[str, Any] = {}
     file_name = _safe_file_name(evidence.get("file"))
     if file_name:
         result["file"] = file_name
     if isinstance(evidence.get("line"), (int, float)):
         result["line"] = evidence["line"]
-    data_ref = _safe_text(evidence.get("data_ref"), 200)
+    data_ref = _safe_text(evidence.get("data_ref"), 200, state)
     if data_ref and re.fullmatch(r"[\w:.\-]+", data_ref):
         result["data_ref"] = data_ref
     for key in ("message", "excerpt"):
-        text = _safe_text(evidence.get(key))
+        text = _safe_text(evidence.get(key), state=state)
         if text:
             result[key] = text
     return result
@@ -219,16 +251,16 @@ def _pick_provenance(provenance: Any) -> dict[str, Any] | None:
 
 def project_evidence(result: dict[str, Any]) -> dict[str, Any]:
     """Keep a stable, small, non-sensitive explanation evidence projection."""
-    projected: dict[str, Any] = {}
+    projected = _ProjectedEvidence()
     for key in ("diagnosis_id", "diagnosis_status"):
-        value = _safe_text(result.get(key), 200)
+        value = _safe_text(result.get(key), 200, projected)
         if value:
             projected[key] = value
     summary = result.get("summary")
     if isinstance(summary, dict):
         safe_summary: dict[str, Any] = {}
         for key in ("headline", "highest_severity"):
-            value = _safe_text(summary.get(key), 2_000)
+            value = _safe_text(summary.get(key), 2_000, projected)
             if value:
                 safe_summary[key] = value
         if isinstance(summary.get("issue_count"), dict):
@@ -239,9 +271,9 @@ def project_evidence(result: dict[str, Any]) -> dict[str, Any]:
         if safe_summary:
             projected["summary"] = safe_summary
     elif isinstance(summary, str):
-        projected["summary"] = _safe_text(summary)
+        projected["summary"] = _safe_text(summary, state=projected)
     if isinstance(result.get("issues"), list):
-        issues = [item for item in (_pick_issue(x) for x in result["issues"]) if item]
+        issues = [item for item in (_pick_issue(x, projected) for x in result["issues"]) if item]
         severity_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
         issues.sort(key=lambda item: (
             not bool(item.get("blocking")),
@@ -250,14 +282,11 @@ def project_evidence(result: dict[str, Any]) -> dict[str, Any]:
         projected["issues"] = issues
     missing = result.get("missing_evidence")
     if isinstance(missing, list):
-        projected["missing_evidence"] = [
-            _safe_text(item, 500) for item in missing if isinstance(item, str)
-            if _safe_text(item, 500)
-        ][:100]
+        projected["missing_evidence"] = _safe_text_list(missing, 500, 100, projected)
     next_step = result.get("next_step")
     if isinstance(next_step, dict):
-        suggested_task = _safe_text(next_step.get("suggested_task"), 500)
-        reason = _safe_text(next_step.get("reason"), 1_000)
+        suggested_task = _safe_text(next_step.get("suggested_task"), 500, projected)
+        reason = _safe_text(next_step.get("reason"), 1_000, projected)
         projected["next_step"] = {
             "allowed": next_step["allowed"] if isinstance(next_step.get("allowed"), bool) else False,
             **({"suggested_task": suggested_task} if suggested_task else {}),
@@ -269,35 +298,35 @@ def project_evidence(result: dict[str, Any]) -> dict[str, Any]:
     fixes = result.get("recommended_fixes")
     if isinstance(fixes, list):
         safe_fixes = []
-        for fix in fixes[:32]:
+        for fix in _limited_items(fixes, 32, projected):
             if not isinstance(fix, dict):
                 continue
             safe_fix: dict[str, Any] = {}
             for key in ("fix_id", "fix_status", "strategy"):
-                value = _safe_text(fix.get(key), 500)
+                value = _safe_text(fix.get(key), 500, projected)
                 if value:
                     safe_fix[key] = value
             for key in ("safe_to_generate", "requires_user_confirmation"):
                 if isinstance(fix.get(key), bool):
                     safe_fix[key] = fix[key]
-            issue_ids = _safe_text_list(fix.get("issue_ids"), 200, 32)
+            issue_ids = _safe_text_list(fix.get("issue_ids"), 200, 32, projected)
             if issue_ids:
                 safe_fix["issue_ids"] = issue_ids
             target_file = _safe_file_name(fix.get("target_file"))
             if target_file:
                 safe_fix["target_file"] = target_file
-            warnings = _safe_text_list(fix.get("warnings"), 500, 32)
+            warnings = _safe_text_list(fix.get("warnings"), 500, 32, projected)
             if warnings:
                 safe_fix["warnings"] = warnings
             if isinstance(fix.get("changes"), list):
                 changes = []
-                for change in fix["changes"][:32]:
+                for change in _limited_items(fix["changes"], 32, projected):
                     if not isinstance(change, dict):
                         continue
                     safe_change = {
-                        key: _safe_scalar(change[key], 1_000)
+                        key: _safe_scalar(change[key], 1_000, projected)
                         for key in ("parameter", "operation", "old_value", "new_value")
-                        if key in change and _safe_scalar(change[key], 1_000) is not None
+                        if key in change and _safe_scalar(change[key], 1_000, projected) is not None
                     }
                     if safe_change:
                         changes.append(safe_change)
@@ -316,41 +345,62 @@ def _bounded_context(projected: dict[str, Any]) -> tuple[str, bool]:
 
     raw = encoded(projected)
     if len(raw) <= MAX_DIAGNOSIS_CONTEXT:
-        return raw, False
+        return raw, bool(getattr(projected, "truncated", False))
 
     # Keep the contract-critical parts first.  Lower-priority details are added
     # only when they fit; this function always returns parseable JSON.
-    core: dict[str, Any] = {
-        key: projected[key] for key in ("diagnosis_id", "diagnosis_status", "summary")
-        if key in projected
-    }
+    core: dict[str, Any] = {"issues": []}
     if "missing_evidence" in projected:
-        core["missing_evidence"] = [
-            str(item)[:500] for item in projected["missing_evidence"][:32]
-        ]
+        core["missing_evidence"] = []
+    for key in ("diagnosis_id", "diagnosis_status"):
+        if key in projected:
+            candidate = {**core, key: projected[key]}
+            if len(encoded(candidate)) <= MAX_DIAGNOSIS_CONTEXT:
+                core = candidate
     issues = projected.get("issues", [])
     blocking = [item for item in issues if isinstance(item, dict) and item.get("blocking")]
-    core["issues"] = []
+    retained_blocking = []
+    # Reserve blocking identities before adding missing evidence. Every addition
+    # is measured after JSON escaping, including the initial core.
     for item in blocking:
         compact = {
             key: item[key]
-            for key in ("issue_id", "rule_id", "severity", "blocking", "title", "summary")
+            for key in ("issue_id", "rule_id", "severity", "blocking")
             if key in item
         }
         candidate = dict(core)
         candidate["issues"] = core["issues"] + [compact]
         if len(encoded(candidate)) <= MAX_DIAGNOSIS_CONTEXT:
             core = candidate
+            retained_blocking.append(item)
+
+    if "missing_evidence" in projected:
+        for item in projected["missing_evidence"][:32]:
+            candidate = dict(core)
+            candidate["missing_evidence"] = core["missing_evidence"] + [str(item)[:500]]
+            if len(encoded(candidate)) <= MAX_DIAGNOSIS_CONTEXT:
+                core = candidate
+
+    for index, item in enumerate(retained_blocking):
+        compact = {
+            key: item[key]
+            for key in ("issue_id", "rule_id", "severity", "blocking", "title", "summary")
+            if key in item
+        }
+        candidate = dict(core)
+        candidate["issues"] = list(core["issues"])
+        candidate["issues"][index] = compact
+        if len(encoded(candidate)) <= MAX_DIAGNOSIS_CONTEXT:
+            core = candidate
             continue
+        if isinstance(compact.get("title"), str):
+            compact["title"] = compact["title"][:200]
         if isinstance(compact.get("summary"), str):
             compact["summary"] = compact["summary"][:500]
-        candidate["issues"] = core["issues"] + [compact]
         if len(encoded(candidate)) <= MAX_DIAGNOSIS_CONTEXT:
             core = candidate
 
-    truncated = encoded(core) != raw
-
-    for key in ("issues", "next_step", "recommended_fixes", "provenance"):
+    for key in ("summary", "issues", "next_step", "recommended_fixes", "provenance"):
         if key not in projected:
             continue
         candidate = dict(core)
@@ -358,7 +408,6 @@ def _bounded_context(projected: dict[str, Any]) -> tuple[str, bool]:
         if len(encoded(candidate)) <= MAX_DIAGNOSIS_CONTEXT:
             core = candidate
         else:
-            truncated = True
             if key == "issues":
                 # Add non-blocking issues one by one only when they fit.
                 for item in issues:
@@ -369,7 +418,7 @@ def _bounded_context(projected: dict[str, Any]) -> tuple[str, bool]:
                     if len(encoded(candidate)) > MAX_DIAGNOSIS_CONTEXT:
                         break
                     core = candidate
-    return encoded(core), truncated
+    return encoded(core), True
 
 
 def _status(cfg: AiModeConfig) -> dict[str, Any]:

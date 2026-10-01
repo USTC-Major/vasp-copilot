@@ -28,6 +28,33 @@ describe("LlmExplainPanel", () => {
     mocks.explain.mockReset();
     mocks.explainError = null;
     mocks.capabilitiesError = false;
+    mocks.capabilities = { mode: "ai", enabled: true, configured: true, available: true, reason_code: "AI_MODE_DIAGNOSIS_READY" };
+  });
+
+  it("shows the answer and truncation notice when the response context was truncated", async () => {
+    mocks.explain.mockResolvedValue({
+      mode: "ai", ok: true, diagnosis_id: "diag_1", answer: "这是裁剪上下文后的回答", evidence_source: "toolbox_diagnosis", context_truncated: true,
+    });
+    const user = userEvent.setup();
+    render(<MemoryRouter><LlmExplainPanel diagnosisId="diag_1" /></MemoryRouter>);
+
+    await user.click(screen.getByRole("button", { name: "一键通俗解释" }));
+
+    expect(await screen.findByText("这是裁剪上下文后的回答")).toBeInTheDocument();
+    expect(screen.getByText("解释上下文已裁剪，回答可能未包含全部诊断证据。")).toBeInTheDocument();
+  });
+
+  it("shows the answer without a truncation notice when the response context was not truncated", async () => {
+    mocks.explain.mockResolvedValue({
+      mode: "ai", ok: true, diagnosis_id: "diag_1", answer: "这是完整上下文的回答", evidence_source: "toolbox_diagnosis", context_truncated: false,
+    });
+    const user = userEvent.setup();
+    render(<MemoryRouter><LlmExplainPanel diagnosisId="diag_1" /></MemoryRouter>);
+
+    await user.click(screen.getByRole("button", { name: "一键通俗解释" }));
+
+    expect(await screen.findByText("这是完整上下文的回答")).toBeInTheDocument();
+    expect(screen.queryByText("解释上下文已裁剪，回答可能未包含全部诊断证据。")).not.toBeInTheDocument();
   });
 
   it("does not display an answer when the explain response is not ok", async () => {
