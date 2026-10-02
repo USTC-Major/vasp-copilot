@@ -4,6 +4,7 @@ import re
 from typing import Optional
 
 from ..schemas.parsed import PoscarData
+from .magnetic_evidence import finite
 
 
 _NUM_RE = re.compile(r"^[+-]?(\d+(\.\d*)?|\.\d+)([eEdD][+-]?\d+)?$")
@@ -50,4 +51,26 @@ def parse_poscar(text: str) -> PoscarData:
         data.counts = [int(t) for t in counts_tokens]
     except ValueError:
         data.counts = []
+    # Preserve the legacy header result even for incomplete structures. New
+    # magnetic correspondence additionally requires all ordered position rows.
+    count = sum(data.counts)
+    if not data.counts or any(c < 0 for c in data.counts) or not 0 < count <= 100_000:
+        return data
+    i += 1
+    while i < len(lines) and not lines[i].strip():
+        i += 1
+    if i < len(lines) and lines[i].strip().lower().startswith("s"):
+        i += 1
+    if i >= len(lines):
+        return data
+    marker = lines[i].strip().lower()
+    mode = "Direct" if marker.startswith("d") else "Cartesian" if marker.startswith(("c", "k")) else None
+    if mode is None:
+        return data
+    for j in range(i + 1, min(i + 1 + count, len(lines))):
+        raw = lines[j].split()[:3]
+        values = [finite(token) for token in raw]
+        data.positions.append({"mode": mode, "values": values if len(values) == 3 and all(v is not None for v in values) else None,
+                               "raw": raw, "source_line": j + 1})
+    data.positions_complete = len(data.positions) == count and all(p["values"] is not None for p in data.positions)
     return data

@@ -530,16 +530,53 @@ export interface ScfPlotData {
 }
 
 export interface MagnetizationSeriesPoint {
-  atom_index: number;
+  atom_index: number | null;
   element: string;
-  initial_moment: number;
-  final_moment: number;
+  initial_moment: number | null;
+  final_moment: number | null;
+  s?: number | null;
+  p?: number | null;
+  d?: number | null;
+  f?: number | null;
+  tot?: number | null;
+}
+
+export type MagneticGroup = 'positive' | 'negative' | 'near_zero' | 'unknown';
+export type MagneticOrientation = 'retained' | 'reversed' | 'undefined' | 'unavailable';
+export type MagneticMagnitude = 'similar' | 'decreased' | 'increased' | 'emerged' | 'near_zero' | 'unavailable';
+export interface MagneticAtom {
+  atom_index: number; element: string;
+  position: { mode: 'Direct' | 'Cartesian'; values: [number, number, number] | null; raw: string[]; source_line: number } | null;
+  input_reference: number | null; output_moment: number | null; output_raw: string | null; output_source_line: number | null;
+  delta_moment: number | null; reference_group: MagneticGroup; output_group: MagneticGroup;
+  orientation: MagneticOrientation; magnitude: MagneticMagnitude; attenuated: boolean; comparison_available: boolean; reasons: string[];
+}
+export interface MagneticRawRow {
+  row_id: string; axis: string; atom_index: number | null;
+  values: Record<string, number | null>; raw: Record<string, string | null>;
+  source_line: number | null; table_header_line: number | null;
+}
+export interface MagneticTotalEvidence {
+  kind: 'cell_direct' | 'projection_reported' | 'projection_sum'; label: string;
+  values: number[] | null; raw: string[]; source_file: string; source_line: number | null;
+  complete: boolean; scope: 'latest_observation_unassigned';
+}
+export interface MagneticAnalysis {
+  version: 'u5-display-v1'; status: 'ready' | 'partial' | 'unavailable' | 'unsupported';
+  pattern: 'retained' | 'global_reversed' | 'local_changes' | 'near_zero_reference' | 'insufficient';
+  summary: string[]; notes: string[];
+  thresholds: { near_zero: number; absolute_change: number; relative_change: number; attenuation_ratio: number; source: 'display_heuristic' };
+  structure: { source_file: string | null; atom_count: number | null; mapping: 'index_aligned' | 'geometry_checked' | 'mismatch' | 'unavailable'; notes: string[] };
+  reference: { source_file: 'INCAR'; source_line: number | null; raw: string | null; values: (number | null)[]; valid: boolean; restart_notes: string[] };
+  output: { source_file: 'OUTCAR'; header_line: number | null; table_complete: boolean; provisional: boolean; notes: string[] };
+  atoms: MagneticAtom[]; raw_rows: MagneticRawRow[]; totals: MagneticTotalEvidence[];
 }
 
 export interface MagnetizationPlotData {
   x_label: string;
   y_label: string;
   series: MagnetizationSeriesPoint[];
+  analysis?: MagneticAnalysis;
 }
 
 export interface RecommendedFix {

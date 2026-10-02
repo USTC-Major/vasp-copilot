@@ -6,26 +6,7 @@ from ...schemas.issue import Issue
 from ...schemas.mode import MagnetizationAnalysisMode
 from ...schemas.parsed import ParsedRunData
 from ...schemas.status import Severity
-
-
-def _initial_magmom(parsed: ParsedRunData):
-    v = parsed.incar.effective.get("MAGMOM")
-    if isinstance(v, list):
-        return [float(x) for x in v]
-    if isinstance(v, (int, float)):
-        return [float(v)]
-    return []
-
-
-def _comparable_atoms(initial: list[float], final: list) -> list:
-    """按索引配对原子；仅初始/最终磁矩均已知的原子参与。"""
-    pairs = []
-    for i, iv in enumerate(initial):
-        if i < len(final):
-            fv = final[i].get("tot")
-            if fv is not None:
-                pairs.append((iv, fv))
-    return pairs
+from ..magnetic_analysis import build_magnetic_analysis
 
 
 class MagmomSignFlipRule(Rule):
@@ -36,26 +17,25 @@ class MagmomSignFlipRule(Rule):
         mode = parsed.calculation_mode.magnetization_analysis_mode
         if mode != MagnetizationAnalysisMode.COLLINEAR:
             return []
-        final = parsed.outcar.final_magnetization or []
-        initial = _initial_magmom(parsed)
-        flips = []
-        for i, (iv, fv) in enumerate(_comparable_atoms(initial, final)):
-            if iv > 1e-3 and fv < -1e-3:
-                flips.append((i + 1, iv, fv))
+        analysis = build_magnetic_analysis(parsed)
+        if analysis["pattern"] == "global_reversed":
+            return []
+        flips = [(a["atom_index"], a["input_reference"], a["output_moment"])
+                 for a in analysis["atoms"] if a["comparison_available"] and a["orientation"] == "reversed"]
         if not flips:
             return []
         detail = ", ".join(f"atom{i}: {a}->{b:.3f}" for i, a, b in flips[:5])
         return [build_issue(
             rule_id=self.rule_id, severity=Severity.MEDIUM, category=self.category,
-            title="磁矩符号翻转（提示）",
-            summary=f"部分原子最终磁矩符号与初始相反（{detail}）。可能是物理允许的磁态变化。",
-            evidence=[{"file": "OUTCAR", "message": "最终局域磁矩符号与初始相反",
+            title="局域投影相对输入参考反向（提示）",
+            summary=f"部分原子最近局域投影与输入 MAGMOM 参考符号相反（{detail}）；使用显示近零阈值 0.05 μB，不判断磁性基态或收敛。",
+            evidence=[{"file": "OUTCAR", "message": "最近局域投影与输入 MAGMOM 参考反向（非实测初始态）",
                       "data_ref": "outcar.final_magnetization"}],
             recommendations=[
-                {"action": "review", "target": "user", "rationale": "核实预期磁态；可考虑新的初始磁矩"}
+                {"action": "review", "target": "user", "rationale": "结合原子对应、投影方法及计算阶段核实预期排列"}
             ],
             confidence=0.6, blocking=False,
-            possible_causes=["不同的磁态", "初始磁矩不合适"],
+            possible_causes=["输入参考与输出投影不同", "计算阶段或投影方法影响"],
         )]
 
 
@@ -67,23 +47,20 @@ class LocalMomentCollapseRule(Rule):
         mode = parsed.calculation_mode.magnetization_analysis_mode
         if mode != MagnetizationAnalysisMode.COLLINEAR:
             return []
-        final = parsed.outcar.final_magnetization or []
-        initial = _initial_magmom(parsed)
-        collapsed = 0
-        for iv, fv in _comparable_atoms(initial, final):
-            if abs(iv) > 0.5 and abs(fv) < 0.05:
-                collapsed += 1
+        analysis = build_magnetic_analysis(parsed)
+        collapsed = sum(a["comparison_available"] and abs(a["input_reference"]) > 0.5
+                        and a["output_group"] == "near_zero" for a in analysis["atoms"])
         if collapsed == 0:
             return []
         return [build_issue(
             rule_id=self.rule_id, severity=Severity.MEDIUM, category=self.category,
-            title="局域磁矩塌缩（提示）",
-            summary=f"有 {collapsed} 个原子初始磁矩较大而最终接近零，疑似磁矩塌缩。需核实预期磁态。",
-            evidence=[{"file": "OUTCAR", "message": "最终局域磁矩趋于零",
+            title="较大输入参考对应近零局域投影（提示）",
+            summary=f"有 {collapsed} 个原子输入 MAGMOM 参考幅值 >0.5 μB，而最近输出投影在显示近零区间（≤0.05 μB）。这与幅值衰减标签不同，不证明实际磁矩随时间塌缩。",
+            evidence=[{"file": "OUTCAR", "message": "输入参考较大，最近输出局域投影接近零（显示启发式）",
                       "data_ref": "outcar.final_magnetization"}],
             recommendations=[
-                {"action": "review", "target": "user", "rationale": "核实磁态、结构、U/泛函与初始化"}
+                {"action": "review", "target": "user", "rationale": "结合原子对应、投影方法及计算阶段核实预期局域磁矩"}
             ],
             confidence=0.6, blocking=False,
-            possible_causes=["磁态变化", "结构/泛函/U 问题"],
+            possible_causes=["输入参考与输出投影不同", "计算阶段或投影方法影响"],
         )]

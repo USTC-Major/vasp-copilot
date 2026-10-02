@@ -144,6 +144,7 @@ jobs:
             backend/tests/test_u3_input_descriptions.py \
             backend/tests/test_u6_fix_delivery.py \
             backend/tests/test_u4_scf.py \
+            backend/tests/test_u5_magnetic.py \
             backend/tests/test_parsers.py \
             backend/tests/test_store_plots.py \
             backend/tests/test_api.py \
@@ -181,6 +182,7 @@ jobs:
               "backend.tests.test_u3_input_descriptions",
               "backend.tests.test_u6_fix_delivery",
               "backend.tests.test_u4_scf",
+              "backend.tests.test_u5_magnetic",
               "backend.tests.test_parsers",
               "backend.tests.test_store_plots",
               "backend.tests.test_api",
@@ -358,6 +360,9 @@ jobs:
               ("src/components/diagnosis/LlmExplainPanel.test.tsx", "LlmExplainPanel > distinguishes a capabilities read failure from model unavailability"),
               ("src/components/diagnosis/ScfPlot.test.tsx", "ScfPlot > wires dual views, block and interval selection, linked zoom, and inspectable evidence details"),
               ("src/components/diagnosis/scfPlotModel.test.ts", "SCF evidence model > keeps zero, missing, invalid and precision-limited rows accessible without inventing log points"),
+              ("src/components/diagnosis/MagnetizationPlot.test.tsx", "MagnetizationPlot UI > passes all three filter choices to the helper and keeps matching rows in original atom order"),
+              ("src/components/diagnosis/magneticPlotModel.test.ts", "magnetic evidence display model > keeps indexed legacy chart and tooltip aligned when an earlier raw row has no ion index"),
+              ("src/components/diagnosis/magneticPlotModel.test.ts", "magnetic evidence display model > renders SVG with consistent fixed output bar/legend colors and signed bars at wide/narrow widths"),
               ("src/components/workflow/WorkflowPlanPreview.real.test.tsx", "WorkflowPlanPreview with the real ReactFlow implementation > renders a real selectable and draggable node without a minimap"),
               ("src/components/workflow/WorkflowPlanPreview.real.test.tsx", "WorkflowPlanPreview with the real ReactFlow implementation > renders long labels in a narrow viewport without adding a minimap"),
           }

@@ -1,11 +1,8 @@
-// ============================================================
-// MagnetizationPlot — 磁矩柱状图
-// ============================================================
-
-import React, { useMemo } from 'react';
-import { Card, Alert, Typography } from 'antd';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Alert, Card, Col, Row, Select, Space, Table, Tag, Typography } from 'antd';
 import ReactECharts from 'echarts-for-react';
-import type { MagnetizationPlotData, CalculationMode } from '../../types/generated-api';
+import type { CalculationMode, MagnetizationPlotData } from '../../types/generated-api';
+import { buildMagneticView, type MagneticFilters, type MagneticView } from './magneticPlotModel';
 
 const { Text } = Typography;
 
@@ -14,137 +11,220 @@ interface MagnetizationPlotProps {
   calculationMode: CalculationMode;
 }
 
+const cellWrap = () => ({ style: { whiteSpace: 'normal' as const, overflowWrap: 'anywhere' as const } });
+const rawColumns = [
+  { title: '坐标轴/表格', dataIndex: 'axis', key: 'axis', width: 110, onCell: cellWrap },
+  { title: '原子序号', dataIndex: 'atom', key: 'atom', width: 110, onCell: cellWrap },
+  { title: '原始值', dataIndex: 'values', key: 'values', width: 420, onCell: cellWrap },
+  { title: '来源行', dataIndex: 'evidence', key: 'evidence', width: 240, onCell: cellWrap },
+];
+
 const MagnetizationPlot: React.FC<MagnetizationPlotProps> = ({ data, calculationMode }) => {
-  // SOC / noncollinear 模式下不支持简单符号诊断
-  const isUnsupported =
-    calculationMode.is_soc ||
-    calculationMode.is_noncollinear ||
-    calculationMode.magnetization_analysis_mode !== 'collinear';
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [compact, setCompact] = useState(() => typeof window !== 'undefined' && window.innerWidth < 760);
+  const [filters, setFilters] = useState<MagneticFilters>({});
 
-  const option = useMemo(() => {
-    const atoms = data.series;
+  useEffect(() => {
+    const element = containerRef.current;
+    if (!element) return undefined;
+    const updateLayout = () => setCompact(element.clientWidth < 760);
+    updateLayout();
+    const observer = new ResizeObserver(updateLayout);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
 
-    return {
-      tooltip: {
-        trigger: 'axis' as const,
-        formatter: (params: unknown[]) => {
-          const p = params as { dataIndex: number }[];
-          if (!p.length) return '';
-          const atom = atoms[p[0].dataIndex];
-          return `
-            <strong>${atom.element} (原子 ${atom.atom_index})</strong><br/>
-            初始磁矩: ${atom.initial_moment.toFixed(3)} μB<br/>
-            最终磁矩: ${atom.final_moment.toFixed(3)} μB<br/>
-            ${atom.initial_moment * atom.final_moment < 0 ? '<span style="color:#faad14">⚠ 符号翻转</span>' : ''}
-            ${Math.abs(atom.initial_moment) > 1 && Math.abs(atom.final_moment) < 0.1 ? '<span style="color:#ff7a45">⚠ 磁矩塌缩</span>' : ''}
-          `;
-        },
-      },
-      legend: {
-        data: ['初始磁矩', '最终磁矩'],
-        top: 0,
-      },
-      xAxis: {
-        type: 'category' as const,
-        data: atoms.map((a) => `${a.element}(${a.atom_index})`),
-        axisLabel: {
-          rotate: 30,
-          fontSize: 11,
-        },
-      },
-      yAxis: {
-        type: 'value' as const,
-        name: '磁矩 (μB)',
-      },
-      series: [
-        {
-          name: '初始磁矩',
-          type: 'bar' as const,
-          data: atoms.map((a) => a.initial_moment),
-          itemStyle: { color: '#1677ff', borderRadius: [4, 4, 0, 0] },
-          barGap: '10%',
-        },
-        {
-          name: '最终磁矩',
-          type: 'bar' as const,
-          data: atoms.map((a) => a.final_moment),
-          itemStyle: {
-            color: (params: { dataIndex: number }) => {
-              const atom = atoms[params.dataIndex];
-              // 符号翻转 = 橙色
-              if (atom.initial_moment * atom.final_moment < 0) return '#faad14';
-              // 塌缩 = 红色
-              if (Math.abs(atom.initial_moment) > 1 && Math.abs(atom.final_moment) < 0.1) return '#ff7a45';
-              return '#52c41a';
-            },
-            borderRadius: [4, 4, 0, 0],
-          },
-        },
-      ],
-      grid: { left: 60, right: 20, top: 40, bottom: 50 },
-    };
-  }, [data]);
+  const view = useMemo(() => buildMagneticView(data, calculationMode, { ...filters, compact }), [data, calculationMode, filters, compact]);
+  const hasAnalysis = 'analysis' in data && Boolean(data.analysis);
+  const scalarComparisonUnsupported = calculationMode.is_soc
+    || calculationMode.is_noncollinear
+    || calculationMode.magnetization_analysis_mode === 'unsupported_noncollinear_or_soc'
+    || data.analysis?.status === 'unsupported';
+  const expandEvidenceDetails = !hasAnalysis || data.analysis?.status !== 'ready';
 
-  if (isUnsupported) {
-    return (
-      <Card title="磁矩分析">
-        <Alert
-          type="info"
-          showIcon
-          message="不支持简单符号诊断"
-          description={
-            <div>
-              <p>
-                {calculationMode.is_soc ? '该计算启用了自旋轨道耦合 (SOC)' : ''}
-                {calculationMode.is_noncollinear ? '该计算使用非共线磁性 (noncollinear)' : ''}
-                ，系统不支持当前模式下的简单磁矩符号翻转/塌缩诊断。
-              </p>
-              <p>如需诊断，请在 collinear 模式下重新计算或使用专业后处理工具。</p>
-            </div>
-          }
-        />
-      </Card>
-    );
-  }
+  const updateFilter = <K extends keyof MagneticFilters>(key: K, value: MagneticFilters[K] | undefined) => {
+    setFilters((previous) => ({ ...previous, [key]: value }));
+  };
 
-  if (!data.series.length) {
-    return (
-      <Card title="磁矩分析">
-        <Text type="secondary">暂无磁矩数据</Text>
-      </Card>
-    );
-  }
-
-  const hasFlip = data.series.some((a) => a.initial_moment * a.final_moment < 0);
-  const hasCollapse = data.series.some(
-    (a) => Math.abs(a.initial_moment) > 1 && Math.abs(a.final_moment) < 0.1
-  );
+  const wrapCell = () => ({ style: { whiteSpace: 'normal' as const, overflowWrap: 'anywhere' as const } });
+  const columns = [
+    { title: '序号', dataIndex: 'atom_index', key: 'atom_index', width: 72, fixed: 'left' as const, onCell: wrapCell },
+    { title: '元素', dataIndex: 'element', key: 'element', width: 76, fixed: 'left' as const, onCell: wrapCell },
+    { title: '位置（原坐标）', dataIndex: 'position', key: 'position', width: 150, onCell: wrapCell },
+    ...(hasAnalysis ? [
+      { title: 'MAGMOM 输入参考', dataIndex: 'input', key: 'input', width: 165, onCell: wrapCell },
+      { title: '最新观测投影', dataIndex: 'output', key: 'output', width: 150, onCell: wrapCell },
+      { title: '差值', dataIndex: 'delta', key: 'delta', width: 110, onCell: wrapCell },
+      { title: '参考组', dataIndex: 'referenceGroup', key: 'referenceGroup', width: 90, onCell: wrapCell },
+      { title: '方向', dataIndex: 'orientation', key: 'orientation', width: 95, onCell: wrapCell },
+      { title: '幅值', dataIndex: 'magnitude', key: 'magnitude', width: 95, onCell: wrapCell },
+      { title: '变化说明', dataIndex: 'changes', key: 'changes', width: 140, render: (items: string[]) => items.join('、'), onCell: wrapCell },
+      { title: '依据', dataIndex: 'evidence', key: 'evidence', width: 190, onCell: wrapCell },
+    ] : [
+      { title: '最新观测投影', dataIndex: 'output', key: 'output', width: 180, onCell: wrapCell },
+      { title: '输出依据', dataIndex: 'evidence', key: 'evidence', width: 220, onCell: wrapCell },
+    ]),
+  ];
 
   return (
-    <Card title="磁矩分析">
-      {(hasFlip || hasCollapse) && (
-        <Alert
-          type="warning"
-          showIcon
-          message="检测到磁矩异常"
-          description={
-            <div>
-              {hasFlip && <div>• 部分原子磁矩符号翻转（橙色柱），可能进入不同磁态</div>}
-              {hasCollapse && <div>• 部分原子磁矩塌缩（红色柱），初始磁矩大但最终趋近于零</div>}
-              <div style={{ marginTop: 4, color: '#999' }}>这些现象不一定是错误，请结合物理预期判断。</div>
+    <div ref={containerRef} style={{ width: '100%', minWidth: 0 }}>
+      <style>{`
+        .magnetization-plot-card .ant-card-head-wrapper { flex-wrap: wrap; gap: 4px 12px; }
+        .magnetization-plot-card .ant-card-head-title { min-width: 0; white-space: normal; overflow-wrap: anywhere; flex: 1 1 12rem; }
+        .magnetization-plot-card .ant-card-extra { margin-inline-start: 0; white-space: normal; flex: 0 1 auto; }
+        .magnetization-plot-card .ant-card-extra .ant-tag { height: auto; white-space: normal; }
+      `}</style>
+      <Card
+        className="magnetization-plot-card"
+        title="磁性排列对照"
+        extra={<Tag>{view.statusLabel}</Tag>}
+      >
+        <Space orientation="vertical" size="middle" style={{ width: '100%', minWidth: 0 }}>
+          {!hasAnalysis && (
+            <Alert
+              type="info"
+              showIcon
+              title="旧版诊断未提供磁性比较数据"
+              description="这里只显示已有的输出投影，不根据旧字段推断磁性排列；输入标签不会被解释为实测初始磁矩。"
+            />
+          )}
+          {hasAnalysis && (
+            <Text type="secondary" style={{ overflowWrap: 'anywhere' }}>
+              “MAGMOM 输入参考”是 INCAR 中的输入参数，不代表实测初始磁矩；输出列表示最近观测到的局域投影。表格保持结构原子顺序。
+            </Text>
+          )}
+
+          {view.summary.length > 0 && (
+            <Alert
+              type="info"
+              showIcon
+              title="排列概览"
+              description={(
+                <Space orientation="vertical" size={4} style={{ width: '100%', overflowWrap: 'anywhere' }} aria-label="排列概览说明">
+                  {view.summary.map((item, index) => <Text key={`summary-${index}`}>{item}</Text>)}
+                </Space>
+              )}
+            />
+          )}
+
+          {view.totals.length > 0 && (
+            <Row gutter={[12, 12]}>
+              {view.totals.map((total) => (
+                <Col key={total.key} xs={24} sm={12} lg={8}>
+                  <Card size="small">
+                    <Space orientation="vertical" size={4} style={{ width: '100%', overflowWrap: 'anywhere' }}>
+                      <Text strong style={{ overflowWrap: 'anywhere' }}>{total.label}</Text>
+                      <Text strong>{total.value}</Text>
+                      <Text type="secondary">{total.evidence}</Text>
+                    </Space>
+                  </Card>
+                </Col>
+              ))}
+            </Row>
+          )}
+
+          {view.chartAvailable ? (
+            <ReactECharts
+              option={view.option}
+              notMerge
+              autoResize
+              style={{ height: compact ? 420 : 340, width: '100%' }}
+            />
+          ) : (
+            <Text type="secondary">当前没有可用的标量排列图；请查看上方限制说明和下方原始输出。</Text>
+          )}
+
+          {(view.notes.length > 0 || view.thresholdNotes.length > 0) && (
+            <details open={expandEvidenceDetails}>
+              <summary>比较依据与限制{view.thresholdNotes.length > 0 ? '和显示整理阈值' : ''}</summary>
+              <Space orientation="vertical" size="middle" style={{ width: '100%', marginTop: 8 }}>
+                {view.notes.length > 0 && (
+                  <section aria-label="比较依据与限制">
+                    <Space orientation="vertical" size={4} style={{ width: '100%', overflowWrap: 'anywhere' }}>
+                      {view.notes.map((note, index) => <Text key={`note-${index}`} type="secondary">{note}</Text>)}
+                    </Space>
+                  </section>
+                )}
+                {view.thresholdNotes.length > 0 && (
+                  <section aria-label="显示整理阈值">
+                    <Text strong>显示整理阈值</Text>
+                    <Space orientation="vertical" size={4} style={{ width: '100%', marginTop: 4, overflowWrap: 'anywhere' }}>
+                      {view.thresholdNotes.map((note, index) => <Text key={`threshold-${index}`} type="secondary">{note}</Text>)}
+                    </Space>
+                  </section>
+                )}
+              </Space>
+            </details>
+          )}
+
+          {!scalarComparisonUnsupported && view.filterOptions.elements.length > 0 && (
+            <Space wrap style={{ width: '100%' }}>
+              <Select
+                aria-label="按元素筛选"
+                allowClear
+                placeholder="全部元素"
+                value={filters.element}
+                options={view.filterOptions.elements.map((element) => ({ value: element, label: element || '元素未知' }))}
+                onChange={(value) => updateFilter('element', value)}
+                style={{ minWidth: 140, maxWidth: '100%' }}
+              />
+              {hasAnalysis && (
+                <>
+                  <Select
+                    aria-label="按MAGMOM输入参考组筛选"
+                    allowClear
+                    placeholder="全部输入参考组"
+                    value={filters.group}
+                    options={view.filterOptions.groups}
+                    onChange={(value) => updateFilter('group', value)}
+                    style={{ minWidth: 180, maxWidth: '100%' }}
+                  />
+                  <Select
+                    aria-label="按变化类别筛选"
+                    allowClear
+                    placeholder="全部变化类别"
+                    value={filters.change}
+                    options={view.filterOptions.changes}
+                    onChange={(value) => updateFilter('change', value)}
+                    style={{ minWidth: 170, maxWidth: '100%' }}
+                  />
+                </>
+              )}
+            </Space>
+          )}
+
+          {!scalarComparisonUnsupported && (
+            <div style={{ maxWidth: '100%', overflowX: 'auto' }}>
+              <Table<MagneticView['rows'][number]>
+                size="small"
+                rowKey="key"
+                columns={columns}
+                dataSource={view.rows}
+                pagination={{ defaultPageSize: 10, showSizeChanger: true, pageSizeOptions: [10, 20, 50] }}
+                scroll={{ x: hasAnalysis ? 1150 : 600 }}
+                locale={{ emptyText: '没有符合条件的原子记录' }}
+              />
             </div>
-          }
-          style={{ marginBottom: 12 }}
-        />
-      )}
-      <ReactECharts option={option} style={{ height: 300 }} />
-      <div style={{ marginTop: 8, display: 'flex', gap: 16, fontSize: 12 }}>
-        <span><span style={{ color: '#1677ff' }}>■</span> 初始磁矩</span>
-        <span><span style={{ color: '#52c41a' }}>■</span> 最终磁矩（正常）</span>
-        <span><span style={{ color: '#faad14' }}>■</span> 符号翻转（橙色 = 提示）</span>
-        <span><span style={{ color: '#ff7a45' }}>■</span> 磁矩塌缩（红色 = 提示）</span>
-      </div>
-    </Card>
+          )}
+
+          {view.rawRows.length > 0 && (
+            <details>
+              <summary>查看原始磁性输出证据</summary>
+              <div style={{ maxWidth: '100%', overflowX: 'auto', marginTop: 8 }}>
+                <Table
+                  size="small"
+                  rowKey="key"
+                  columns={rawColumns}
+                  dataSource={view.rawRows}
+                  pagination={{ defaultPageSize: 10, showSizeChanger: true, pageSizeOptions: [10, 20, 50] }}
+                  scroll={{ x: 880 }}
+                />
+              </div>
+            </details>
+          )}
+        </Space>
+      </Card>
+    </div>
   );
 };
 
