@@ -232,7 +232,7 @@ const AiSettingsPage: React.FC = () => {
   const section = (title: string, icon: React.ReactNode, children: React.ReactNode) => (
     <Row gutter={24}>
       <Col span={24}>
-        <Card title={<Space><>{icon}</><span>{title}</span></Space>} style={{ marginBottom: 16 }}>
+        <Card title={<Space><>{icon}</><span>{title}</span></Space>} style={{ marginBottom: 16 }} styles={{ header: { whiteSpace: "normal" }, title: { whiteSpace: "normal", overflowWrap: "anywhere" } }}>
           {children}
         </Card>
       </Col>
@@ -256,19 +256,19 @@ const AiSettingsPage: React.FC = () => {
   const testResult = (provider: TestProvider) => {
     const result = testResults[provider];
     if (!result) return null;
-    return <Alert type={result.ok ? "success" : "error"} showIcon message={result.message} style={{ marginTop: 12 }} />;
+    return <Alert type={result.ok ? "success" : "error"} showIcon message={result.message} style={{ marginTop: 12, overflowWrap: "anywhere" }} />;
   };
 
   const testButton = (provider: TestProvider, label: string) => (
-    <Button onClick={() => test(provider)} loading={testMutation.isPending && testMutation.variables === provider}>
+    <Button onClick={() => test(provider)} loading={testMutation.isPending && testMutation.variables === provider} style={{ maxWidth: "100%", height: "auto", minHeight: 32, whiteSpace: "normal" }}>
       {label}
     </Button>
   );
 
   return (
-    <div style={{ maxWidth: 860, margin: "0 auto", padding: "8px 0" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
-        <div>
+    <div style={{ maxWidth: 860, margin: "0 auto", padding: "8px 0", overflowWrap: "anywhere" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12, marginBottom: 20 }}>
+        <div style={{ flex: "1 1 280px", minWidth: 0 }}>
           <Title level={3} style={{ marginBottom: 4 }}>智能体设置</Title>
           <Paragraph type="secondary" style={{ margin: 0 }}>
             所有私人信息仅本地保存。已保存密钥不可查看或复制，只能整体替换或清除。
@@ -278,54 +278,51 @@ const AiSettingsPage: React.FC = () => {
       </div>
 
       {section("LLM", <LinkOutlined />, (
-        <Row gutter={16}>
-          <Col span={24}><Text strong>接口地址</Text><Input value={form.llm_base_url} onChange={set("llm_base_url")} placeholder="https://api.openai.com/v1" /></Col>
-          <Col span={12}><Text strong>模型名称</Text><Input value={form.llm_model} onChange={set("llm_model")} placeholder="gpt-4o" /></Col>
-          <Col span={12}><Text strong>provider</Text><Input value={form.llm_provider} onChange={set("llm_provider")} placeholder="auto" /></Col>
-          <Col span={24}><Text strong>API Key</Text><SecretInput hasSecret={secrets.llm.configured} manageable={secrets.llm.manageable} source={secrets.llm.source} value={form.llm_api_key} onChange={(v) => { setForm((p) => ({ ...p, llm_api_key: v })); setTestResults({}); setTestNotice(null); }} onClear={clearSecret("llm")} placeholder={secrets.llm.configured ? "输入新值以整体替换" : "未配置 LLM key，填写后保存" } /></Col>
-          <Col span={24}><Space><Switch checked={form.llm_enable_thinking} onChange={(v) => { setForm((p) => ({ ...p, llm_enable_thinking: v })); setTestResults({}); setTestNotice(null); }} />
-            <Text strong>深度思考</Text><Text type="secondary" style={{ fontSize: 12 }}>开启后请求体携带 thinking 参数，模型输出增量思考过程（是否支持以接入模型/网关为准）。</Text></Space></Col>
+        <Row gutter={[16, 16]}>
+          <Col span={24}><label htmlFor="settings-llm_base_url"><Text strong>接口地址</Text></label><Input id="settings-llm_base_url" value={form.llm_base_url} onChange={set("llm_base_url")} placeholder="https://api.openai.com/v1" /></Col>
+          <Col xs={24} sm={12}><label htmlFor="settings-llm_model"><Text strong>模型名称</Text></label><Input id="settings-llm_model" value={form.llm_model} onChange={set("llm_model")} placeholder="gpt-4o" /></Col>
+          <Col xs={24} sm={12}><label htmlFor="settings-llm_provider"><Text strong>provider</Text></label><Input id="settings-llm_provider" value={form.llm_provider} onChange={set("llm_provider")} placeholder="auto" /></Col>
+          <Col span={24} role="group" aria-labelledby="llm-key-label"><Text id="llm-key-label" strong>API Key</Text><SecretInput hasSecret={secrets.llm.configured} manageable={secrets.llm.manageable} source={secrets.llm.source} value={form.llm_api_key} onChange={(v) => { setForm((p) => ({ ...p, llm_api_key: v })); setTestResults({}); setTestNotice(null); }} onClear={clearSecret("llm")} placeholder={secrets.llm.configured ? "输入新值以整体替换" : "未配置 LLM key，填写后保存" } /></Col>
+          <Col span={24}><Space wrap><Switch aria-label="深度思考" aria-describedby="thinking-help" checked={form.llm_enable_thinking} onChange={(v) => { setForm((p) => ({ ...p, llm_enable_thinking: v })); setTestResults({}); setTestNotice(null); }} />
+            <Text strong>深度思考</Text></Space><Text id="thinking-help" type="secondary" style={{ display: "block", fontSize: 12, marginTop: 4 }}>开启后请求体携带 thinking 参数，模型输出增量思考过程（是否支持以接入模型/网关为准）。</Text></Col>
           <Col span={24}>{testButton("llm", "测试 LLM（已保存配置）")}{testResult("llm")}</Col>
         </Row>
       ))}
 
       {section("超算 SSH 直连", <RocketOutlined />, (
-        <Row gutter={16}>
-          <Col span={8}><Text strong>连接名称</Text><Input value={form.ssh_name} onChange={set("ssh_name")} placeholder="如：超算A" /></Col>
-          <Col span={8}><Text strong>主机地址</Text><Input value={form.ssh_host} onChange={set("ssh_host")} placeholder="如：login.hpc.example.com" /></Col>
-          <Col span={8}><Text strong>端口</Text><Input value={form.ssh_port} onChange={set("ssh_port")} /></Col>
-          <Col span={12}><Text strong>用户名</Text><Input value={form.ssh_username} onChange={set("ssh_username")} /></Col>
-          <Col span={12}><Text strong>密码</Text><SecretInput hasSecret={secrets.ssh.configured} manageable={secrets.ssh.manageable} source={secrets.ssh.source} value={form.ssh_password} onChange={(v) => { setForm((p) => ({ ...p, ssh_password: v })); setTestResults({}); setTestNotice(null); }} onClear={clearSecret("ssh")} placeholder={secrets.ssh.configured ? "输入新值以整体替换" : "未配置密码，填写后保存" } /></Col>
-          <Col span={24}><Text strong>known_hosts 路径</Text><Input value={form.ssh_known_hosts_path} onChange={set("ssh_known_hosts_path")} placeholder="留空则使用系统 known_hosts" /></Col>
-          <Col span={24}><Text strong>SSH 密钥文件路径（可选）</Text><Input aria-label="SSH 密钥文件路径" value={form.ssh_identity_file} onChange={set("ssh_identity_file")} placeholder="后端所在电脑上的绝对路径；只填路径，不粘贴私钥" /></Col>
-          <Col span={24}><Text strong>调度平台</Text><Select aria-label="调度平台" style={{ width: "100%" }} value={form.scheduler_backend} onChange={(v) => { setForm(p => ({ ...p, scheduler_backend: v })); setTestResults({}); setTestNotice(null); }} options={[{ value: "slurm", label: "标准 Slurm（sbatch / squeue）" }, { value: "paracloud", label: "ParaCloud 云超算（cbatch / cqueue）" }]} /></Col>
-          <Col span={24}><Text type="secondary">按实际平台选择，不能仅凭命令存在判断。更换平台或SSH身份后必须重新预检和确认；已有作业应保持原连接配置。</Text></Col>
-          <Col span={24}><Text type="secondary">填写密钥路径时仅使用该密钥，不回退密码或自动寻找其他密钥。当前不支持需口令解锁的密钥；换电脑需重新配置当地路径。</Text></Col>
-          <Col span={24}><Text type="secondary" style={{ fontSize: 12 }}>SSH 仅信任系统或指定 known_hosts 中的主机密钥；未知或不匹配会在认证前拒绝。密码只可替换/清除。</Text></Col>
+        <Row gutter={[16, 16]}>
+          <Col xs={24} md={8}><label htmlFor="settings-ssh_name"><Text strong>连接名称</Text></label><Input id="settings-ssh_name" value={form.ssh_name} onChange={set("ssh_name")} placeholder="如：超算A" /></Col>
+          <Col xs={24} md={8}><label htmlFor="settings-ssh_host"><Text strong>主机地址</Text></label><Input id="settings-ssh_host" value={form.ssh_host} onChange={set("ssh_host")} placeholder="如：login.hpc.example.com" /></Col>
+          <Col xs={24} md={8}><label htmlFor="settings-ssh_port"><Text strong>端口</Text></label><Input id="settings-ssh_port" value={form.ssh_port} onChange={set("ssh_port")} /></Col>
+          <Col xs={24} sm={12}><label htmlFor="settings-ssh_username"><Text strong>用户名</Text></label><Input id="settings-ssh_username" value={form.ssh_username} onChange={set("ssh_username")} /></Col>
+          <Col xs={24} sm={12} role="group" aria-labelledby="ssh-password-label" aria-describedby="ssh-password-help"><Text id="ssh-password-label" strong>密码</Text><SecretInput hasSecret={secrets.ssh.configured} manageable={secrets.ssh.manageable} source={secrets.ssh.source} value={form.ssh_password} onChange={(v) => { setForm((p) => ({ ...p, ssh_password: v })); setTestResults({}); setTestNotice(null); }} onClear={clearSecret("ssh")} placeholder={secrets.ssh.configured ? "输入新值以整体替换" : "未配置密码，填写后保存" } /><Text id="ssh-password-help" type="secondary" style={{ display: "block", fontSize: 12, marginTop: 4 }}>密码只可替换或清除，不回显已保存值。</Text></Col>
+          <Col span={24}><label htmlFor="settings-ssh_known_hosts_path"><Text strong>known_hosts 路径</Text></label><Input id="settings-ssh_known_hosts_path" value={form.ssh_known_hosts_path} onChange={set("ssh_known_hosts_path")} aria-describedby="known-hosts-help" placeholder="留空则使用系统 known_hosts" /><Text id="known-hosts-help" type="secondary" style={{ display: "block", fontSize: 12, marginTop: 4 }}>SSH 仅信任系统或指定 known_hosts 中的主机密钥；未知或不匹配会在认证前拒绝。</Text></Col>
+          <Col span={24}><label htmlFor="settings-ssh_identity_file"><Text strong>SSH 密钥文件路径（可选）</Text></label><Input id="settings-ssh_identity_file" aria-label="SSH 密钥文件路径" value={form.ssh_identity_file} onChange={set("ssh_identity_file")} aria-describedby="identity-file-help" placeholder="后端所在电脑上的绝对路径；只填路径，不粘贴私钥" /><Text id="identity-file-help" type="secondary" style={{ display: "block", fontSize: 12, marginTop: 4 }}>后端所在电脑上的绝对路径；只填路径，不粘贴私钥。填写密钥路径时仅使用该密钥，不回退密码或自动寻找其他密钥。当前不支持需口令解锁的密钥；换电脑需重新配置当地路径。</Text></Col>
+          <Col span={24}><label htmlFor="settings-scheduler"><Text strong>调度平台</Text></label><Select id="settings-scheduler" aria-label="调度平台" aria-describedby="scheduler-help" style={{ width: "100%" }} value={form.scheduler_backend} onChange={(v) => { setForm(p => ({ ...p, scheduler_backend: v })); setTestResults({}); setTestNotice(null); }} options={[{ value: "slurm", label: "标准 Slurm（sbatch / squeue）" }, { value: "paracloud", label: "ParaCloud 云超算（cbatch / cqueue）" }]} /><Text id="scheduler-help" type="secondary" style={{ display: "block", fontSize: 12, marginTop: 4 }}>按实际平台选择，不能仅凭命令存在判断。更换平台或SSH身份后必须重新预检和确认；已有作业应保持原连接配置。</Text></Col>
           <Col span={24}>{testButton("ssh", "测试已保存的 SSH 配置")}{testResult("ssh")}</Col>
         </Row>
       ))}
 
       {section("Materials Project", <SafetyCertificateOutlined />, (
-        <Row gutter={16}>
-          <Col span={24}><Text strong>MP API Key</Text><SecretInput hasSecret={secrets.mp.configured} manageable={secrets.mp.manageable} source={secrets.mp.source} value={form.mp_api_key} onChange={(v) => { setForm((p) => ({ ...p, mp_api_key: v })); setTestResults({}); setTestNotice(null); }} onClear={clearSecret("mp")} placeholder={secrets.mp.configured ? "输入新值以整体替换" : "未配置，填写后保存" } /></Col>
+        <Row gutter={[16, 16]}>
+          <Col span={24} role="group" aria-labelledby="mp-key-label" aria-describedby="mp-key-help"><Text id="mp-key-label" strong>MP API Key</Text><SecretInput hasSecret={secrets.mp.configured} manageable={secrets.mp.manageable} source={secrets.mp.source} value={form.mp_api_key} onChange={(v) => { setForm((p) => ({ ...p, mp_api_key: v })); setTestResults({}); setTestNotice(null); }} onClear={clearSecret("mp")} placeholder={secrets.mp.configured ? "输入新值以整体替换" : "未配置，填写后保存" } /><Text id="mp-key-help" type="secondary" style={{ display: "block", fontSize: 12, marginTop: 4 }}>用于 Materials Project 材料搜索与结构导入；密钥可替换或清除。</Text></Col>
           <Col span={24}>{testButton("mp", "测试已保存的 Materials Project 配置")}{testResult("mp")}</Col>
         </Row>
       ))}
 
       {section("作业执行／监控", <RocketOutlined />, (
-        <Row gutter={16}>
+        <Row gutter={[16, 16]}>
           <Col xs={24} sm={12}>
-            <Text strong>最大作业数</Text>
-            <Input type="number" min={1} step={1} value={form.max_jobs} onChange={setNumber("max_jobs")} style={{ width: "100%" }} aria-label="最大作业数" />
-            <Text type="secondary" style={{ display: "block", fontSize: 12, marginTop: 4 }}>本软件提交时参考该超算账号排队和运行中的作业数量，并按此上限限制新提交。至少为 1。</Text>
-            {fieldErrors.max_jobs && <Text type="danger">{fieldErrors.max_jobs}</Text>}
+            <label htmlFor="max-jobs"><Text strong>最大作业数</Text></label>
+            <Input id="max-jobs" aria-describedby={fieldErrors.max_jobs ? "max-jobs-help max-jobs-error" : "max-jobs-help"} aria-invalid={Boolean(fieldErrors.max_jobs)} type="number" min={1} step={1} value={form.max_jobs} onChange={setNumber("max_jobs")} style={{ width: "100%" }} aria-label="最大作业数" />
+            <Text id="max-jobs-help" type="secondary" style={{ display: "block", fontSize: 12, marginTop: 4 }}>本软件提交时参考该超算账号排队和运行中的作业数量，并按此上限限制新提交。至少为 1。</Text>
+            {fieldErrors.max_jobs && <Text id="max-jobs-error" type="danger" style={{ display: "block" }}>{fieldErrors.max_jobs}</Text>}
           </Col>
           <Col xs={24} sm={12}>
-            <Text strong>监控轮询间隔（秒）</Text>
-            <Input type="number" min={10} max={3600} step={1} value={form.poll_interval_seconds} onChange={setNumber("poll_interval_seconds")} style={{ width: "100%" }} aria-label="监控轮询间隔（秒）" />
-            <Text type="secondary" style={{ display: "block", fontSize: 12, marginTop: 4 }}>影响已提交作业的状态查询频率；范围 10–3600 秒，默认 60 秒。</Text>
-            {fieldErrors.poll_interval_seconds && <Text type="danger">{fieldErrors.poll_interval_seconds}</Text>}
+            <label htmlFor="poll-interval"><Text strong>监控轮询间隔（秒）</Text></label>
+            <Input id="poll-interval" aria-describedby={fieldErrors.poll_interval_seconds ? "poll-interval-help poll-interval-error" : "poll-interval-help"} aria-invalid={Boolean(fieldErrors.poll_interval_seconds)} type="number" min={10} max={3600} step={1} value={form.poll_interval_seconds} onChange={setNumber("poll_interval_seconds")} style={{ width: "100%" }} aria-label="监控轮询间隔（秒）" />
+            <Text id="poll-interval-help" type="secondary" style={{ display: "block", fontSize: 12, marginTop: 4 }}>影响已提交作业的状态查询频率；范围 10–3600 秒，默认 60 秒。</Text>
+            {fieldErrors.poll_interval_seconds && <Text id="poll-interval-error" type="danger" style={{ display: "block" }}>{fieldErrors.poll_interval_seconds}</Text>}
           </Col>
           <Col span={24}><Text type="secondary" style={{ fontSize: 12 }}>作业执行仍需按当前流程人工准备、预检和确认；设置页不会自动提交作业。</Text></Col>
         </Row>

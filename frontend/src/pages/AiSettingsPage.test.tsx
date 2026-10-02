@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
@@ -210,5 +210,30 @@ it("最大作业数和轮询间隔执行范围校验", async () => {
   await user.click(screen.getByRole("button", { name: "保存设置" }));
   expect(await screen.findByText("最大作业数必须是至少为 1 的整数")).toBeInTheDocument();
   expect(await screen.findByText("轮询间隔必须是 10–3600 秒的整数")).toBeInTheDocument();
+  expect(maxJobs).toHaveAttribute("aria-invalid", "true");
+  expect(maxJobs).toHaveAccessibleDescription(/至少为 1。 最大作业数必须是至少为 1 的整数/);
+  expect(interval).toHaveAttribute("aria-invalid", "true");
+  expect(interval).toHaveAccessibleDescription(/默认 60 秒。 轮询间隔必须是 10–3600 秒的整数/);
   expect(mocks.save).not.toHaveBeenCalled();
+});
+
+it("字段说明关联各自控件，默认值说明不覆盖已保存的轮询值", async () => {
+  const previousInterval = mocks.data.settings.poll_interval_seconds;
+  mocks.data.settings.poll_interval_seconds = 120;
+  try {
+    render(<MemoryRouter><AiSettingsPage /></MemoryRouter>);
+    const interval = await screen.findByLabelText("监控轮询间隔（秒）");
+    expect(interval).toHaveValue(120);
+    expect(interval).toHaveAccessibleDescription("影响已提交作业的状态查询频率；范围 10–3600 秒，默认 60 秒。");
+    expect(screen.getByLabelText("最大作业数")).toHaveAccessibleDescription("本软件提交时参考该超算账号排队和运行中的作业数量，并按此上限限制新提交。至少为 1。");
+    const mp = screen.getByRole("group", { name: "MP API Key" });
+    expect(mp).toHaveAccessibleDescription("用于 Materials Project 材料搜索与结构导入；密钥可替换或清除。");
+    expect(within(mp).getByLabelText("输入新的密钥以整体替换")).toHaveValue("");
+    expect(screen.getByLabelText("known_hosts 路径")).toHaveAccessibleDescription(/SSH 仅信任系统或指定 known_hosts/);
+    expect(screen.getByLabelText("SSH 密钥文件路径")).toHaveAccessibleDescription(/填写密钥路径时仅使用该密钥，不回退密码/);
+    expect(screen.getByLabelText("调度平台")).toHaveAccessibleDescription(/按实际平台选择/);
+    expect(screen.getByRole("switch", { name: "深度思考" })).toHaveAccessibleDescription(/是否支持以接入模型\/网关为准/);
+  } finally {
+    mocks.data.settings.poll_interval_seconds = previousInterval;
+  }
 });
