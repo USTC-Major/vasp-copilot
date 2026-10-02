@@ -135,10 +135,12 @@ const DiagnosisResultPage: React.FC = () => {
 
       {/* 图表 */}
       <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
-        <Col xs={24} lg={14}>
+        <Col xs={24}>
           <ScfPlot data={plots.scf} />
         </Col>
-        <Col xs={24} lg={10}>
+      </Row>
+      <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+        <Col xs={24}>
           <MagnetizationPlot
             data={plots.magnetization}
             calculationMode={provenance.calculation_mode}

@@ -63,6 +63,11 @@ class ElectronicStep(BaseModel):
     rms: Optional[float] = None
     rms_c: Optional[float] = None
     source_line: Optional[int] = None  # 1-based 源行号
+    block_id: Optional[int] = None  # 绘图块身份；不以可重复的离子步编号分组
+    ionic_step_inferred: bool = False
+    energy_raw: Optional[str] = None
+    delta_energy_raw: Optional[str] = None
+    delta_epsilon_raw: Optional[str] = None
 
 
 class OszicarData(BaseModel):
@@ -100,6 +105,8 @@ class OutcarData(BaseModel):
     vasp_binary_hint: Optional[str] = None
     calculation_mode: CalculationMode = CalculationMode()
     final_energy: Optional[float] = None
+    scf_parameters: list[dict[str, Any]] = Field(default_factory=list)
+    electronic_convergence_evidence: list[dict[str, Any]] = Field(default_factory=list)
     # 仅表示"检测到 OUTCAR 结构优化收敛停止文本"，不代表电子 SCF 收敛；
     # True=检测到；None=证据不足；绝不设为 False 声称确定未收敛。
     ionic_convergence_reached: Optional[bool] = None

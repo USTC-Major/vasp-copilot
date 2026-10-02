@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import math
 from typing import Any, Optional
 
 from ..schemas.parsed import ElectronicStep, OszicarData
@@ -27,7 +28,8 @@ def _to_float(tok: str) -> Optional[float]:
     if not _NUM_RE.match(tok):
         return None
     try:
-        return float(tok.replace("D", "E").replace("d", "e"))
+        value = float(tok.replace("D", "E").replace("d", "e"))
+        return value if math.isfinite(value) else None
     except ValueError:
         return None
 
@@ -46,6 +48,8 @@ def _parse_elec_fields(tokens: list[str], lineno: int,
     """按列位置解析电子行尾部：缺尾列仅对应列为 None，不发生字段错位。"""
     out: dict[str, Any] = {}
     for i, name in enumerate(_ELEC_COLUMNS):
+        if name in ("energy", "delta_energy", "delta_epsilon"):
+            out[f"{name}_raw"] = tokens[i] if i < len(tokens) else None
         if i >= len(tokens):
             out[name] = None
             continue
@@ -88,6 +92,8 @@ def parse_oszicar(text: str) -> OszicarData:
     last_elec_step = 0
     last_summary: Optional[int] = None
     last_tail = ""
+    block_id = 1
+    header_boundary = False
 
     for lineno, raw in enumerate(text.splitlines(), start=1):
         line = raw.strip()
@@ -98,10 +104,15 @@ def parse_oszicar(text: str) -> OszicarData:
             continue
         m = _ELEC_RE.match(line)
         if m:
+            step_number = int(m.group(2))
+            if pending and (header_boundary or step_number <= pending[-1]["electronic_step"]):
+                block_id += 1
+            header_boundary = False
             fields = _parse_elec_fields(m.group(3).split(), lineno, warnings)
             pending.append({
                 "algorithm": m.group(1),
-                "electronic_step": int(m.group(2)),
+                "electronic_step": step_number,
+                "block_id": block_id,
                 "source_line": lineno,
                 **fields,
             })
@@ -111,7 +122,10 @@ def parse_oszicar(text: str) -> OszicarData:
             step = int(m.group(1))
             # 汇总行结束当前电子块：pending 行的 ionic_step 取汇总行的实际编号。
             for rec in pending:
-                electronic.append(ElectronicStep(ionic_step=step, **rec))
+                # Earlier reset/header-delimited groups have no own summary;
+                # retain the legacy numeric association, but disclose inference.
+                electronic.append(ElectronicStep(ionic_step=step,
+                    ionic_step_inferred=rec["block_id"] != block_id, **rec))
             # 显式维护“最近一次电子块”状态：不按 ionic_step 值全局筛选，
             # 避免重启片段复用相同编号时把独立块合并。
             if pending:
@@ -124,12 +138,16 @@ def parse_oszicar(text: str) -> OszicarData:
                 last_block_energies = []
                 last_elec_step = 0
             pending.clear()
+            block_id += 1
+            header_boundary = False
             last_summary = step
             fields = _parse_ionic_fields(line)
             fields["step"] = step
             ionic.append(fields)
             last_tail = line
             continue
+        if re.match(r"^N\s+E\s+", line):
+            header_boundary = bool(pending)
         m = _UNKNOWN_TAG_RE.match(line)
         if m:
             warnings.append(
@@ -148,7 +166,7 @@ def parse_oszicar(text: str) -> OszicarData:
                 "no ionic summary (F=) line found; electronic block "
                 "ionic_step=1 is a local inferred index")
         for rec in pending:
-            electronic.append(ElectronicStep(ionic_step=inferred, **rec))
+            electronic.append(ElectronicStep(ionic_step=inferred, ionic_step_inferred=True, **rec))
         # 尾部 pending 作为最后电子块。
         last_block_energies = [
             r["energy"] for r in pending if r["energy"] is not None]

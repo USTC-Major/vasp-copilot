@@ -143,6 +143,12 @@ jobs:
             backend/tests/test_workflow_api.py \
             backend/tests/test_u3_input_descriptions.py \
             backend/tests/test_u6_fix_delivery.py \
+            backend/tests/test_u4_scf.py \
+            backend/tests/test_parsers.py \
+            backend/tests/test_store_plots.py \
+            backend/tests/test_api.py \
+            backend/tests/test_rules.py \
+            backend/tests/test_diagnosis_real_case_regressions.py \
             backend/tests/test_fixes.py \
             backend/tests/test_agent.py \
             backend/tests/be_a/test_kpoints.py \
@@ -174,6 +180,12 @@ jobs:
               "backend.tests.be_a.test_dftu_forms",
               "backend.tests.test_u3_input_descriptions",
               "backend.tests.test_u6_fix_delivery",
+              "backend.tests.test_u4_scf",
+              "backend.tests.test_parsers",
+              "backend.tests.test_store_plots",
+              "backend.tests.test_api",
+              "backend.tests.test_rules",
+              "backend.tests.test_diagnosis_real_case_regressions",
               "backend.tests.test_fixes",
               "backend.tests.test_agent",
               "backend.tests.test_mp_natural_search",
@@ -343,6 +355,8 @@ jobs:
               ("src/components/diagnosis/LlmExplainPanel.test.tsx", "LlmExplainPanel > retries the default one-click question after failure"),
               ("src/components/diagnosis/LlmExplainPanel.test.tsx", "LlmExplainPanel > retries the last submitted manual question, not an edited draft"),
               ("src/components/diagnosis/LlmExplainPanel.test.tsx", "LlmExplainPanel > distinguishes a capabilities read failure from model unavailability"),
+              ("src/components/diagnosis/ScfPlot.test.tsx", "ScfPlot > wires dual views, block and interval selection, linked zoom, and inspectable evidence details"),
+              ("src/components/diagnosis/scfPlotModel.test.ts", "SCF evidence model > keeps zero, missing, invalid and precision-limited rows accessible without inventing log points"),
               ("src/components/workflow/WorkflowPlanPreview.real.test.tsx", "WorkflowPlanPreview with the real ReactFlow implementation > renders a real selectable and draggable node without a minimap"),
               ("src/components/workflow/WorkflowPlanPreview.real.test.tsx", "WorkflowPlanPreview with the real ReactFlow implementation > renders long labels in a narrow viewport without adding a minimap"),
           }

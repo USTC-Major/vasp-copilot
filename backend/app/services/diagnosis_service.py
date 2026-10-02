@@ -26,6 +26,7 @@ from ..schemas.vasprun import VasprunInfo
 from ..schemas.result import DiagnosisResult, Provenance
 from ..schemas.status import DiagnosisStatus, FixStatus, ModeKind, Severity
 from ..llm import get_explainer
+from .scf_plot import build_scf_plot
 
 _JOB_LOG_KEYWORDS = (".out", ".log", "log", "slurm", "job")
 _RECOMMENDED = ("INCAR", "POSCAR", "KPOINTS", "OSZICAR", "OUTCAR")
@@ -215,19 +216,6 @@ def _highest_severity(issues: list[Issue]) -> str:
 
 def _build_plots(parsed: ParsedRunData) -> dict:
     """按 MVP 7.5 构建结构化数值序列（scf + 磁化）。"""
-    scf_series: list[dict] = []
-    if parsed.oszicar is not None:
-        # SCF 曲线只来自真实电子迭代（DAV/RMM/CG 等）；
-        # 无电子行时 series 为空，不伪造电子步。
-        for es in parsed.oszicar.electronic_steps:
-            if es.energy is None:
-                continue
-            scf_series.append({
-                "ionic_step": es.ionic_step,
-                "electronic_step": es.electronic_step,
-                "energy_ev": es.energy,
-                "algorithm": es.algorithm,
-            })
     mag_series: list[dict] = []
     if parsed.outcar is not None and parsed.outcar.final_magnetization:
         for atom in parsed.outcar.final_magnetization:
@@ -237,7 +225,7 @@ def _build_plots(parsed: ParsedRunData) -> dict:
                 "d": atom.get("d"), "tot": atom.get("tot"),
             })
     return {
-        "scf": {"x_label": "电子步", "y_label": "能量 (eV)", "series": scf_series},
+        "scf": build_scf_plot(parsed),
         "magnetization": {"x_label": "原子索引", "y_label": "磁矩 (μB)", "series": mag_series},
     }
 def _make_summary(issues: list[Issue]) -> str:
