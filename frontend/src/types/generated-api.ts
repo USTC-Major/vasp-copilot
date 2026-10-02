@@ -484,13 +484,49 @@ export interface DiagnosisIssue {
 export interface ScfSeries {
   ionic_step: number;
   electronic_step: number;
-  energy: number;
+  energy: number | null;
+  energy_ev?: number | null;
+  block_id?: number;
+  ionic_step_inferred?: boolean;
+  algorithm?: string;
+  source_file?: string;
+  source_line?: number | null;
+  energy_raw?: string | null;
+  energy_status?: ScfValueStatus;
+  delta_energy_ev?: number | null;
+  delta_energy_raw?: string | null;
+  delta_energy_status?: ScfValueStatus;
+  delta_energy_source?: 'oszicar' | 'derived' | null;
+  delta_energy_derivation?: {
+    previous_source_line: number | null;
+    previous_energy_ev: number;
+    previous_energy_raw: string | null;
+    resolution_ev: number | null;
+  } | null;
+  delta_epsilon_ev?: number | null;
+  delta_epsilon_raw?: string | null;
+  delta_epsilon_status?: ScfValueStatus;
+}
+
+export type ScfValueStatus = 'available' | 'zero' | 'missing' | 'unparseable' | 'non_finite' | 'precision_limited' | 'precision_unknown';
+
+export interface ScfParameter {
+  value: number | null;
+  source: 'INCAR' | 'OUTCAR' | null;
+  source_line: number | null;
+  raw: string | null;
+  status: 'available' | 'missing' | 'invalid' | 'conflict';
+  input_conflict: boolean;
+  scope: 'run_unassigned' | 'input_unverified';
+  candidates: { name: string; value: number | null; source: 'INCAR' | 'OUTCAR'; source_line: number | null; raw: string | null; valid: boolean }[];
 }
 
 export interface ScfPlotData {
   x_label: string;
   y_label: string;
   series: ScfSeries[];
+  parameters?: { ediff: ScfParameter; nelm: ScfParameter };
+  convergence_evidence?: { kind: 'electronic_ediff_stop'; source: 'OUTCAR'; source_line: number; scope: 'unassigned'; block_id: null }[];
 }
 
 export interface MagnetizationSeriesPoint {

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import math
 from typing import Any, Optional
 
 from ..schemas.mode import CalculationMode, MagnetizationAnalysisMode
@@ -74,6 +75,26 @@ def parse_outcar(text: str) -> OutcarData:
     data = OutcarData()
     lines = text.splitlines()
     n = len(lines)
+    # Keep output echoes and explicit electronic stop text as provenance only.
+    # No attribution to OSZICAR blocks is inferred from independent files.
+    for lineno, line in enumerate(lines, start=1):
+        # Actual echoes start with a parameter assignment. Never scan SYSTEM
+        # strings, comments or arbitrary prose for embedded parameter examples.
+        echo = bool(re.match(r"^\s*(?:EDIFF|NELM|NELMIN|NELMDL)\s*=", line))
+        for match in re.finditer(r"\b(EDIFF|NELM)\s*=\s*([^\s;]+)", line) if echo else []:
+            name, raw = match.groups()
+            try:
+                value = float(raw.replace("D", "E").replace("d", "e"))
+                value = value if math.isfinite(value) else None
+            except ValueError:
+                value = None
+            data.scf_parameters.append({"name": name, "value": value,
+                                        "raw": raw, "source": "OUTCAR", "source_line": lineno})
+        if re.match(r"^\s*aborting\s+loop\s+because\s+EDIFF\s+is\s+reached\s*[.!]?\s*$", line, re.IGNORECASE):
+            data.electronic_convergence_evidence.append({
+                "kind": "electronic_ediff_stop", "source": "OUTCAR",
+                "source_line": lineno, "scope": "unassigned", "block_id": None,
+            })
 
     # 1) version + binary hint from the banner (top of file)
     for line in lines[:80]:
