@@ -184,7 +184,7 @@ class LmaxmixTooLowForDftuRule(Rule):
                 evidence=[{"file": "INCAR", "message": f"LMAXMIX={lmaxmix} < {need}"}],
                 recommendations=[
                     {"action": "set_parameter", "target": "INCAR", "parameter": "LMAXMIX",
-                     "new_value": str(need), "rationale": "建议至少 {need}，需结合元素与 VASP 版本确认",
+                     "new_value": str(need), "rationale": f"建议至少 {need}，需结合元素与 VASP 版本确认",
                      "requires_user_confirmation": True}],
                 auto_fixable=True, confidence=0.7, blocking=False,
                 possible_causes=["混合表示角动量不足"],
