@@ -33,3 +33,6 @@ class RecommendedFix(BaseModel):
     diff: Optional[str] = None
     generated_file_id: Optional[str] = None
     warnings: list[str] = []
+    reason_code: str = ""
+    reason: str = ""
+    manual_steps: list[str] = []

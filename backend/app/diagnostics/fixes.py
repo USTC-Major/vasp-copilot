@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import uuid
 
 from ..schemas.fix import FixChange, RecommendedFix
@@ -21,6 +22,70 @@ ALLOWED_FIX_WHITELIST = {
 CONFIRMATION_PARAM_PREFIX = ("NBANDS", "ALGO", "AMIX", "BMIX", "MAXMIX", "EDIFF",
                              "EDIFFG", "SIGMA", "ISMEAR", "LMAXMIX", "ISPIN",
                              "NELM", "NELMDL", "PREC", "ENCUT")
+
+MANUAL_STEPS = [
+    "核对建议、关联问题及风险是否适用于当前计算目标。",
+    "备份原始 INCAR，保留其他输入和计算记录。",
+    "对照参数旧值、新值及文件差异，审阅 INCAR.fixed。",
+    "由用户手动应用已审阅的修改；下载不表示已应用或问题已修复。",
+    "按需要重新诊断或自行提交计算；本工具不会覆盖输入或重启作业。",
+]
+
+FIX_REASONS = {
+    "candidate_ready": "候选修复已生成，应用前请审阅。",
+    "missing_incar": "缺少原始非空 INCAR，无法判断并生成参数修改。请补充 INCAR 后重新诊断。",
+    "missing_value": "建议缺少具体参数新值，请依据计算目标补充信息并人工核验。",
+    "no_issues": "当前诊断未发现问题，暂无可生成的参数修改。",
+    "no_rule": "当前问题暂无可用的参数修复规则，请查看诊断建议。",
+    "no_changes": "没有有效参数变化，暂无可生成的参数修改。",
+    "manual_review": "已有建议需要人工核验，无法安全生成候选文件。",
+    "safety_rejected": "修复建议未通过白名单或静态安全复核，请依诊断依据人工处理。",
+    "candidate_missing": "候选所需文件缺失或为空，请重新运行诊断生成候选；诊断报告仍可使用。",
+    "candidate_invalid": "候选文件与参数修改或差异不一致，请重新运行诊断生成候选；诊断报告仍可使用。",
+    "generation_failed": "候选生成失败，请重试诊断或依诊断建议人工处理；诊断报告仍可使用。",
+    "diagnosis_not_ready": "请先运行诊断，再查看是否有可下载的候选修改。",
+}
+
+
+def fix_reason_fields(code: str) -> dict:
+    if code == "candidate_ready":
+        steps = list(MANUAL_STEPS)
+    elif code == "missing_incar":
+        steps = ["补充与当前计算对应的原始非空 INCAR。", "重新运行诊断，再查看具体参数建议与候选是否可用。"]
+    elif code == "missing_value":
+        steps = ["查看关联问题与依据，核实所需参数的具体新值及适用条件。", "按计算目标补充输入后重新诊断，或备份原输入后人工处理；不要猜测科研参数默认值。"]
+    elif code in ("candidate_missing", "candidate_invalid", "generation_failed"):
+        steps = ["查看仍可使用的诊断报告及问题依据。", "重新运行诊断生成候选；若仍失败，依据建议人工核验并处理原输入。", "只有新候选确实可下载时，再按其差异和人工说明审阅应用。"]
+    elif code in ("manual_review", "safety_rejected"):
+        steps = ["查看关联问题、拟议参数变化及不能生成的原因。", "结合当前计算目标核验建议，备份原始输入后由用户人工处理。", "按需要重新诊断或自行提交计算，本工具不会自动应用或重启作业。"]
+    elif code == "diagnosis_not_ready":
+        steps = ["先运行诊断，再查看报告和修复建议。"]
+    else:
+        steps = ["查看诊断报告中的问题依据及规则覆盖范围。", "当前没有可下载的参数修改；如仍需处理问题，请核验原输入并依诊断建议人工处理。"]
+    return {"reason_code": code, "reason": FIX_REASONS[code], "manual_steps": steps}
+
+
+def _unplanned_changes(original: dict, fixed: dict, parameters: set[str]) -> set[str]:
+    return {name for name in original.keys() | fixed.keys()
+            if name not in parameters and
+            (name not in original or name not in fixed or original[name] != fixed[name])}
+
+
+def _multi_assignment_targets(parsed: ParsedRunData, parameters: set[str]) -> set[str]:
+    """The current parser/apply path handles one assignment per line only.
+
+    Fail closed when rewriting a line could drop a second VASP assignment,
+    including assignments the parser did not recognize as a separate tag.
+    """
+    targets = set()
+    for assignment in parsed.incar.assignments:
+        if assignment.name not in parameters:
+            continue
+        line = parsed.incar.raw_lines[assignment.source_line - 1]
+        line = re.split(r"[#!]", line, maxsplit=1)[0]
+        if len(re.findall(r"[A-Za-z_][A-Za-z0-9_]*\s*=", line)) > 1:
+            targets.add(assignment.name)
+    return targets
 
 
 def _format_value(v) -> str:
@@ -67,18 +132,26 @@ class FixGenerator:
         if not incar_text.strip():
             fix = RecommendedFix(
                 fix_id=_new_fix_id([]), issue_ids=[], target_file="INCAR",
-                safe_to_generate=False,
+                fix_status=FixStatus.UNAVAILABLE, safe_to_generate=False,
                 warnings=["缺少原始 INCAR 文本，无法生成修复"],
+                **fix_reason_fields("missing_incar"),
             )
             return fix, {}
 
         plan, issue_ids, warnings = self._plan_changes(parsed, issues)
         if not plan:
+            if warnings:
+                code = "missing_value" if any("缺少具体新值" in w for w in warnings) else "safety_rejected"
+            elif any(_is_patch_rec(r) for i in issues for r in i.recommendations):
+                code = "no_changes" if issue_ids else "manual_review"
+            else:
+                code = "no_rule" if issues else "no_issues"
             fix = RecommendedFix(
                 fix_id=_new_fix_id(issue_ids), issue_ids=issue_ids,
                 target_file="INCAR", fix_status=FixStatus.UNAVAILABLE,
                 safe_to_generate=False,
                 warnings=warnings + ["没有可通过白名单自动修复的参数变更"],
+                **fix_reason_fields(code),
             )
             return fix, {}
 
@@ -89,10 +162,21 @@ class FixGenerator:
         # Static gate: fixed INCAR must not introduce a new HIGH consistency issue.
         gate_err = self._static_gate(parsed, incar_text, new_text)
         problems = rt_err + gate_err
+        multi = _multi_assignment_targets(parsed, {c["parameter"] for c in plan})
+        if multi:
+            problems.append(f"参数 {sorted(multi)} 所在行含多个赋值，无法安全逐行修改；请人工处理")
+        effective = parse_incar(new_text).effective
+        unplanned = _unplanned_changes(parsed.incar.effective, effective,
+                                       {c["parameter"] for c in plan})
+        if unplanned:
+            problems.append(f"候选修改了未列入计划的参数 {sorted(unplanned)}；拒绝生成，请人工处理")
+        for change in plan:
+            name = change["parameter"]
+            expected = parse_incar(f"{name} = {change['new']}").effective.get(name)
+            if ((change["operation"] == "remove" and name in effective)
+                    or (change["operation"] != "remove" and effective.get(name) != expected)):
+                problems.append(f"参数 {name} 的候选有效值与建议不一致；请人工处理")
         safe = not problems
-
-        new_parsed = parse_incar(new_text)
-        fixed_incar = new_parsed if safe else parsed
 
         changes = [FixChange(
             target_file="INCAR",
@@ -112,7 +196,11 @@ class FixGenerator:
             diff=diff,
             generated_file_id="INCAR.fixed" if safe else None,
             warnings=warnings + problems,
+            **fix_reason_fields("candidate_ready" if safe else "safety_rejected"),
         )
+
+        if not safe:
+            return fix, {}
 
         files = {
             "INCAR.fixed": new_text,
@@ -149,10 +237,15 @@ class FixGenerator:
                 seen.add(param)
                 op = _op_for_action(rec.action, parsed, param)
                 old = parsed.incar.effective.get(param)
-                new = rec.new_value if rec.new_value not in (None, "") else None
+                new = rec.new_value if rec.new_value is not None and rec.new_value.strip() else None
                 if op != "remove" and new is None:
                     warnings.append(
                         f"{iss.rule_id}: 参数 {param} 缺少具体新值，无法自动修复，需人工给定")
+                    continue
+                # Changes must affect the effective parameter, not just formatting.
+                if op == "remove" and param not in parsed.incar.effective:
+                    continue
+                if op != "remove" and parse_incar(f"{param} = {new}").effective.get(param) == old:
                     continue
                 plan.append({
                     "parameter": param, "operation": op,
@@ -260,4 +353,112 @@ def _apply_manual_md(fix: RecommendedFix, plan: list[dict]) -> str:
         "- 修改后请重新运行 VASP-Copilot 的静态一致性诊断确认无新增 HIGH 问题。",
         "- 涉及磁矩/DFT+U/资源/科研阈值的改动务必人工核验后再提交计算。",
     ]
+    lines += ["", "## 原因与风险", "", fix.reason]
+    lines += [f"- {warning}" for warning in fix.warnings]
+    lines += ["", "## 人工步骤", ""] + [f"{n}. {step}" for n, step in enumerate(fix.manual_steps, 1)]
     return "\n".join(lines)
+
+
+def _candidate_valid(fix: RecommendedFix, files: dict, incar_text: str) -> bool:
+    """Validate the existing three-file delivery against the current recommendation."""
+    if (not fix.fix_id or any(not (c.isascii() and (c.isalnum() or c in "_-")) for c in fix.fix_id)
+            or not fix.changes or not fix.diff or not fix.diff.strip()
+            or fix.generated_file_id != "INCAR.fixed" or not incar_text.strip()):
+        return False
+    try:
+        metadata = json.loads(files["parameter_diff.json"])
+        if (metadata.get("fix_id") != fix.fix_id
+                or metadata.get("safe_to_generate") is not True
+                or metadata.get("target_file") != "INCAR"
+                or metadata.get("changes") != [c.model_dump(exclude_none=True) for c in fix.changes]):
+            return False
+        original = ParsedRunData(incar=parse_incar(incar_text))
+        if _multi_assignment_targets(original, {c.parameter for c in fix.changes}):
+            return False
+        fixed = parse_incar(files["INCAR.fixed"]).effective
+        if _unplanned_changes(original.incar.effective, fixed, {c.parameter for c in fix.changes}):
+            return False
+        plan = []
+        for c in fix.changes:
+            name = c.parameter
+            if (c.target_file != "INCAR" or name not in ALLOWED_FIX_WHITELIST
+                    or c.operation not in ("add", "replace", "remove")):
+                return False
+            old = original.incar.effective.get(name)
+            stated_old = parse_incar(f"{name} = {c.old_value}").effective.get(name) if c.old_value is not None else None
+            if old != stated_old:
+                return False
+            if c.operation == "remove":
+                if name not in original.incar.effective or name in fixed or c.new_value is not None:
+                    return False
+            else:
+                if c.new_value is None or not c.new_value.strip():
+                    return False
+                new = parse_incar(f"{name} = {c.new_value}").effective.get(name)
+                if new is None or new == old or fixed.get(name) != new:
+                    return False
+            plan.append({"parameter": name, "operation": c.operation, "old": old, "new": c.new_value})
+            row = f"| `{name}` | {c.operation} | {_format_value(old) if old is not None else '-'} | {c.new_value if c.new_value is not None else '-'} |"
+            if row not in files["APPLY_MANUALLY.md"]:
+                return False
+        expected_text, expected_diff = FixGenerator()._apply(original, plan)
+        return (expected_text == files["INCAR.fixed"] and expected_diff == fix.diff
+                and fix.fix_id in files["APPLY_MANUALLY.md"])
+    except (ValueError, TypeError, KeyError, AttributeError):
+        return False
+
+
+def assess_fix_delivery(result, packages: dict[str, dict[str, str]], incar_text: str):
+    """Single authority for run/get/download, including legacy recommendations.
+
+    Return compatibility fields, enriched copies, and only validated packages.
+    Never mutate the scientific recommendation/status during a read.
+    """
+    fixes = []
+    valid = {}
+    packages = packages if isinstance(packages, dict) else {}
+    for fix in result.recommended_fixes if result is not None else []:
+        code = fix.reason_code
+        if fix.fix_status == FixStatus.GENERATED and fix.safe_to_generate:
+            files = packages.get(fix.fix_id, {})
+            required = ("INCAR.fixed", "parameter_diff.json", "APPLY_MANUALLY.md")
+            if not isinstance(files, dict) or any(not isinstance(files.get(n), str) or not files[n].strip() for n in required):
+                code = "candidate_missing"
+            elif not _candidate_valid(fix, files, incar_text):
+                code = "candidate_invalid"
+            else:
+                code = "candidate_ready"
+                # Package only known delivery names; legacy stray paths never enter ZIP.
+                valid[fix.fix_id] = {n: files[n] for n in required}
+        elif code not in FIX_REASONS or code == "candidate_ready":
+            if not incar_text.strip():
+                code = "missing_incar"
+            elif fix.changes:
+                code = "manual_review"
+            elif any("缺少具体新值" in w for w in fix.warnings):
+                code = "missing_value"
+            elif any("白名单" in w and "跳过" in w for w in fix.warnings):
+                code = "safety_rejected"
+            elif any("拒绝" in w for w in fix.warnings):
+                code = "safety_rejected"
+            elif any(_is_patch_rec(rec) for i in result.issues for rec in i.recommendations):
+                code = "manual_review"
+            else:
+                code = "no_rule" if result.issues else "no_issues"
+        fixes.append(fix.model_copy(update=fix_reason_fields(code)))
+    if valid:
+        code = "candidate_ready"
+    elif fixes:
+        code = fixes[0].reason_code
+    elif result is None:
+        code = "diagnosis_not_ready"
+    elif not incar_text.strip():
+        code = "missing_incar"
+    elif result.issues:
+        code = "no_rule"
+    else:
+        code = "no_issues"
+    fields = fix_reason_fields(code)
+    summary = {"fix_available": bool(valid), "fix_reason_code": code,
+               "fix_reason": fields["reason"], "fix_manual_steps": fields["manual_steps"]}
+    return summary, fixes, valid

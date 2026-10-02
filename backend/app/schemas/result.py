@@ -47,6 +47,10 @@ class DiagnosisResult(BaseModel):
     issues: list[Issue] = []
     plots: dict[str, Any] = {}
     recommended_fixes: list[RecommendedFix] = []
+    fix_available: bool = False
+    fix_reason_code: str = ""
+    fix_reason: str = ""
+    fix_manual_steps: list[str] = []
     missing_evidence: list[str] = []
     next_step: NextStep
     report: Optional[ReportMetadata] = None

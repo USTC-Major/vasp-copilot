@@ -7,9 +7,10 @@ from pydantic import BaseModel, ConfigDict
 
 from ..core.config import Settings
 from ..core.errors import NotFoundError
-from ..diagnostics.fixes import FixGenerator
+from ..diagnostics.fixes import FixGenerator, fix_reason_fields, _new_fix_id
 from ..llm import get_explainer
-from ..schemas.status import ModeKind
+from ..schemas.fix import RecommendedFix
+from ..schemas.status import FixStatus, ModeKind
 from ..services.diagnosis_service import DiagnosisService, _load_parsed
 from ..services.run_store import RunStore
 
@@ -190,11 +191,13 @@ class DoctorTools:
         record.result = result
         record.report_text = body
         record.report_metadata = result.report
-        if result.recommended_fixes and result.recommended_fixes[0].safe_to_generate:
-            record.fix_files = {result.recommended_fixes[0].fix_id: fix_files}
+        record.fix_files = {result.recommended_fixes[0].fix_id: fix_files} \
+            if result.recommended_fixes and fix_files else {}
+        delivery, _, record.fix_files = record.fix_delivery()
         record.diagnosis_status = "succeeded"
         self._store.put(record)
         return ToolResult(ok=True, data={
+            **delivery,
             "diagnosis_status": "succeeded",
             "issue_count": _count_by_severity(result.issues),
             "issues": [i.model_dump(exclude_none=True) for i in result.issues],
@@ -235,21 +238,34 @@ class DoctorTools:
         selected = [i for i in record.result.issues if i.issue_id in set(args.issue_ids)]
         parsed = _load_parsed(record.base_dir, None)
         incar_text = _read_incar(record.base_dir)
-        fix, fix_files = self._fixer.generate(parsed=parsed, issues=selected,
-                                              incar_text=incar_text)
-        if fix.safe_to_generate and fix_files:
-            record.fix_files = {fix.fix_id: fix_files}
-            self._store.put(record)
+        try:
+            fix, fix_files = self._fixer.generate(parsed=parsed, issues=selected,
+                                                  incar_text=incar_text)
+        except Exception:
+            fix = RecommendedFix(fix_id=_new_fix_id(args.issue_ids), issue_ids=args.issue_ids,
+                                 target_file="INCAR", fix_status=FixStatus.UNAVAILABLE,
+                                 **fix_reason_fields("generation_failed"))
+            fix_files = {}
+        record.result.recommended_fixes = [fix]
+        record.fix_files = {fix.fix_id: fix_files} if fix_files else {}
+        delivery, record.result.recommended_fixes, record.fix_files = record.fix_delivery()
+        for key, value in delivery.items():
+            setattr(record.result, key, value)
+        record.report_text, record.report_metadata = self._service._reporter.generate(record.result)
+        record.result.report = record.report_metadata
+        self._store.put(record)
+        fix = record.result.recommended_fixes[0]
+        if delivery["fix_available"]:
             return ToolResult(ok=True, data={
                 "fix": fix.model_dump(exclude_none=True),
-                "fix_available": True,
+                **delivery,
                 "files": sorted(fix_files.keys()),
                 "download_url": "/api/v1/diagnosis/" + args.diagnosis_id + "/download-fix",
             }, messages=["已为选中 issue 生成白名单修复。"])
         return ToolResult(
             ok=True,
             data={"fix": fix.model_dump(exclude_none=True),
-                  "fix_available": False,
+                  **delivery,
                   "warnings": fix.warnings},
             messages=["没有可通过白名单安全生成的自动修复，请按建议人工核验后应用。"])
 

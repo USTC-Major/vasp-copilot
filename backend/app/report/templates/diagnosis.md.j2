@@ -54,6 +54,7 @@
 - 目标文件：`{{ fx.target_file }}`；策略：{{ fx.strategy }}
 - 状态：{{ fx.fix_status.value }}；是否可直接生成：{{ fx.safe_to_generate }}；是否需要用户确认：{{ fx.requires_user_confirmation }}
 - 关联问题：{{ fx.issue_ids|join(', ') or '无' }}
+{% if fx.reason %}- 原因：{{ fx.reason }}{% endif %}
 {% if fx.changes %}
 | 参数 | 操作 | 旧值 | 新值 |
 |------|------|------|------|
@@ -68,6 +69,11 @@
 ```
 {% endif %}
 {% if fx.warnings %}- 警告：{{ fx.warnings|join('；') }}{% endif %}
+{% if fx.manual_steps %}
+- 人工步骤：
+{% for step in fx.manual_steps %}  {{ loop.index }}. {{ step }}
+{% endfor %}
+{% endif %}
 {% else %}
 - 无可自动生成的白名单修复。
 {% endfor %}

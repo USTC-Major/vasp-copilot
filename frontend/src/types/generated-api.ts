@@ -524,6 +524,9 @@ export interface RecommendedFix {
   diff: string;
   generated_file_id: string;
   warnings: string[];
+  reason_code?: string;
+  reason?: string;
+  manual_steps?: string[];
 }
 
 export interface CalculationMode {
@@ -570,6 +573,10 @@ export interface DiagnosisResult {
     magnetization: MagnetizationPlotData;
   };
   recommended_fixes: RecommendedFix[];
+  fix_available?: boolean;
+  fix_reason_code?: string;
+  fix_reason?: string;
+  fix_manual_steps?: string[];
   missing_evidence: unknown[];
   next_step: NextStep;
   report: {

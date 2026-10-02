@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Optional
 
 from ..diagnostics.engine import DiagnosisEngine
-from ..diagnostics.fixes import FixGenerator
+from ..diagnostics.fixes import FixGenerator, assess_fix_delivery, fix_reason_fields, _new_fix_id
 from ..diagnostics.rules import all_rules
 from ..parsers.incar import parse_incar
 from ..parsers.job_log import parse_job_log
@@ -24,7 +24,7 @@ from ..schemas.mode import CalculationMode
 from ..schemas.parsed import ParsedRunData
 from ..schemas.vasprun import VasprunInfo
 from ..schemas.result import DiagnosisResult, Provenance
-from ..schemas.status import DiagnosisStatus, ModeKind, Severity
+from ..schemas.status import DiagnosisStatus, FixStatus, ModeKind, Severity
 from ..llm import get_explainer
 
 _JOB_LOG_KEYWORDS = (".out", ".log", "log", "slurm", "job")
@@ -268,10 +268,19 @@ class DiagnosisService:
 
         fix: Optional[RecommendedFix] = None
         fix_files: dict[str, str] = {}
-        if parsed.incar.raw_lines:
+        incar_text = "\n".join(parsed.incar.raw_lines)
+        try:
             fix, fix_files = self._fixer.generate(
                 parsed=parsed, issues=issues,
-                incar_text="\n".join(parsed.incar.raw_lines))
+                incar_text=incar_text)
+        except Exception:
+            # Candidate delivery is optional; preserve deterministic issues/report.
+            fix = RecommendedFix(
+                fix_id=_new_fix_id([i.issue_id for i in issues]),
+                issue_ids=[i.issue_id for i in issues], target_file="INCAR",
+                fix_status=FixStatus.UNAVAILABLE,
+                **fix_reason_fields("generation_failed"),
+            )
         fixes = [fix] if fix is not None else []
 
         nxt = compute_next_step(issues=issues, fixes=fixes)
@@ -293,6 +302,11 @@ class DiagnosisService:
                 llm_used=False, mode=ModeKind.RULE_BASED,
             ),
         )
+        packages = {fix.fix_id: fix_files} if fix is not None and fix_files else {}
+        delivery, result.recommended_fixes, valid = assess_fix_delivery(result, packages, incar_text)
+        for key, value in delivery.items():
+            setattr(result, key, value)
+        fix_files = valid.get(fix.fix_id, {}) if fix is not None else {}
         if llm_explanation:
             explainer = get_explainer(settings)
             if explainer is not None:
