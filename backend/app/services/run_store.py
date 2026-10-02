@@ -32,6 +32,20 @@ class RunRecord:
     def touch(self) -> None:
         self.touched_at = time.time()
 
+    def fix_delivery(self):
+        """Assess current delivery at read time, so stale/corrupt packages fail closed."""
+        from ..diagnostics.fixes import assess_fix_delivery
+        incar_text = ""
+        for name in ("INCAR", "incar"):
+            path = self.base_dir / name
+            if path.is_file():
+                try:
+                    incar_text = path.read_text(encoding="utf-8", errors="replace")
+                except OSError:
+                    pass
+                break
+        return assess_fix_delivery(self.result, self.fix_files, incar_text)
+
 
 class RunStore:
     """MVP 的内存存储（单进程）。基于 TTL 清理。"""

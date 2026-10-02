@@ -71,16 +71,15 @@ async def run(req: RunRequest,
     record.result = result
     record.report_text = body
     record.report_metadata = result.report
-    if result.recommended_fixes and result.recommended_fixes[0].safe_to_generate:
-        record.fix_files = {result.recommended_fixes[0].fix_id: fix_files}
+    record.fix_files = {result.recommended_fixes[0].fix_id: fix_files} \
+        if result.recommended_fixes and fix_files else {}
+    delivery, _, record.fix_files = record.fix_delivery()
     record.diagnosis_status = "succeeded"
     store.put(record)
 
     counts: dict[str, int] = {}
     for i in result.issues:
         counts[i.severity.value] = counts.get(i.severity.value, 0) + 1
-    first = result.recommended_fixes[0] if result.recommended_fixes else None
-    fix_available = bool(first is not None and first.safe_to_generate)
     return ApiEnvelope(request_id=x_request_id, data={
         "diagnosis_id": req.diagnosis_id,
         "diagnosis_status": "succeeded",
@@ -94,7 +93,7 @@ async def run(req: RunRequest,
             record, dict(result.report.model_dump(exclude_none=True))
             if result.report is not None else None),
         "report_ready": bool(record.report_text),
-        "fix_available": fix_available,
+        **delivery,
         "mode": result.provenance.mode.value,
     })
 
@@ -212,6 +211,9 @@ async def get_result(diagnosis_id: str,
             "diagnosis_status": record.diagnosis_status,
         })
     data = record.result.model_dump(exclude_none=True)
+    delivery, fixes, _ = record.fix_delivery()
+    data.update(delivery)
+    data["recommended_fixes"] = [f.model_dump(exclude_none=True) for f in fixes]
     data["summary"] = _summary_object(record.result)
     data["plots"] = _plots_compat(record.result.plots)
     data["detected_run"] = record.result.detected_run.model_dump(exclude_none=True) \
@@ -240,13 +242,17 @@ async def get_report(diagnosis_id: str,
 async def download_fix(diagnosis_id: str,
                        x_request_id: str = Depends(get_request_id)) -> Response:
     record = store.get(diagnosis_id)
-    if not record.fix_files:
-        raise ConflictError("FIX_NOT_AVAILABLE", "no safe auto fix is available")
+    delivery, _, packages = record.fix_delivery()
+    if not delivery["fix_available"]:
+        raise ConflictError("FIX_NOT_AVAILABLE", delivery["fix_reason"])
     buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-        for fix_id, files in record.fix_files.items():
-            for name, content in files.items():
-                zf.writestr(f"{fix_id}/{name}", content)
+    try:
+        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            for fix_id, files in packages.items():
+                for name, content in files.items():
+                    zf.writestr(f"{fix_id}/{name}", content)
+    except Exception as exc:
+        raise ConflictError("FIX_PACKAGE_FAILED", "候选下载打包失败，请重试下载；诊断报告仍可使用。", retryable=True) from exc
     buffer.seek(0)
     return Response(
         content=buffer.getvalue(),

@@ -14,6 +14,7 @@ import IssueCard from '../components/diagnosis/IssueCard';
 import ScfPlot from '../components/diagnosis/ScfPlot';
 import MagnetizationPlot from '../components/diagnosis/MagnetizationPlot';
 import ReportDownloadPanel from '../components/diagnosis/ReportDownloadPanel';
+import RepairSuggestions from '../components/diagnosis/RepairSuggestions';
 import ErrorAlert from '../components/common/ErrorAlert';
 import EmptyState from '../components/common/EmptyState';
 import StatusBadge from '../components/common/StatusBadge';
@@ -22,7 +23,7 @@ const { Title, Text } = Typography;
 
 const DiagnosisResultPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
-  const { data, isLoading, error, refetch } = useDiagnosis(id || null);
+  const { data, isLoading, isFetching, error, refetch } = useDiagnosis(id || null);
   const [selectedFixes, setSelectedFixes] = useState<Set<string>>(new Set());
 
   const handleSelectIssue = (issueId: string, selected: boolean) => {
@@ -145,45 +146,29 @@ const DiagnosisResultPage: React.FC = () => {
         </Col>
       </Row>
 
-      {/* 修复建议 */}
-      {recommended_fixes.length > 0 && (
-        <Card title="修复建议" style={{ marginBottom: 16 }}>
-          {recommended_fixes.map((fix) => (
-            <Card key={fix.fix_id} size="small" style={{ marginBottom: 8 }}>
-              <Space>
-                <Tag color={fix.safe_to_generate ? 'green' : 'orange'}>
-                  {fix.safe_to_generate ? '可生成' : '需确认'}
-                </Tag>
-                <Text>{fix.target_file}</Text>
-                <Tag>{fix.strategy}</Tag>
-                {fix.requires_user_confirmation && <Tag color="warning">需确认</Tag>}
-              </Space>
-              <pre style={{
-                background: '#f6f8fa',
-                padding: 8,
-                marginTop: 8,
-                fontSize: 12,
-                borderRadius: 4,
-              }}>
-                {fix.diff}
-              </pre>
-              {fix.warnings.map((w, i) => (
-                <Text key={i} type="warning" style={{ fontSize: 12 }}>{w}</Text>
-              ))}
-            </Card>
-          ))}
-        </Card>
-      )}
+      {/* 修复建议始终显示权威状态，包括候选不可用或旧响应缺少状态字段时。 */}
+      <RepairSuggestions
+        fixes={recommended_fixes || []}
+        issues={issues}
+        fixAvailable={data.fix_available}
+        reasonCode={data.fix_reason_code}
+        reason={data.fix_reason}
+        manualSteps={data.fix_manual_steps}
+      />
 
       {/* LLM 通俗解释 / 追问 */}
       <LlmExplainPanel diagnosisId={data.diagnosis_id} />
 
       {/* 下载 */}
       <ReportDownloadPanel
+        key={data.diagnosis_id}
         diagnosisId={data.diagnosis_id}
         reportReady={data.report.ready}
         reportUrl={data.report.download_url}
-        fixAvailable={recommended_fixes.length > 0}
+        fixAvailable={data.fix_available === true && !isFetching}
+        fixReason={data.fix_reason}
+        onRefresh={() => refetch()}
+        refreshing={isFetching}
       />
 
       {/* Missing Evidence */}
