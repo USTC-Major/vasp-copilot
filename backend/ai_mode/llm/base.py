@@ -43,6 +43,23 @@ class CompletionResult:
     tool_requests: list[ToolRequest] = field(default_factory=list)
     usage: dict[str, int] = field(default_factory=dict)
     raw: object = None
+    finish_reason: str | None = None
+    reasoning_present: bool = False
+
+    @property
+    def response_metadata(self) -> dict[str, Any]:
+        """Only allowlisted, content-free fields may leave the LLM adapter."""
+        reason = self.finish_reason
+        if reason not in {None, "stop", "length", "tool_calls", "function_call", "content_filter"}:
+            reason = "unknown"
+        usage = self.usage if isinstance(self.usage, dict) else {}
+        return {
+            "finish_reason": reason,
+            "body_chars": len(self.text.strip()),
+            "reasoning_present": bool(self.reasoning_present),
+            "usage": {key: value for key in ("prompt_tokens", "completion_tokens", "total_tokens")
+                      if type(value := usage.get(key)) is int and value >= 0},
+        }
 
 
 class LLMClient(ABC):

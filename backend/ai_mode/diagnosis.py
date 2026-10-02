@@ -16,7 +16,8 @@ from urllib.parse import quote
 import httpx
 
 from .config import AiModeConfig
-from .llm.errors import LLMBadRequestError, LLMError, LLMUnavailableError
+from .llm.errors import (LLMBadRequestError, LLMError, LLMUnavailableError,
+                         LLMInvalidResponseError, LLMTimeoutError)
 from .llm.factory import build_client, resolve_provider
 
 MAX_DIAGNOSIS_CONTEXT = 24_000
@@ -476,6 +477,10 @@ def explain(diagnosis_id: str, question: str, cfg: AiModeConfig, *, toolbox_clie
     try:
         try:
             completion = client.complete(messages, max_tokens=cfg.llm_max_tokens, temperature=cfg.llm_temperature)
+        except LLMInvalidResponseError as exc:
+            raise DiagnosisExplainError("AI_MODE_DIAGNOSIS_INVALID_RESPONSE", "模型响应格式无效，请检查模型接口兼容性或更换模型后重试", 502) from exc
+        except LLMTimeoutError as exc:
+            raise DiagnosisExplainError("AI_MODE_DIAGNOSIS_MODEL_TIMEOUT", "模型调用超时，请稍后重试；若持续超时，请检查网络或模型超时设置", 503, True) from exc
         except LLMUnavailableError as exc:
             raise DiagnosisExplainError("AI_MODE_DIAGNOSIS_MODEL_UNAVAILABLE", "模型服务暂不可达，请稍后重试", 503, True) from exc
         except LLMBadRequestError as exc:
@@ -483,8 +488,13 @@ def explain(diagnosis_id: str, question: str, cfg: AiModeConfig, *, toolbox_clie
         except LLMError as exc:
             raise DiagnosisExplainError("AI_MODE_DIAGNOSIS_MODEL_FAILED", "模型调用失败，请稍后重试", 503) from exc
         answer = str(getattr(completion, "text", "") or "").strip()
+        if getattr(completion, "finish_reason", None) == "length":
+            detail = "解释正文被长度上限截断" if answer else "模型达到长度上限，未生成解释正文"
+            raise DiagnosisExplainError("AI_MODE_DIAGNOSIS_RESPONSE_TRUNCATED", detail + "；请缩小问题范围，或在智能模式设置中调整思考选项后重试", 502, True)
         if not answer:
-            raise DiagnosisExplainError("AI_MODE_DIAGNOSIS_INVALID_RESPONSE", "模型未返回可展示的解释", 502, True)
+            if getattr(completion, "reasoning_present", False):
+                raise DiagnosisExplainError("AI_MODE_DIAGNOSIS_REASONING_ONLY", "模型仅返回思考内容，未生成解释正文；请检查模型与思考设置，或更换模型后重试", 502, True)
+            raise DiagnosisExplainError("AI_MODE_DIAGNOSIS_EMPTY_RESPONSE", "模型返回空正文；可重试一次，若仍为空，请检查模型接口兼容性或更换模型", 502, True)
         return {
             "mode": "ai", "ok": True, "diagnosis_id": diagnosis_id,
             "answer": answer, "evidence_source": "toolbox_diagnosis",

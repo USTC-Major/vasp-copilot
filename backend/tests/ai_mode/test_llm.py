@@ -298,3 +298,153 @@ def test_openai_stream_midstream_timeout_raises_unavailable():
     with pytest.raises(LLMUnavailableError) as ei:
         next(chunks_iter)
     assert "流式调用超时" in str(ei.value)
+
+
+@pytest.mark.parametrize("content,reason,reasoning,outcome", [
+    ("完整正文", "stop", "", "本次返回了正文"),
+    ("", "stop", "", "本次未生成正文"),
+    (None, "length", "private-thought", "已达测试长度上限"),
+    (None, "stop", "private-thought", "仅返回思考内容"),
+    ("半句", "length", "", "本次正文已达测试长度上限"),
+])
+def test_ping_only_claims_connectivity(content, reason, reasoning, outcome):
+    body = {"choices": [{"message": {"content": content, "reasoning_content": reasoning},
+                         "finish_reason": reason}]}
+    http = FakeHttp(FakeResp(200, body))
+    client = OpenAIClient(base_url="http://llm/v1", api_key="sk-test", model="gpt-test",
+                          max_tokens=1024, enable_thinking=True, max_retries=0, http=http)
+    ok, message = client.ping()
+    assert ok is True
+    assert "接口已连通" in message and outcome in message
+    assert "未验证完整解释生成" in message and "诊断页" in message
+    assert "private-thought" not in message
+    assert len(http.requests) == 1
+    payload = http.requests[0][1]
+    assert payload["max_tokens"] == 1
+    assert payload["thinking"] == {"type": "enabled"}
+    assert client.max_tokens == 1024
+
+
+@pytest.mark.parametrize("body", [
+    "not-json-private-response", None, [], {}, {"choices": []},
+    {"choices": "private-response"}, {"choices": [None]},
+    {"choices": [{"message": []}]}, {"choices": [{"message": {}}]},
+    {"choices": [{"message": {"content": ["private-response"]}}]},
+    {"choices": [{"message": {"content": "ok", "reasoning_content": []}}]},
+    {"choices": [{"message": {"content": "ok"}, "finish_reason": {"secret": "x"}}]},
+])
+def test_openai_malformed_response_is_safe_and_not_retried(body):
+    from ai_mode.llm.errors import LLMInvalidResponseError
+    http = FakeHttp(FakeResp(200, body))
+    with pytest.raises(LLMInvalidResponseError) as error:
+        openai_client(http).complete([{"role": "user", "content": "hi"}])
+    assert "private-response" not in str(error.value)
+    assert len(http.requests) == 1
+
+
+def test_response_metadata_preserves_raw_internally_but_logs_only_safe_counts(caplog):
+    body = {"choices": [{"message": {"content": "private-answer", "reasoning_content": "private-thought"},
+                         "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30,
+                      "private-field": "secret", "completion_tokens_details": {"secret": "x"}},
+            "secret": "sk-private"}
+    http = FakeHttp(FakeResp(200, body))
+    with caplog.at_level("INFO", logger="ai_mode.llm.openai"):
+        result = openai_client(http).complete([{"role": "user", "content": "private-question"}])
+    assert result.raw is body  # reviewer still consumes the full internal envelope
+    assert result.text == "private-answer"
+    assert result.response_metadata == {
+        "finish_reason": "stop", "body_chars": 14, "reasoning_present": True,
+        "usage": {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30},
+    }
+    assert "LLM response metadata" in caplog.text
+    assert all(value not in caplog.text for value in (
+        "private-answer", "private-thought", "private-question", "sk-private", "secret"))
+
+
+def test_metadata_drops_untrusted_finish_reason_and_usage_values():
+    from ai_mode.llm.base import CompletionResult
+    result = CompletionResult(text="ok", finish_reason="private-upstream-text",
+                              usage={"total_tokens": "private", "prompt_tokens": True, "completion_tokens": -1})
+    assert result.response_metadata["finish_reason"] == "unknown"
+    assert result.response_metadata["usage"] == {}
+
+
+@pytest.mark.parametrize("status", [400, 401, 403, 429, 500, 502])
+def test_ping_http_errors_do_not_leak_provider_body(status):
+    http = FakeHttp(FakeResp(status, "private-body sk-private private-question"))
+    ok, message = openai_client(http, retries=0).ping()
+    assert ok is False and str(status) in message
+    assert "private" not in message
+    assert len(http.requests) == 1
+
+
+def test_ping_network_and_timeout_messages_are_safe():
+    for exception in (httpx.ConnectError("https://sk-private@host/private"),
+                      httpx.ReadTimeout("private-request")):
+        http = FakeHttp(exception)
+        ok, message = openai_client(http, retries=0).ping()
+        assert ok is False and "private" not in message
+        assert len(http.requests) == 1
+
+
+def test_settings_connection_uses_same_precise_ping_message(monkeypatch):
+    import ai_mode.llm.factory as factory
+    body = {"choices": [{"message": {"content": None, "reasoning_content": "private-thought"},
+                         "finish_reason": "length"}]}
+    http = FakeHttp(FakeResp(200, body))
+    http.close = lambda: None
+    monkeypatch.setattr(factory, "_openai_factory", lambda config: openai_client(http, retries=0))
+    result = factory.test_connection(cfg(llm_provider="openai"))
+    assert result["ok"] is True
+    assert result["provider"] == "openai"
+    assert "未生成正文" in result["message"] and "未验证完整解释生成" in result["message"]
+    assert "private-thought" not in result["message"]
+
+
+@pytest.mark.parametrize("base_url,official", [
+    ("https://api.deepseek.com", True),
+    ("https://api.deepseek.com/v1", True),
+    ("https://API.DEEPSEEK.COM/beta", True),
+    ("https://api.openai.com/v1", False),
+    ("https://proxy.example/v1", False),
+    ("https://api.deepseek.com.proxy.example/v1", False),
+    ("https://fake-api.deepseek.com/v1", False),
+    ("https://api.deepseek.com@proxy.example/v1", False),
+    ("https://proxy.example/api.deepseek.com/v1", False),
+    ("https://proxy.example/v1?host=api.deepseek.com", False),
+    ("https://api.deepseek.com./v1", False),
+])
+@pytest.mark.parametrize("thinking", [False, True])
+def test_thinking_switch_is_host_specific_and_consistent(base_url, official, thinking):
+    complete_http = FakeHttp(FakeResp(200, {"choices": [{"message": {"content": "ok"}}]}))
+    stream_http = StreamHttp(200, [
+        'data: {"choices":[{"delta":{"content":"ok"}}]}', "data: [DONE]",
+    ])
+    clients = [OpenAIClient(base_url=base_url, api_key="test-key", model="deepseek-flash",
+                            enable_thinking=thinking, max_tokens=1024, http=http)
+               for http in (complete_http, stream_http)]
+    clients[0].complete([{"role": "user", "content": "hi"}])
+    assert list(clients[1].stream([{"role": "user", "content": "hi"}])) == [{"type": "answer", "text": "ok"}]
+    for http in (complete_http, stream_http):
+        assert len(http.requests) == 1
+        payload = http.requests[0][1]
+        if thinking or official:
+            assert payload["thinking"] == {"type": "enabled" if thinking else "disabled"}
+        else:
+            assert "thinking" not in payload
+        assert payload["max_tokens"] == 1024
+
+
+@pytest.mark.parametrize("method", ["ping", "stream_fallback"])
+def test_deepseek_explicit_disabled_also_applies_to_ping_and_stream_fallback(method):
+    http = FakeHttp(FakeResp(200, {"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]}))
+    client = OpenAIClient(base_url="https://api.deepseek.com/v1", api_key="test-key", model="deepseek-flash",
+                          enable_thinking=False, max_tokens=1024, http=http)
+    if method == "ping":
+        assert client.ping()[0] is True
+    else:
+        assert list(client.stream([{"role": "user", "content": "hi"}])) == [{"type": "answer", "text": "ok"}]
+    assert len(http.requests) == 1
+    assert http.requests[0][1]["thinking"] == {"type": "disabled"}
+    assert http.requests[0][1]["max_tokens"] == (1 if method == "ping" else 1024)

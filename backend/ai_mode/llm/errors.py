@@ -15,3 +15,11 @@ class LLMUnavailableError(LLMError):
 
 class LLMBadRequestError(LLMError):
     """请求本身有问题（4xx，重试无益）。"""
+
+
+class LLMInvalidResponseError(LLMUnavailableError):
+    """The provider returned an invalid completion envelope (no response body exposed)."""
+
+
+class LLMTimeoutError(LLMUnavailableError):
+    """The model request exhausted its configured timeout/retry policy."""

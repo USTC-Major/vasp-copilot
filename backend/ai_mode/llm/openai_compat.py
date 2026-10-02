@@ -10,11 +10,13 @@ import json
 import logging
 import time
 from typing import Any, Optional
+from urllib.parse import urlsplit
 
 import httpx
 
 from .base import LLMClient, Message, CompletionResult
-from .errors import LLMBadRequestError, LLMUnavailableError
+from .errors import (LLMBadRequestError, LLMUnavailableError,
+                     LLMInvalidResponseError, LLMTimeoutError)
 
 logger = logging.getLogger("ai_mode.llm.openai")
 
@@ -47,6 +49,20 @@ class OpenAIClient(LLMClient):
     def close(self) -> None:
         self._http.close()
 
+    def _thinking_parameters(self) -> dict[str, Any]:
+        if self.enable_thinking:
+            return {"thinking": {"type": "enabled"}}
+        # DeepSeek defaults to thinking=enabled. Only its documented official
+        # endpoint is known to accept disabled; unknown compatible gateways keep
+        # the existing omission behavior. Parse the host, never substring-match.
+        try:
+            endpoint = urlsplit(self.base_url)
+            if endpoint.scheme in {"http", "https"} and endpoint.hostname == "api.deepseek.com":
+                return {"thinking": {"type": "disabled"}}
+        except ValueError:
+            pass  # Request validation remains the transport's responsibility.
+        return {}
+
     def stream(self, messages, *, max_tokens=None, temperature=None):
         """真实增量流（SSE）：解析 delta.reasoning_content 与 content。
 
@@ -62,8 +78,7 @@ class OpenAIClient(LLMClient):
             "max_tokens": max_tokens if max_tokens is not None else self.max_tokens,
             "temperature": self.temperature if temperature is None else temperature,
         }
-        if self.enable_thinking:
-            payload["thinking"] = {"type": "enabled"}
+        payload.update(self._thinking_parameters())
         url = f"{self.base_url}/chat/completions"
         headers = {"Authorization": f"Bearer {self.api_key}",
                    "Content-Type": "application/json"}
@@ -112,10 +127,21 @@ class OpenAIClient(LLMClient):
 
     # ---- 连通 ----
     def ping(self) -> tuple[bool, str]:
-        """连通测试：一次极小请求。返回 (是否可用, 人类可读消息)。"""
+        """One-token connectivity probe; it cannot validate full answer generation."""
         try:
-            self.complete([{"role": "user", "content": "ping"}], max_tokens=1)
-            return True, f"LLM 连通正常（{self.model}）"
+            result = self.complete([{"role": "user", "content": "ping"}], max_tokens=1)
+            if not result.text:
+                outcome = "本次未生成正文"
+                if result.finish_reason == "length":
+                    outcome += "（已达测试长度上限）"
+                elif result.reasoning_present:
+                    outcome += "（仅返回思考内容）"
+            elif result.finish_reason == "length":
+                outcome = "本次正文已达测试长度上限"
+            else:
+                outcome = "本次返回了正文"
+            return True, (f"LLM 接口已连通；{outcome}。连通测试仅请求 1 token，"
+                          "未验证完整解释生成；请在诊断页验证解释是否可用。")
         except LLMUnavailableError as exc:
             return False, str(exc)
         except LLMBadRequestError as exc:
@@ -146,7 +172,7 @@ class OpenAIClient(LLMClient):
                     attempt += 1
                     time.sleep(min(2 ** attempt, 10))
                     continue
-                raise LLMUnavailableError(
+                raise LLMTimeoutError(
                     f"LLM 调用超时（{self.timeout_seconds}s，已重试 {attempt} 次）"
                 ) from exc
             except httpx.HTTPError as exc:
@@ -155,7 +181,7 @@ class OpenAIClient(LLMClient):
                     attempt += 1
                     time.sleep(min(2 ** attempt, 10))
                     continue
-                raise LLMUnavailableError(f"LLM 网络错误: {exc}") from exc
+                raise LLMUnavailableError("LLM 网络连接失败，请检查服务地址和网络") from exc
         # 不可达：重试已用尽
 
     def complete(self, messages: list[Message], *, max_tokens: int | None = None,
@@ -166,28 +192,47 @@ class OpenAIClient(LLMClient):
             "max_tokens": max_tokens if max_tokens is not None else self.max_tokens,
             "temperature": self.temperature if temperature is None else temperature,
         }
-        if self.enable_thinking:
-            payload["thinking"] = {"type": "enabled"}
+        payload.update(self._thinking_parameters())
         resp = self._request(payload)
         if resp.status_code == 401:
             raise LLMBadRequestError("LLM 鉴权失败(401)：请检查 api_key")
         if resp.status_code == 403:
             raise LLMBadRequestError("LLM 拒绝访问(403)：请检查权限/配额")
         if resp.status_code == 400:
-            raise LLMBadRequestError(f"LLM 请求被拒(400): {resp.text[:300]}")
+            raise LLMBadRequestError("LLM 请求被拒(400)：请检查模型与请求参数")
         if resp.status_code in _RETRIABLE:
             raise LLMUnavailableError(
-                f"LLM 服务端不可用({resp.status_code}): {resp.text[:300]}")
+                f"LLM 服务端不可用({resp.status_code})，请稍后重试")
         if resp.status_code >= 400:
             raise LLMBadRequestError(
-                f"LLM 请求被拒({resp.status_code}): {resp.text[:300]}")
+                f"LLM 请求被拒({resp.status_code})：请检查智能模式设置")
         try:
             data = resp.json()
         except ValueError as exc:
-            raise LLMUnavailableError("LLM 返回非 JSON 响应") from exc
-        choices = data.get("choices") or []
-        if not choices:
-            raise LLMUnavailableError(f"LLM 返回空 choices: {str(data)[:200]}")
-        msg = choices[0].get("message", {})
-        text = (msg.get("content") or "").strip()
-        return CompletionResult(text=text, usage=data.get("usage", {}), raw=data)
+            raise LLMInvalidResponseError("LLM 返回非 JSON 响应，请检查模型接口兼容性") from exc
+        choices = data.get("choices") if isinstance(data, dict) else None
+        if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+            raise LLMInvalidResponseError("LLM 返回无效 choices，请检查模型接口兼容性")
+        choice = choices[0]
+        msg = choice.get("message")
+        if not isinstance(msg, dict):
+            raise LLMInvalidResponseError("LLM 返回无效 message，请检查模型接口兼容性")
+        content = msg.get("content")
+        if content is not None and not isinstance(content, str):
+            raise LLMInvalidResponseError("LLM 返回无效正文格式，请检查模型接口兼容性")
+        if "content" not in msg and "reasoning_content" not in msg:
+            raise LLMInvalidResponseError("LLM 响应缺少正文，请检查模型接口兼容性")
+        reason = choice.get("finish_reason")
+        if reason is not None and not isinstance(reason, str):
+            raise LLMInvalidResponseError("LLM 返回无效结束状态，请检查模型接口兼容性")
+        reasoning = msg.get("reasoning_content")
+        if reasoning is not None and not isinstance(reasoning, str):
+            raise LLMInvalidResponseError("LLM 返回无效思考格式，请检查模型接口兼容性")
+        result = CompletionResult(
+            text=(content or "").strip(),
+            usage=data.get("usage") if isinstance(data.get("usage"), dict) else {},
+            raw=data, finish_reason=reason,
+            reasoning_present=bool(reasoning and reasoning.strip()),
+        )
+        logger.info("LLM response metadata: %s", json.dumps(result.response_metadata))
+        return result
