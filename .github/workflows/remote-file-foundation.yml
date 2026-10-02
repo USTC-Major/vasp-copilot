@@ -194,6 +194,7 @@ jobs:
               "backend.tests.ai_mode.test_task_file_grant",
               "backend.tests.ai_mode.test_tools",
               "backend.tests.file_action_review.test_legacy_auto_approve",
+              "backend.tests.file_action_review.test_wait_idle",
               "backend.tests.file_action_review.test_task_workspace_grant",
               "backend.tests.toolbox_review.test_potcar_script_tools",
               "backend.tests.toolbox_review.test_rw3_replan_identity",
