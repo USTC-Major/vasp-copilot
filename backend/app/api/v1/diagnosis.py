@@ -166,7 +166,7 @@ def _plots_compat(plots: dict) -> dict:
         series = []
         for idx, item in enumerate(mag.get("series", []), start=1):
             row = dict(item)
-            row.setdefault("atom_index", row.get("ion") or idx)
+            row.setdefault("atom_index", row.get("ion"))
             if "final_moment" not in row and "tot" in row:
                 row["final_moment"] = row["tot"]
             if "element" not in row:

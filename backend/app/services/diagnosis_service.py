@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Optional
 
 from ..diagnostics.engine import DiagnosisEngine
+from ..diagnostics.magnetic_analysis import build_magnetic_analysis
 from ..diagnostics.fixes import FixGenerator, assess_fix_delivery, fix_reason_fields, _new_fix_id
 from ..diagnostics.rules import all_rules
 from ..parsers.incar import parse_incar
@@ -12,6 +13,7 @@ from ..parsers.job_log import parse_job_log
 from ..parsers.kpoints import parse_kpoints
 from ..parsers.cif import parse_cif
 from ..parsers.oszicar import parse_oszicar
+from ..parsers.magnetic_evidence import finite, parse_oszicar_magnetic
 from ..parsers.outcar import parse_outcar
 from ..parsers.poscar import parse_poscar
 from ..parsers.vasprun import VASPRUN_MAX_PARSE_BYTES, parse_vasprun
@@ -131,6 +133,7 @@ def _load_parsed(base_dir: Path, job_log: Optional[str]) -> ParsedRunData:
     oszicar_text = _read(base_dir, ("OSZICAR", "oszicar"))
     if oszicar_text is not None:
         parsed.oszicar = parse_oszicar(oszicar_text)
+        parsed.oszicar.magnetic_evidence = parse_oszicar_magnetic(oszicar_text)
         parsed.source_files.append("OSZICAR")
     poscar_text = _read(base_dir, ("POSCAR", "poscar"))
     if poscar_text is not None:
@@ -216,17 +219,25 @@ def _highest_severity(issues: list[Issue]) -> str:
 
 def _build_plots(parsed: ParsedRunData) -> dict:
     """按 MVP 7.5 构建结构化数值序列（scf + 磁化）。"""
-    mag_series: list[dict] = []
-    if parsed.outcar is not None and parsed.outcar.final_magnetization:
-        for atom in parsed.outcar.final_magnetization:
-            mag_series.append({
-                "atom_index": atom.get("ion"),
-                "s": atom.get("s"), "p": atom.get("p"),
-                "d": atom.get("d"), "tot": atom.get("tot"),
-            })
+    analysis = build_magnetic_analysis(parsed)
+    mag_series = [{"atom_index": atom["atom_index"], "element": atom["element"],
+                   "initial_moment": atom["input_reference"], "final_moment": atom["output_moment"],
+                   "tot": atom["output_moment"]} for atom in analysis["atoms"]]
+    rows_by_atom: dict = {}
+    for evidence_row in analysis["raw_rows"]:
+        if evidence_row["axis"] == "x":
+            rows_by_atom.setdefault(evidence_row["atom_index"], []).append(evidence_row)
+    for row in mag_series:
+        evidence_rows = rows_by_atom.get(row["atom_index"], [])
+        if len(evidence_rows) == 1 and analysis["status"] != "unsupported":
+            row.update({k: evidence_rows[0]["values"].get(k) for k in ("s", "p", "d", "f")})
+    # Legacy parsed data without structure/table provenance remain output-only.
+    if not mag_series and analysis["status"] != "unsupported":
+        mag_series = [{"atom_index": row.get("ion"), **{k: finite(row.get(k)) for k in ("s", "p", "d", "f", "tot")}}
+                      for row in parsed.outcar.final_magnetization or []]
     return {
         "scf": build_scf_plot(parsed),
-        "magnetization": {"x_label": "原子索引", "y_label": "磁矩 (μB)", "series": mag_series},
+        "magnetization": {"x_label": "原子索引", "y_label": "磁矩 (μB)", "series": mag_series, "analysis": analysis},
     }
 def _make_summary(issues: list[Issue]) -> str:
     high = [i for i in issues

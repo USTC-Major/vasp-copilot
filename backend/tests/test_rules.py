@@ -9,6 +9,9 @@ from app.schemas.status import Severity
 from app.diagnostics.engine import DiagnosisEngine
 from app.diagnostics.rules import all_rules
 from app.parsers.oszicar import parse_oszicar
+from app.parsers.incar import parse_incar
+from app.parsers.outcar import parse_outcar
+from app.parsers.poscar import parse_poscar
 
 RULES = {r.rule_id: r for r in all_rules()}
 
@@ -289,25 +292,26 @@ def test_ionic_reached_nsw_not_affected_by_electronic_steps():
 
 
 # ---------- magnetic (collinear only) ----------
+def _magnetic_run(reference, output):
+    n = len(reference)
+    structure = parse_poscar("fixture\n1\n1 0 0\n0 1 0\n0 0 1\nFe\n" + str(n) + "\nDirect\n" + "0.000000 0.000000 0.000000\n" * n)
+    structure.source_file = "POSCAR"
+    outcar = parse_outcar("ISPIN = 2\nmagnetization (x)\n# of ion s p d tot\n-----\n" + "".join(f"{i} 0 0 0 {value}\n" for i, value in enumerate(output, 1)) + "-----\ntot 0 0 0 0\nGeneral timing and accounting informations\n")
+    return ParsedRunData(calculation_mode=collinear(), poscar=structure,
+                         incar=parse_incar("MAGMOM=" + " ".join(map(str, reference))), outcar=outcar)
+
+
 def test_magmom_sign_flip_trigger_and_not():
-    p = ParsedRunData(calculation_mode=collinear(),
-                      incar=IncarData(effective={"MAGMOM": [2.0, 1.0]}),
-                      outcar=OutcarData(final_magnetization=[{"tot": -1.5}, {"tot": 0.9}]))
+    p = _magnetic_run([2.0, 1.0], [-1.5, 0.9])
     assert len(get("MAGMOM_SIGN_FLIP").run(p)) == 1
-    p2 = ParsedRunData(calculation_mode=collinear(),
-                       incar=IncarData(effective={"MAGMOM": [2.0]}),
-                       outcar=OutcarData(final_magnetization=[{"tot": 1.5}]))
+    p2 = _magnetic_run([2.0], [1.5])
     assert get("MAGMOM_SIGN_FLIP").run(p2) == []
 
 
 def test_local_moment_collapse_trigger_and_not():
-    p = ParsedRunData(calculation_mode=collinear(),
-                      incar=IncarData(effective={"MAGMOM": [2.0, 1.0]}),
-                      outcar=OutcarData(final_magnetization=[{"tot": 0.01}, {"tot": 0.9}]))
+    p = _magnetic_run([2.0, 1.0], [0.01, 0.9])
     assert len(get("LOCAL_MOMENT_COLLAPSE").run(p)) == 1
-    p2 = ParsedRunData(calculation_mode=collinear(),
-                       incar=IncarData(effective={"MAGMOM": [2.0]}),
-                       outcar=OutcarData(final_magnetization=[{"tot": 1.8}]))
+    p2 = _magnetic_run([2.0], [1.8])
     assert get("LOCAL_MOMENT_COLLAPSE").run(p2) == []
 
 

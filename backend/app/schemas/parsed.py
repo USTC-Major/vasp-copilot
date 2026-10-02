@@ -46,6 +46,8 @@ class PoscarData(BaseModel):
     elements: list[str] = []
     counts: list[int] = []
     source_file: str = ""  # 结构来源：POSCAR 或 CONTCAR（设计 4.2：每字段记录来源文件）
+    positions: list[dict[str, Any]] = Field(default_factory=list)
+    positions_complete: bool = False
 
 
 class ElectronicStep(BaseModel):
@@ -85,6 +87,7 @@ class OszicarData(BaseModel):
     energy_series: list[float] = Field(default_factory=list)
     converged: bool = False
     last_step: int = 0  # deprecated：last_ionic_step 别名，禁止再表示电子步
+    magnetic_evidence: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class KpointsData(BaseModel):
@@ -112,6 +115,7 @@ class OutcarData(BaseModel):
     ionic_convergence_reached: Optional[bool] = None
     final_magnetization: Optional[list[dict[str, Any]]] = None
     magnetization_total: Optional[dict[str, Any]] = None
+    magnetic_evidence: dict[str, Any] = Field(default_factory=dict)
     error_lines: list[dict[str, Any]] = []
     warnings: list[str] = []
 

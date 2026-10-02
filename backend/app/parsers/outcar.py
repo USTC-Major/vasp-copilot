@@ -6,6 +6,7 @@ from typing import Any, Optional
 
 from ..schemas.mode import CalculationMode, MagnetizationAnalysisMode
 from ..schemas.parsed import OutcarData
+from .magnetic_evidence import parse_outcar_magnetic
 
 
 _VERSION_RE = re.compile(r"vasp\.(\S+)")
@@ -171,59 +172,14 @@ def parse_outcar(text: str) -> OutcarData:
     data.ionic_convergence_reached = (
         True if any(_IONIC_CONVERGENCE_RE.search(ln) for ln in lines) else None)
 
-    # 6) final magnetization (only meaningful for collinear)
+    # 6) Latest projected output, with header-defined columns and raw evidence.
+    # Keep vector evidence even when scalar comparison is unsupported.
+    data.magnetic_evidence = parse_outcar_magnetic(text)
     if mode.magnetization_analysis_mode == MagnetizationAnalysisMode.COLLINEAR:
-        _extract_magnetization(data, lines)
+        tables = data.magnetic_evidence["tables"]
+        scalar = next((t for t in tables if t["axis"] == "x"), None)
+        if scalar:
+            data.final_magnetization = [{"ion": row["ion"], **row["values"]} for row in scalar["rows"]]
+            data.magnetization_total = scalar["total"]["values"] if scalar["total"] else None
 
     return data
-
-
-def _extract_magnetization(data: OutcarData, lines: list[str]) -> None:
-    n = len(lines)
-    per_atom: list[dict[str, Any]] = []
-    total: Optional[dict[str, Any]] = None
-    i = n - 1
-    while i >= 0:
-        if _MAG_HEADER_COLLINEAR in lines[i]:
-            j = i + 1
-            # skip the "# of ion" header row and advance to the first separator
-            while j < n and "----" not in lines[j]:
-                j += 1
-            j += 1  # past the opening separator
-            while j < n:
-                ln = lines[j].strip()
-                if not ln:
-                    j += 1
-                    continue
-                if "----" in ln:
-                    # end of atom rows; next non-empty line is tot (skip it)
-                    j += 1
-                    while j < n and lines[j].strip() == "":
-                        j += 1
-                    if j < n:
-                        parts = lines[j].split()
-                        if len(parts) >= 4 and (parts[0].lower() == "tot" or _to_float(parts[0]) == 0.0):
-                            vals = [_to_float(p) for p in parts[1:]]
-                            total = {"s": vals[0] if len(vals) > 0 else None,
-                                     "p": vals[1] if len(vals) > 1 else None,
-                                     "d": vals[2] if len(vals) > 2 else None,
-                                     "tot": vals[3] if len(vals) > 3 else None}
-                    break
-                parts = ln.split()
-                try:
-                    first = int(parts[0])
-                except (ValueError, IndexError):
-                    j += 1
-                    continue
-                vals = [_to_float(p) for p in parts[1:]]
-                per_atom.append({"ion": first,
-                                 "s": vals[0] if len(vals) > 0 else None,
-                                 "p": vals[1] if len(vals) > 1 else None,
-                                 "d": vals[2] if len(vals) > 2 else None,
-                                 "tot": vals[3] if len(vals) > 3 else None})
-                j += 1
-            break
-        i -= 1
-    if per_atom:
-        data.final_magnetization = per_atom
-    data.magnetization_total = total
