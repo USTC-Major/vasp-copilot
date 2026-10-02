@@ -3,12 +3,12 @@
 // ============================================================
 
 import React, { useMemo } from 'react';
-import { Alert, Card, Row, Col, Typography, Space, Button, List, Tag, Divider, Spin } from 'antd';
+import { Alert, Card, Row, Col, Typography, Space, Button, List, Tag, Spin } from 'antd';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
   RobotOutlined, ToolOutlined, BuildOutlined, BugOutlined, CloudUploadOutlined,
-  ArrowRightOutlined, ExperimentOutlined, SettingOutlined,
+  ArrowRightOutlined, ExperimentOutlined,
 } from '@ant-design/icons';
 import { useFeatureFlags } from '../hooks/useApi';
 import { aiApi, diagnosisApi, toolboxApi, workflowsApi } from '../api/client';
@@ -83,8 +83,8 @@ const HomePage: React.FC = () => {
 
   const toolboxEntries = [
     { key: '/toolbox/projects', icon: <ToolOutlined />, title: '计算任务', desc: '无需模型，直接准备输入、人工确认、提交、监控并查看报告' },
-    { key: '/workflow', icon: <BuildOutlined />, title: '生成工作流', desc: '上传结构文件，通过 Recipe 生成 relax → static → DOS 完整工作流' },
-    { key: '/diagnosis/upload', icon: <BugOutlined />, title: '诊断计算', desc: '上传计算目录 zip，自动检测并诊断 SCF 收敛、参数一致性与作业问题' },
+    { key: '/workflow', icon: <BuildOutlined />, title: '生成工作流', desc: '根据结构和计算需求，生成并下载 VASP 输入文件' },
+    { key: '/diagnosis/upload', icon: <BugOutlined />, title: '诊断计算', desc: '分析计算输出，查看问题、收敛趋势与处理建议' },
     ...(fakeHpcEnabled
       ? [{ key: '/hpc/deploy', icon: <CloudUploadOutlined />, title: '远程部署（离线演示）', desc: 'Fake HPC 工具箱演示：不连接真实集群，不代表智能任务的运行环境' }]
       : []),
@@ -96,7 +96,7 @@ const HomePage: React.FC = () => {
       <div style={{ textAlign: 'center', marginBottom: 40 }}>
         <Title level={1} style={{ fontWeight: 700, letterSpacing: '-0.5px', marginBottom: 12 }}>
           <ExperimentOutlined style={{ marginRight: 10, color: AppleBlue, fontSize: 36 }} />
-          VASP-Copilot / VASP-Doctor+
+          VASP-Copilot
         </Title>
         <Paragraph style={{ fontSize: 17, maxWidth: 600, margin: '0 auto 16px', color: '#6e6e73' }}>
           面向材料计算初学者的 VASP 输入文件生成与计算结果诊断平台
@@ -116,14 +116,10 @@ const HomePage: React.FC = () => {
               <div style={{ textAlign: 'center' }}>
                 <Title level={3} style={{ marginTop: 4, marginBottom: 8, fontWeight: 700 }}>智能模式</Title>
                 <Paragraph type="secondary" style={{ fontSize: 14, marginBottom: 16, textAlign: 'left' }}>
-                以项目为中心：Agent 协助规划、排程并生成输入文件；任何文件写入与作业提交都按本次精确内容确认。递进任务等待前置成功后重新预检与确认，不会自动补提。配套的全局设置（齿轮）在右上角。
+                  以项目为中心：Agent 协助规划、排程并生成输入文件；任何文件写入与作业提交都按本次精确内容确认。递进任务等待前置成功后重新预检与确认，不会自动补提。
                 </Paragraph>
                 <Button type="primary" size="large" block icon={<ArrowRightOutlined />} onClick={() => navigate('/ai')}>
                   进入智能模式
-                </Button>
-                <Divider style={{ margin: '20px 0 8px', borderColor: 'rgba(0,0,0,0.06)' }} />
-                <Button type="text" icon={<SettingOutlined />} onClick={() => navigate('/ai/settings')} style={{ color: '#86868b' }}>
-                  智能设置（右上角齿轮）
                 </Button>
               </div>
             </Space>

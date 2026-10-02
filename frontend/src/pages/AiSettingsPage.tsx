@@ -284,7 +284,7 @@ const AiSettingsPage: React.FC = () => {
           <Col xs={24} sm={12}><label htmlFor="settings-llm_provider"><Text strong>provider</Text></label><Input id="settings-llm_provider" value={form.llm_provider} onChange={set("llm_provider")} placeholder="auto" /></Col>
           <Col span={24} role="group" aria-labelledby="llm-key-label"><Text id="llm-key-label" strong>API Key</Text><SecretInput hasSecret={secrets.llm.configured} manageable={secrets.llm.manageable} source={secrets.llm.source} value={form.llm_api_key} onChange={(v) => { setForm((p) => ({ ...p, llm_api_key: v })); setTestResults({}); setTestNotice(null); }} onClear={clearSecret("llm")} placeholder={secrets.llm.configured ? "输入新值以整体替换" : "未配置 LLM key，填写后保存" } /></Col>
           <Col span={24}><Space wrap><Switch aria-label="深度思考" aria-describedby="thinking-help" checked={form.llm_enable_thinking} onChange={(v) => { setForm((p) => ({ ...p, llm_enable_thinking: v })); setTestResults({}); setTestNotice(null); }} />
-            <Text strong>深度思考</Text></Space><Text id="thinking-help" type="secondary" style={{ display: "block", fontSize: 12, marginTop: 4 }}>开启后请求体携带 thinking 参数，模型输出增量思考过程（是否支持以接入模型/网关为准）。</Text></Col>
+            <Text strong>深度思考</Text></Space><Text id="thinking-help" type="secondary" style={{ display: "block", fontSize: 12, marginTop: 4 }}>开启后请求体携带 thinking 参数，模型输出增量思考过程（是否支持以接入模型/网关为准）。关闭此选项会关闭官方 DeepSeek 接口的思考模式；其他接口的关闭效果取决于提供方默认设置。</Text></Col>
           <Col span={24}>{testButton("llm", "测试 LLM（已保存配置）")}{testResult("llm")}</Col>
         </Row>
       ))}

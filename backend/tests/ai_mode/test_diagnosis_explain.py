@@ -74,6 +74,117 @@ def test_explain_rejects_incomplete_diagnosis(client, monkeypatch):
     assert response.json()["error"]["code"] == "AI_MODE_DIAGNOSIS_NOT_READY"
 
 
+@pytest.mark.parametrize("content,reason,reasoning,code,hint", [
+    ("", "stop", "", "AI_MODE_DIAGNOSIS_EMPTY_RESPONSE", "检查模型接口"),
+    (None, "length", "private-thought", "AI_MODE_DIAGNOSIS_RESPONSE_TRUNCATED", "缩小问题范围"),
+    (None, "stop", "private-thought", "AI_MODE_DIAGNOSIS_REASONING_ONLY", "思考设置"),
+    ("partial-private-answer", "length", "", "AI_MODE_DIAGNOSIS_RESPONSE_TRUNCATED", "缩小问题范围"),
+])
+def test_explain_response_failure_classification(client, monkeypatch, caplog, content, reason, reasoning, code, hint):
+    import httpx
+    import ai_mode.diagnosis as diagnosis
+    from ai_mode.llm.openai_compat import OpenAIClient
+
+    requests = []
+    def handle(request):
+        requests.append(json.loads(request.content))
+        return httpx.Response(200, json={
+            "choices": [{"message": {"content": content, "reasoning_content": reasoning}, "finish_reason": reason}],
+            "usage": {"prompt_tokens": 20, "completion_tokens": 30},
+        })
+    model = OpenAIClient(base_url="https://example.invalid/v1", api_key="sk-private", model="test",
+                         max_retries=2, http=httpx.Client(transport=httpx.MockTransport(handle)))
+    monkeypatch.setattr(diagnosis, "fetch_diagnosis", lambda diagnosis_id, client=None: _diagnosis())
+    monkeypatch.setattr(diagnosis, "build_client", lambda *args, **kwargs: model)
+    with caplog.at_level("INFO", logger="ai_mode.llm.openai"):
+        response = client.post("/ai/v1/diagnosis/explain", json={
+            "diagnosis_id": "diag_demo", "question": "private-question",
+        })
+    assert response.status_code == 502
+    error = response.json()["error"]
+    assert error["code"] == code and error["retryable"] is True
+    assert hint in error["message"]
+    assert "answer" not in response.json()
+    assert all(value not in response.text + caplog.text for value in (
+        "private-thought", "partial-private-answer", "private-question", "sk-private"))
+    assert len(requests) == 1  # even configured transport retries cannot repeat a completed empty answer
+
+
+@pytest.mark.parametrize("case,status,code", [
+    ("malformed", 502, "AI_MODE_DIAGNOSIS_INVALID_RESPONSE"),
+    ("timeout", 503, "AI_MODE_DIAGNOSIS_MODEL_TIMEOUT"),
+    ("http503", 503, "AI_MODE_DIAGNOSIS_MODEL_UNAVAILABLE"),
+    ("http401", 502, "AI_MODE_DIAGNOSIS_MODEL_FAILED"),
+])
+def test_explain_transport_and_structure_failures(client, monkeypatch, case, status, code):
+    import httpx
+    import ai_mode.diagnosis as diagnosis
+    from ai_mode.llm.openai_compat import OpenAIClient
+
+    calls = []
+    def handle(request):
+        calls.append(request)
+        if case == "timeout":
+            raise httpx.ReadTimeout("sk-private private-question", request=request)
+        if case.startswith("http"):
+            return httpx.Response(int(case[4:]), text="private-provider-body sk-private")
+        return httpx.Response(200, json={"choices": [], "private": "private-provider-body"})
+    model = OpenAIClient(base_url="https://example.invalid/v1", api_key="sk-private", model="test",
+                         max_retries=0, http=httpx.Client(transport=httpx.MockTransport(handle)))
+    monkeypatch.setattr(diagnosis, "fetch_diagnosis", lambda diagnosis_id, client=None: _diagnosis())
+    monkeypatch.setattr(diagnosis, "build_client", lambda *args, **kwargs: model)
+    response = client.post("/ai/v1/diagnosis/explain", json={"diagnosis_id": "diag_demo", "question": "private-question"})
+    assert response.status_code == status
+    assert response.json()["error"]["code"] == code
+    assert "private" not in response.text
+    assert len(calls) == 1
+
+
+def test_explain_normal_openai_response_compatible(client, monkeypatch):
+    import httpx
+    import ai_mode.diagnosis as diagnosis
+    from ai_mode.llm.openai_compat import OpenAIClient
+
+    model = OpenAIClient(base_url="https://example.invalid/v1", api_key="test-key", model="test", http=httpx.Client(
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json={
+            "choices": [{"message": {"content": "  完整解释  ", "reasoning_content": "private-thought"}, "finish_reason": "stop"}],
+        }))))
+    monkeypatch.setattr(diagnosis, "fetch_diagnosis", lambda diagnosis_id, client=None: _diagnosis())
+    monkeypatch.setattr(diagnosis, "build_client", lambda *args, **kwargs: model)
+    response = client.post("/ai/v1/diagnosis/explain", json={"diagnosis_id": "diag_demo", "question": "请解释"})
+    assert response.status_code == 200
+    assert response.json()["answer"] == "完整解释"
+    assert "private-thought" not in response.text
+
+
+@pytest.mark.parametrize("body,ok,hint", [
+    ({"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]}, True, "本次返回了正文"),
+    ({"choices": [{"message": {"content": None, "reasoning_content": "private-thought"}, "finish_reason": "length"}]}, True, "本次未生成正文"),
+    ({"choices": []}, False, "检查模型接口兼容性"),
+])
+def test_settings_test_route_preserves_connectivity_semantics(client, monkeypatch, body, ok, hint):
+    import httpx
+    import ai_mode.llm.factory as factory
+    from ai_mode.llm.openai_compat import OpenAIClient
+
+    requests = []
+    def handle(request):
+        requests.append(json.loads(request.content))
+        return httpx.Response(200, json=body)
+    model = OpenAIClient(base_url="https://example.invalid/v1", api_key="test-key", model="test", max_retries=0,
+                         http=httpx.Client(transport=httpx.MockTransport(handle)))
+    monkeypatch.setattr(factory, "_openai_factory", lambda config: model)
+    response = client.post("/ai/v1/settings/test/llm")
+    assert response.status_code == 200
+    assert response.json()["ok"] is ok
+    assert hint in response.json()["message"]
+    if ok:
+        assert "接口已连通" in response.json()["message"]
+        assert "未验证完整解释生成" in response.json()["message"]
+    assert "private-thought" not in response.text
+    assert len(requests) == 1 and requests[0]["max_tokens"] == 1
+
+
 def test_explain_rejects_extra_fields_without_reading_toolbox(client, monkeypatch):
     import ai_mode.diagnosis as diagnosis
     called = False
