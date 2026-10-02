@@ -102,6 +102,7 @@ class FileActions:
         self.guard = threading.RLock()
         self.wake, self.stopping = threading.Event(), threading.Event()
         self.active, self.queue, self.threads, self.leases = {}, deque(), [], {}
+        self._inflight = 0
         self.legacy_sessions = {}
         self.legacy_preparing = {}
         self.generation = 0
@@ -979,6 +980,9 @@ class FileActions:
                     if candidate[:2] not in self.active:
                         key = candidate
                         self.queue.remove(candidate)
+                        # Account for the claim gap without holding guard over
+                        # _claim's task -> guard -> store lock sequence.
+                        self._inflight += 1
                         break
                 self.wake.clear()
             if key is None:
@@ -1003,6 +1007,7 @@ class FileActions:
                 with self.guard:
                     if self.active.get(key[:2], {}).get("action_id") == key[2]:
                         self.active.pop(key[:2], None)
+                    self._inflight -= 1
                     self.wake.set()
 
     def _update_action(self, project, task, action_id, change):
@@ -1422,7 +1427,7 @@ class FileActions:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             with self.guard:
-                if not self.active and not self.queue:
+                if not self.active and not self.queue and not self._inflight:
                     return True
             time.sleep(0.01)
         return False
