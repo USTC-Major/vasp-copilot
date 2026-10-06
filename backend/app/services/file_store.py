@@ -16,7 +16,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
-from ..core.errors import NotFoundError
+from ..core.errors import ConflictError, NotFoundError
+from ..core.file_identity import is_bound_generated_file_id
 from ..schemas.structure import StructureSummary
 
 
@@ -159,7 +160,18 @@ class FileStore:
     def register_file(self, file_id: str, name: str, kind: str, data: bytes) -> FileRecord:
         """按指定 file_id 注册文件（生成产物以文件树中的 file_id 供预览）。"""
         dest = self._path_for(file_id)
-        dest.write_bytes(data)
+        existing = self._files.get(file_id)
+        # Protect only generated identities; ordinary upload/diagnosis registration
+        # keeps its existing semantics. Same-content regeneration refreshes TTL.
+        protect_generated = kind == "generated" or bool(existing and existing.kind == "generated")
+        if protect_generated:
+            if dest.exists() and dest.read_bytes() != data:
+                raise ConflictError(
+                    "GENERATED_FILE_ID_CONFLICT",
+                    "生成文件引用已绑定其他内容，不能覆盖旧预览",
+                )
+        if not protect_generated or not dest.exists():
+            dest.write_bytes(data)
         record = FileRecord(
             file_id=file_id,
             name=name,
@@ -177,6 +189,14 @@ class FileStore:
         record = self._files.get(file_id)
         if record is None or time.time() - record.touched_at > self._ttl:
             raise NotFoundError("FILE_NOT_FOUND", "unknown or expired file id")
+        # Legacy generated records remain on disk and in the persisted index.
+        # Their global counters do not encode ownership, so returning their bytes
+        # could silently show another workflow. Never remap or delete them here.
+        if record.kind == "generated" and not is_bound_generated_file_id(record.file_id):
+            raise NotFoundError(
+                "FILE_NOT_FOUND",
+                "旧版生成文件预览无法确认归属，请重新生成工作流",
+            )
         record.touched_at = time.time()
         self._persist()
         return record

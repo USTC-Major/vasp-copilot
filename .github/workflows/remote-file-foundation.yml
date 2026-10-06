@@ -141,6 +141,7 @@ jobs:
             backend/tests/test_bootstrap.py \
             backend/tests/test_chat_api.py \
             backend/tests/test_workflow_api.py \
+            backend/tests/test_generated_preview_api.py \
             backend/tests/test_u3_input_descriptions.py \
             backend/tests/test_u6_fix_delivery.py \
             backend/tests/test_u4_scf.py \
@@ -155,6 +156,7 @@ jobs:
             backend/tests/be_a/test_kpoints.py \
             backend/tests/be_a/test_dftu_forms.py \
             backend/tests/be_a/test_pipeline_contract.py \
+            backend/tests/be_a/test_generated_file_identity.py \
             backend/tests/be_a/test_golden.py \
             backend/tests/be_a/test_bundle_zip.py \
             backend/tests/be_a/test_recipe_schema_fail_closed.py \
