@@ -11,6 +11,9 @@ venv/
 # 本地环境（含密钥）
 .env
 .env.local
+.env.*
+!.env.example
+!.env.sample
 
 # 运行时数据与临时目录（上传解压、会话、测试临时、pip 缓存）
 data/
@@ -52,3 +55,20 @@ _tmp_*.py
 AGENTS.md
 AI_MODE_*.md
 V020_TEAM_DEVELOPMENT_WORKFLOW.md
+
+# Desktop local dependency/build/test/user state (source and brand assets remain tracked)
+/desktop/.cache/
+/desktop/deps/
+/desktop/evidence/
+/desktop/trial-profile/
+/desktop/*profile*/
+/desktop/sessions/
+/desktop/logs/
+/desktop/**/*.exe
+/desktop/**/*.dll
+/desktop/**/*.pdb
+/desktop/**/*.nupkg
+/desktop/**/*.lnk
+/desktop/**/preferences.json
+/launcher/**/*.exe
+/launcher/**/*.dll
