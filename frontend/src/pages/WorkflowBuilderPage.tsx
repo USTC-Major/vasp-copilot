@@ -345,14 +345,19 @@ const WorkflowBuilderPage: React.FC = () => {
   const currentStepIndex = steps.findIndex((s) => s.key === currentStep);
 
   return (
-    <div style={{ maxWidth: 1200, margin: '0 auto', padding: '24px 16px' }}>
-      <Title level={3}>生成工作流</Title>
-
+    <div className="wf-page">
+      <div className="wf-page-heading">
+        <div><Title level={3}>生成工作流</Title><p>上传结构，确认计算设置，检查计划与输入文件。</p></div>
+        <span className="wf-phase"><strong>{String(currentStepIndex + 1).padStart(2, '0')} / 06</strong>{steps[currentStepIndex].title}</span>
+      </div>
+      <div className="wf-stage-rail">
       <Steps
         current={currentStepIndex}
         items={steps.map((s) => ({ title: s.title }))}
-        style={{ marginBottom: 32 }}
       />
+      </div>
+      <div className="wf-body-grid">
+      <section className="wf-stage-content" aria-label={steps[currentStepIndex].title}>
 
       {/* Step 1: 上传 */}
       {currentStep === 'upload' && (
@@ -401,7 +406,7 @@ const WorkflowBuilderPage: React.FC = () => {
           )}
 
           {summary && showAiPanel && sampleNameValid(sampleName) && (
-            <div style={{ marginTop: 16 }}>
+            <div className="wf-ai-assistant" style={{ marginTop: 16 }}>
               <AiPlanAssistant
                 key={`${summary.structure_id}:${effectiveSampleName(summary, sampleName)}`}
                 structureId={summary.structure_id}
@@ -581,7 +586,20 @@ const WorkflowBuilderPage: React.FC = () => {
           </Space>
         </div>
       )}
-
+      </section>
+      <aside className="wf-inspector" aria-label="当前结构与工作流摘要">
+        <h4>当前工作区</h4>
+        {summary ? <dl>
+          <div><dt>结构</dt><dd>{summary.formula}</dd></div>
+          <div><dt>原子 / 元素</dt><dd>{summary.atom_count} 原子 · {summary.elements.join('、')}</dd></div>
+          <div><dt>样品名称</dt><dd>{effectiveSampleName(summary, sampleName)}</dd></div>
+          <div><dt>晶格长度 / Å</dt><dd>{[summary.lattice?.a, summary.lattice?.b, summary.lattice?.c].map(v => typeof v === 'number' && Number.isFinite(v) ? v.toFixed(3) : '—').join(' / ')}</dd></div>
+          <div><dt>晶格角 / °</dt><dd>{[summary.lattice?.alpha, summary.lattice?.beta, summary.lattice?.gamma].map(v => typeof v === 'number' && Number.isFinite(v) ? v.toFixed(2) : '—').join(' / ')}</dd></div>
+          {workflowPlan && <div><dt>计划步骤</dt><dd>{workflowPlan.steps.map(step => step.label).join(' → ')}</dd></div>}
+        </dl> : <p className="wf-empty">尚未载入结构。上传 POSCAR / CIF，或从 Materials Project 导入。</p>}
+        <div className="wf-inspector-note">{currentStep === 'confirm' ? '参数设置后仍需检查最终摘要并确认，才会请求工作流计划。' : currentStep === 'plan' ? '检查步骤、Recipe 覆盖来源和文件继承，再生成输入文件。' : '结构摘要来自实际解析结果。生成输入文件不会启动科学计算。'}</div>
+      </aside>
+      </div>
     </div>
   );
 };

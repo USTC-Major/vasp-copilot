@@ -41,8 +41,8 @@ function clampPos(pos: Pos, w: number, h: number): Pos {
   const vw = Math.max(margin, window.innerWidth);
   const vh = Math.max(margin, window.innerHeight);
   return {
-    left: Math.min(Math.max(margin, pos.left), vw - w - margin),
-    top: Math.min(Math.max(margin, pos.top), vh - h - margin),
+    left: Math.min(Math.max(margin, pos.left), Math.max(margin, vw - w - margin)),
+    top: Math.min(Math.max(margin, pos.top), Math.max(margin, vh - h - margin)),
   };
 }
 
@@ -52,7 +52,7 @@ function loadPos(key: string, fallback: () => Pos): Pos {
     if (raw) {
       const parsed: unknown = JSON.parse(raw);
       const p = parsed as Pos;
-      if (typeof p.left === 'number' && typeof p.top === 'number') {
+      if (typeof p.left === 'number' && Number.isFinite(p.left) && typeof p.top === 'number' && Number.isFinite(p.top)) {
         return p;
       }
     }
@@ -65,6 +65,9 @@ function loadPos(key: string, fallback: () => Pos): Pos {
 const FAB_SIZE = 52;
 const PANEL_WIDTH = 380;
 const PANEL_HEIGHT = 560;
+function panelSize() {
+  return { width: Math.min(PANEL_WIDTH, Math.max(0, window.innerWidth - 48)), height: Math.min(PANEL_HEIGHT, Math.max(0, window.innerHeight - 160)) };
+}
 
 function defaultFabPos(): Pos {
   return {
@@ -135,8 +138,11 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onOpenSettings }) => {
   const [messages, setMessages] = useState<ChatMessageItem[]>(loadHistory);
   const [input, setInput] = useState('');
 
-  const [fabPos, setFabPos] = useState<Pos>(() => loadPos(FAB_POS_KEY, defaultFabPos));
-  const [panelPos, setPanelPos] = useState<Pos>(() => loadPos(PANEL_POS_KEY, defaultPanelPos));
+  const [fabPos, setFabPos] = useState<Pos>(() => clampPos(loadPos(FAB_POS_KEY, defaultFabPos), FAB_SIZE, FAB_SIZE));
+  const [panelPos, setPanelPos] = useState<Pos>(() => {
+    const { width, height } = panelSize();
+    return clampPos(loadPos(PANEL_POS_KEY, defaultPanelPos), width, height);
+  });
   const dragRef = useRef<{
     key: 'fab' | 'panel';
     startX: number;
@@ -183,8 +189,10 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onOpenSettings }) => {
       dragRef.current = null;
     };
     const onResize = () => {
+      dragRef.current = null;
       setFabPos((p) => clampPos(p, FAB_SIZE, FAB_SIZE));
-      setPanelPos((p) => clampPos(p, PANEL_WIDTH, PANEL_HEIGHT));
+      const { width, height } = panelSize();
+      setPanelPos((p) => clampPos(p, width, height));
     };
     window.addEventListener('mousemove', onMove as EventListener);
     window.addEventListener('mouseup', onUp);
@@ -206,8 +214,8 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onOpenSettings }) => {
       startX: e.clientX,
       startY: e.clientY,
       orig: pos,
-      w: key === 'fab' ? FAB_SIZE : PANEL_WIDTH,
-      h: key === 'fab' ? FAB_SIZE : PANEL_HEIGHT,
+      w: key === 'fab' ? FAB_SIZE : panelSize().width,
+      h: key === 'fab' ? FAB_SIZE : panelSize().height,
     };
   };
   const listRef = useRef<HTMLDivElement>(null);
@@ -327,7 +335,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onOpenSettings }) => {
       />
 
       {open && (
-        <div style={{ ...PANEL_STYLE, left: panelPos.left, top: panelPos.top }}>
+        <div className="wf-chat-panel" style={{ ...PANEL_STYLE, left: panelPos.left, top: panelPos.top }}>
           <div
             onMouseDown={(e) => startDrag('panel', e)}
             style={{
@@ -373,6 +381,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onOpenSettings }) => {
 
           <div
             ref={listRef}
+            className="wf-chat-messages"
             style={{
               flex: 1,
               overflowY: 'auto',
@@ -400,6 +409,8 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onOpenSettings }) => {
                   }}
                 >
                   <div
+                    className="wf-chat-bubble"
+                    data-chat-role={isUser ? 'user' : 'assistant'}
                     style={{
                       maxWidth: '78%',
                       padding: '8px 12px',
@@ -425,6 +436,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onOpenSettings }) => {
 
           {!configLoading && !usable && (
             <div
+              className="wf-chat-warning"
               style={{
                 padding: '8px 12px',
                 background: '#fff7e6',
@@ -444,6 +456,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onOpenSettings }) => {
           )}
 
           <div
+            className="wf-chat-compose"
             style={{
               padding: 10,
               borderTop: '1px solid #f0f0f0',

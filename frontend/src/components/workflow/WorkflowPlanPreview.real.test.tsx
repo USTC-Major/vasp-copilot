@@ -41,4 +41,14 @@ describe("WorkflowPlanPreview with the real ReactFlow implementation", () => {
     expect(screen.getByText("这是一个需要在窄屏中换行的超长真实节点名称")).toBeInTheDocument();
     expect(screen.queryByTestId("minimap")).not.toBeInTheDocument();
   });
+
+  it("keeps an unresolved dependency in the full inheritance list without rendering an invalid edge", () => {
+    render(<WorkflowPlanPreview steps={[step("上游步骤")]} dependencies={[{
+      dependency_id: 'missing-endpoint', from_step_id: 'relax-1', to_step_id: 'unknown-step',
+      source_file: 'CONTCAR', target_file: 'POSCAR', required: true, satisfied: false,
+      requires_upstream_diagnosis_pass: false,
+    }]} />);
+    expect(screen.getByText('unknown-step/POSCAR')).toBeInTheDocument();
+    expect(document.querySelector('.react-flow__edge')).toBeNull();
+  });
 });
