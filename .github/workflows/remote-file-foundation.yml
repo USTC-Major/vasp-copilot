@@ -132,6 +132,9 @@ jobs:
             backend/tests/reviewer_review \
             backend/tests/basic_release_validation \
             backend/tests/test_input_validation_unit.py \
+            backend/tests/test_structure_geometry.py \
+            backend/tests/test_structure_api.py \
+            backend/tests/test_cif_to_poscar.py \
             backend/tests/test_nl_plan_api.py \
             backend/tests/be_a/test_planner_gating.py \
             backend/tests/test_materials_api.py \
@@ -179,6 +182,9 @@ jobs:
               "backend.tests.ai_mode.test_rw3_backend_fixes",
               "backend.tests.ai_mode.test_diagnosis_explain",
               "backend.tests.test_materials_api",
+              "backend.tests.test_structure_geometry",
+              "backend.tests.test_structure_api",
+              "backend.tests.test_cif_to_poscar",
               "backend.tests.test_mp_credentials_integration",
               "backend.tests.be_a.test_dftu_forms",
               "backend.tests.test_u3_input_descriptions",

@@ -1,0 +1,53 @@
+.crystal-viewer { color:var(--cv-text); font-size:13px; min-width:0; }
+.cv-card { display:flex; gap:12px; align-items:center; margin:10px 0 12px; }
+.cv-card>div { min-width:0; display:grid; gap:6px; }
+.cv-card span,.cv-note,.cv-source span { font-size:12px; color:var(--cv-muted); }
+.cv-thumbnail { width:120px; height:120px; flex:0 0 120px; background:var(--cv-bg); }
+.cv-axis-legend { display:flex; gap:8px; align-items:center; }
+.cv-axis-a { color:var(--cv-a); stroke:var(--cv-a); }
+.cv-axis-b { color:var(--cv-b); stroke:var(--cv-b); }
+.cv-axis-c { color:var(--cv-c); stroke:var(--cv-c); }
+.cv-cell-edges { stroke:var(--cv-muted); stroke-width:1; opacity:.55; fill:none; }
+.cv-cell-edges,.cv-direct-axes,.cv-axis-indicator { pointer-events:none; }
+.cv-atom { stroke:var(--cv-bg); stroke-width:.8; }
+.cv-direct-axes path { fill:none; stroke-width:1.6; }
+.cv-direct-axes text,.cv-axis-indicator text { fill:currentColor; stroke:var(--cv-bg); stroke-width:3.5; paint-order:stroke; font:600 13px "Segoe UI",sans-serif; }
+.cv-direct-axes .cv-axis-a,.cv-axis-indicator .cv-axis-a { color:var(--cv-a); }
+.cv-direct-axes .cv-axis-b,.cv-axis-indicator .cv-axis-b { color:var(--cv-b); }
+.cv-direct-axes .cv-axis-c,.cv-axis-indicator .cv-axis-c { color:var(--cv-c); }
+.cv-axis-indicator path,.cv-axis-indicator circle { fill:none; stroke-width:1.5; }
+.cv-axis-indicator .cv-indicator-label { fill:var(--cv-muted); stroke:none; font:12px "Microsoft YaHei",sans-serif; }
+.cv-numbers text { fill:var(--cv-text); stroke:var(--cv-bg); stroke-width:3; paint-order:stroke; font:12px "Segoe UI",sans-serif; }
+.cv-selected { fill:none; stroke:var(--cv-primary); stroke-width:2; }
+.cv-inspector { display:grid; grid-template-columns:minmax(0,1fr) 280px; gap:20px; max-height:calc(100dvh - 134px); overflow-y:auto; }
+.cv-visual-column,.cv-info-column { min-width:0; }
+.cv-controls { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:0 0 12px; }
+.cv-controls .ant-btn { font-size:13px; }
+.cv-controls [aria-pressed="true"] { border-color:var(--cv-primary); color:var(--cv-primary); }
+.cv-plot-wrap { position:relative; border:1px solid var(--cv-border); border-radius:8px; background:var(--cv-bg); margin-bottom:12px; }
+.cv-element-legend { position:absolute; top:11px; left:14px; right:14px; display:flex; gap:8px 14px; flex-wrap:wrap; font-size:12px; pointer-events:none; max-height:26px; overflow-y:auto; }
+.cv-element-legend span { display:flex; gap:6px; align-items:center; }
+.cv-element-legend i { width:9px; height:9px; border-radius:50%; display:inline-block; }
+.cv-detail-plot { display:block; width:100%; height:440px; cursor:grab; touch-action:none; user-select:none; }
+.cv-detail-plot:active { cursor:grabbing; }
+.cv-detail-plot:focus-visible { outline:2px solid var(--cv-primary); outline-offset:2px; border-radius:8px; }
+.cv-note { line-height:1.65; margin:8px 0; }
+.cv-info-column { border-left:1px solid var(--cv-border); padding-left:18px; }
+.cv-info-column h4 { font-size:14px; margin:0 0 8px; color:var(--cv-text); }
+.cv-info-column dl { margin:0; }
+.cv-info-column dl>div { margin:0 0 12px; }
+.cv-info-column dt { font-size:12px; color:var(--cv-muted); }
+.cv-info-column dd { margin:4px 0 0; font:13px/1.65 "Cascadia Code",Consolas,"Microsoft YaHei",monospace; overflow-wrap:anywhere; }
+.cv-atom-picker { display:grid; gap:6px; margin:18px 0; font-size:13px; }
+.cv-atom-picker select { min-width:0; width:100%; padding:7px 9px; border:1px solid var(--cv-border); border-radius:6px; background:var(--cv-bg); color:var(--cv-text); font:13px "Microsoft YaHei",sans-serif; }
+.cv-selected-info { border-top:1px solid var(--cv-border); padding-top:14px; }
+.cv-source { border-top:1px solid var(--cv-border); padding-top:14px; display:grid; gap:7px; overflow-wrap:anywhere; }
+.cv-source code { font-size:12px; color:var(--cv-muted); overflow-wrap:anywhere; }
+.cv-sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
+.cv-loading { font-size:12px; display:flex; align-items:center; gap:8px; margin:16px 0; }
+@media(max-width:700px) {
+  .cv-inspector { grid-template-columns:minmax(0,1fr); gap:16px; }
+  .cv-info-column { border-left:0; border-top:1px solid var(--cv-border); padding:16px 0 0; }
+  .cv-detail-plot { height:340px; }
+  .crystal-dialog .ant-modal-container { padding:18px; }
+}

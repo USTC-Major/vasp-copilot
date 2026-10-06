@@ -41,6 +41,17 @@ export function useFilePreview(fileId: string | null) {
 }
 
 // ---- 结构分析 ----
+export function useStructureGeometry(structureId: string | null) {
+  return useQuery({
+    queryKey: ['structureGeometry', structureId],
+    queryFn: () => structureApi.geometry(structureId!),
+    enabled: !!structureId,
+    retry: false,
+    // Structure IDs are immutable snapshots; do not preserve another ID's data.
+    staleTime: 60 * 1000,
+  });
+}
+
 export function useStructureAnalysis() {
   return useMutation({
     mutationFn: ({ fileId, options }: { fileId: string; options?: { symmetry_tolerance?: number; standardize?: boolean } }) =>

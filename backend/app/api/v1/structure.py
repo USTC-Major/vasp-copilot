@@ -14,13 +14,24 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict
 
 from backend.input_validation import InputValidationError, TEXT_LIMIT, validate_poscar
-from ...core.errors import ValidationError
+from ...core.errors import ValidationError, NotFoundError
 from ...schemas.api import ApiEnvelope
 from ...schemas.structure import StructureSummary, build_structure_summary
 from ...services.cif_converter import convert_cif_to_poscar
+from ...services.structure_geometry import build_structure_geometry
 from .deps import file_store, get_request_id
 
 router = APIRouter()
+
+
+@router.get("/structure/{structure_id}/geometry", response_model=ApiEnvelope)
+async def geometry(structure_id: str, x_request_id: str = Depends(get_request_id)) -> ApiEnvelope:
+    try:
+        record = file_store.get_structure(structure_id)
+    except NotFoundError as exc:
+        raise NotFoundError("STRUCTURE_NOT_FOUND", "结构不存在或已过期，请重新上传或导入；查看失败不会改变工作流") from exc
+    return ApiEnvelope(request_id=x_request_id,
+                       data=build_structure_geometry(record.structure_id, record.summary))
 
 
 class AnalyzeRequest(BaseModel):
