@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import type { ChangeEvent, CSSProperties } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EChartsOption } from 'echarts';
+import { ConfigProvider, theme } from 'antd';
 import type { CalculationMode, MagnetizationPlotData } from '../../types/generated-api';
 import { buildMagneticView, type MagneticView } from './magneticPlotModel';
 import MagnetizationPlot from './MagnetizationPlot';
@@ -139,6 +140,27 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('MagnetizationPlot UI', () => {
+  it('updates chart colors without remounting or changing the helper data, tooltip, axes or filter state', async () => {
+    const actual = await vi.importActual<typeof import('./magneticPlotModel')>('./magneticPlotModel');
+    builder.mockImplementation(actual.buildMagneticView);
+    const tree = (dark: boolean) => <ConfigProvider theme={{ algorithm: dark ? theme.darkAlgorithm : theme.defaultAlgorithm, token: { colorText: dark ? '#E6EBF3' : '#202B3B' } }}><MagnetizationPlot data={legacyData} calculationMode={calculations} /></ConfigProvider>;
+    const { rerender } = render(tree(true));
+    fireEvent.change(screen.getByRole('combobox', { name: '按元素筛选' }), { target: { value: 'Fe' } });
+    const before = (harness.latestChart as { option: EChartsOption }).option;
+    rerender(tree(false));
+    const after = (harness.latestChart as { option: EChartsOption }).option;
+    expect(harness.chartMounts).toBe(1);
+    expect(screen.getByRole('combobox', { name: '按元素筛选' })).toHaveValue('Fe');
+    expect(after.grid).toEqual(before.grid);
+    const series = (option: EChartsOption) => option.series as { data: unknown; name: string; type: string }[];
+    expect(series(after).map(part => [part.data, part.name, part.type])).toEqual(series(before).map(part => [part.data, part.name, part.type]));
+    expect((after.tooltip as { formatter: unknown }).formatter).toBe((before.tooltip as { formatter: unknown }).formatter);
+    expect((after.xAxis as { data: unknown }).data).toEqual((before.xAxis as { data: unknown }).data);
+    expect((after.yAxis as { scale: unknown }).scale).toBe((before.yAxis as { scale: unknown }).scale);
+    expect(after.textStyle?.color).toBe('#202B3B');
+    expect(before.textStyle?.color).toBe('#E6EBF3');
+  });
+
   it('renders helper overview, display thresholds, separate totals, raw evidence and an original-order paginated table', async () => {
     render(<MagnetizationPlot data={analysisData} calculationMode={calculations} />);
 

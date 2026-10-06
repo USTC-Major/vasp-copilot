@@ -99,7 +99,7 @@
 @media(min-width:1440px) { .wf-main { padding:28px 36px; } }
 @media(max-width:1100px) { .wf-body-grid { grid-template-columns:minmax(0,1fr); } .wf-inspector { position:static; } .wf-inspector dl { grid-template-columns:repeat(3,minmax(0,1fr)); } }
 @media(max-width:760px) {
-  .scientific-shell { grid-template-columns:minmax(0,1fr); }
+  .scientific-shell { grid-template-columns:minmax(0,1fr); grid-template-rows:auto 1fr; }
   .wf-sidebar { border-right:0; border-bottom:1px solid var(--wf-border); padding:14px 16px; }
   .wf-brand { margin-bottom:14px; }
   .wf-sidebar nav { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:4px; }

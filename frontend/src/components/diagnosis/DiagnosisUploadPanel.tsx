@@ -53,13 +53,13 @@ const DiagnosisUploadPanel: React.FC<DiagnosisUploadPanelProps> = ({ onDetected 
   };
 
   return (
-    <Card title="上传计算目录" bordered={false}>
+    <Card title="上传计算目录" bordered={false} className="diagnosis-upload-panel">
       {!detected && (
         <Dragger {...uploadProps} disabled={uploadMutation.isPending}>
           {uploadMutation.isPending ? (
             <div style={{ padding: 24 }}>
               <Spin size="large" />
-              <p style={{ marginTop: 12, color: '#999' }}>正在扫描文件...</p>
+              <p style={{ marginTop: 12, color: 'var(--diag-muted, #999)' }} role="status">正在扫描文件...</p>
             </div>
           ) : (
             <>
@@ -104,7 +104,7 @@ const DiagnosisUploadPanel: React.FC<DiagnosisUploadPanelProps> = ({ onDetected 
               size="small"
               dataSource={detected.files}
               renderItem={(file: DetectedFile) => (
-                <List.Item>
+                <List.Item className="diagnosis-detected-file">
                   <Text>{file.name}</Text>
                   <Text type="secondary">{formatFileSize(file.size_bytes)}</Text>
                   <Tag>{file.kind}</Tag>

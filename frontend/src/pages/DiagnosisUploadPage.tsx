@@ -4,14 +4,13 @@
 
 import React, { useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Typography, Button, Alert } from 'antd';
+import { Button, Alert } from 'antd';
 import { PlayCircleOutlined } from '@ant-design/icons';
 import DiagnosisUploadPanel from '../components/diagnosis/DiagnosisUploadPanel';
 import ErrorAlert from '../components/common/ErrorAlert';
 import { useDiagnosisRun } from '../hooks/useApi';
 import type { DetectedRun } from '../types/generated-api';
-
-const { Title } = Typography;
+import '../components/diagnosis/scientific-diagnosis.css';
 
 const DiagnosisUploadPage: React.FC = () => {
   const navigate = useNavigate();
@@ -36,13 +35,16 @@ const DiagnosisUploadPage: React.FC = () => {
   }, [diagnosisId, runMutation, navigate]);
 
   return (
-    <div style={{ maxWidth: 800, margin: '0 auto', padding: '24px 16px' }}>
-      <Title level={3}>诊断计算 (VASP-Doctor+)</Title>
+    <div className="diagnosis-page diagnosis-upload-page">
+      <header className="diagnosis-heading">
+        <h1>诊断计算</h1>
+        <p>上传已有计算目录，检查输出文件、问题与诊断证据。</p>
+      </header>
 
       <DiagnosisUploadPanel onDetected={handleDetected} />
 
       {detected && (
-        <div style={{ marginTop: 16, textAlign: 'center' }}>
+        <div className="diagnosis-start">
           <Alert
             type="success"
             showIcon

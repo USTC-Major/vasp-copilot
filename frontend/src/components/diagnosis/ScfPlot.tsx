@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Card, Segmented, Select, Space, Table, Typography } from 'antd';
+import { Card, Segmented, Select, Space, Table, Typography, theme } from 'antd';
 import ReactECharts from 'echarts-for-react';
 import type { ScfPlotData } from '../../types/generated-api';
 import { buildScfView, getScfBlocks, readScfZoom, type ScfViewMode, type ScfZoom } from './scfPlotModel';
+import { diagnosisChartStyle } from './diagnosisChartStyle';
 
 const { Text } = Typography;
 
@@ -19,6 +20,7 @@ const pointColumns = [
 ];
 
 const ScfPlot: React.FC<ScfPlotProps> = ({ data }) => {
+  const { token } = theme.useToken();
   const containerRef = useRef<HTMLDivElement>(null);
   const blocks = useMemo(() => getScfBlocks(data), [data]);
   const [blockId, setBlockId] = useState<number>();
@@ -44,6 +46,9 @@ const ScfPlot: React.FC<ScfPlotProps> = ({ data }) => {
   }, [blocks, blockId]);
 
   const view = useMemo(() => buildScfView(data, { blockId, mode, zoom, compact }), [data, blockId, mode, zoom, compact]);
+  const chartOption = useMemo(() => diagnosisChartStyle(view.option, token, {
+    E: token.colorPrimary, '|dE|': token.colorWarning, '|d epsilon|': token.colorSuccess,
+  }), [view.option, token]);
   const onEvents = useMemo(() => ({
     datazoom: (event: unknown) => {
       const nextZoom = readScfZoom(event);
@@ -108,7 +113,7 @@ const ScfPlot: React.FC<ScfPlotProps> = ({ data }) => {
             </Space>
 
             <ReactECharts
-              option={view.option}
+              option={chartOption}
               onEvents={onEvents}
               notMerge
               autoResize

@@ -36,7 +36,7 @@ describe('路由懒加载', () => {
 
   it('诊断上传页可渲染（懒加载）', async () => {
     renderRoute('/diagnosis/upload');
-    expect(await screen.findByText('诊断计算 (VASP-Doctor+)')).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '诊断计算' })).toBeInTheDocument();
   });
 
   it('诊断结果页可渲染（懒加载）', async () => {

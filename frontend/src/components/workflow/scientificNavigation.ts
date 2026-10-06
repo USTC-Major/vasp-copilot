@@ -20,4 +20,5 @@ export function workspaceLocation(path: string): { current: string; group: strin
   return { current: '', group: '工作区', title: '页面' };
 }
 
-export const hasScientificContent = (path: string) => matches('/', path) || matches('/workflow', path);
+export const hasScientificContent = (path: string) => matches('/', path) || matches('/workflow', path)
+  || matches('/diagnosis/upload', path) || matches('/diagnosis/:id', path);

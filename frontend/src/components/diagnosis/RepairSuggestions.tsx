@@ -81,7 +81,7 @@ const RepairSuggestions: React.FC<RepairSuggestionsProps> = ({
   ].filter((step) => typeof step === 'string' && step.trim()))];
 
   return (
-    <Card title="修复建议" style={{ marginBottom: 16 }}>
+    <Card title="修复建议" style={{ marginBottom: 16 }} className="diagnosis-repair-panel">
       <Space orientation="vertical" size="middle" style={{ width: '100%', minWidth: 0 }}>
         <Alert
           type={color === 'blue' ? 'info' : color === 'default' ? 'info' : 'warning'}
@@ -148,7 +148,7 @@ const RepairSuggestions: React.FC<RepairSuggestionsProps> = ({
                 {fix.diff?.trim() && (
                   <details>
                     <summary>{canClaimCandidate ? '查看候选差异' : '查看建议差异'}</summary>
-                    <pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', maxHeight: 320, overflow: 'auto', background: '#f6f8fa', padding: 12, borderRadius: 4, fontSize: 12 }}>
+                    <pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', maxHeight: 320, overflow: 'auto', background: 'var(--diag-field, #f6f8fa)', padding: 12, borderRadius: 4, fontSize: 12 }}>
                       {fix.diff}
                     </pre>
                   </details>
