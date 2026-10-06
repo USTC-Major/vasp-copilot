@@ -7,3 +7,11 @@ SHA256SUMS.txt text eol=lf
 # Recipe provenance hashes the exact YAML bytes read from this checkout.
 backend/app/recipes/packs/vasp_mvp_core/**/*.yaml text eol=lf
 backend/app/recipes/packs/vasp_mvp_core/pack.yaml text eol=lf
+
+# Desktop assets whose exact bytes are checked during build.
+desktop/assets/app-icon.svg text eol=lf
+desktop/assets/app-icon.png binary
+desktop/assets/app-icon.ico binary
+# Preserve upstream license bytes, including their original trailing spaces.
+desktop/licenses/WebView2-LICENSE.txt -text -whitespace
+desktop/licenses/WebView2-NOTICE.txt -text -whitespace

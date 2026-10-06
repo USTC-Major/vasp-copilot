@@ -1,0 +1,18 @@
+{
+  "source": "app-icon.svg",
+  "source_sha256": "24629a4ced2037b261fbbaff30f7a2cc28421ee7046eac9ef112fd3d48b56f5e",
+  "sizes": [
+    16,
+    24,
+    32,
+    48,
+    64,
+    128,
+    256
+  ],
+  "method": "4x supersampled SVG geometry export; Pillow 10.4.0",
+  "outputs": {
+    "app-icon.png": "cb7a47974897ec58d6505ea47abc84fdd9bc6553ab0565fde0adbc43d6cedc01",
+    "app-icon.ico": "f4697a6e23f88b15440d516b1a99f03fd982aab9bce4d869cd3bb641b03e21e9"
+  }
+}
