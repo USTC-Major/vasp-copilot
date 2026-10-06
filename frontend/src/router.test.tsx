@@ -23,8 +23,8 @@ describe('路由懒加载', () => {
   it('首页可渲染', async () => {
     renderRoute('/');
     expect(await screen.findAllByText(/VASP-Copilot/)).not.toHaveLength(0);
-    expect(screen.getByText(/任何文件写入与作业提交都按本次精确内容确认/)).toBeInTheDocument();
-    expect(screen.getByText(/不会自动补提/)).toBeInTheDocument();
+    expect(screen.getByText('文件写入和计算提交前，会请你确认。')).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: '确认后执行' })).not.toBeInTheDocument();
     expect(screen.queryByText('任务级运行环境')).not.toBeInTheDocument();
     expect(screen.queryByText('运行环境以具体智能任务的 Real / Fake / None 标识为准')).not.toBeInTheDocument();
   });
