@@ -74,21 +74,20 @@ describe('Toolbox 无 AI 手动流程', () => {
     ]));
   });
 
-  it('MP 数字编号及未知编号保持原样且不重复，无编号仍禁止导入', async () => {
-    const materials = [
-      { material_id: 'mp-32761', formula_pretty: '数字编号' },
-      { material_id: 'mp-hilze', formula_pretty: '新版编号' },
-      { material_id: 'not-an-mpid', formula_pretty: '未知编号' },
-      { formula_pretty: '缺失编号' },
-      { material_id: null, formula_pretty: '空值编号' },
-      { material_id: '', formula_pretty: '空字符串编号' },
-      { material_id: 'mp-aaaabwmb' },
-    ];
+  it.each([
+    { name: '数字编号 mp-32761', material: { material_id: 'mp-32761', formula_pretty: '数字编号' }, label: '数字编号', primaryId: 'mp-32761', apiIdVisible: false, importEnabled: true },
+    { name: '新版编号 mp-hilze', material: { material_id: 'mp-hilze', formula_pretty: '新版编号' }, label: '新版编号', primaryId: 'mp-hilze', apiIdVisible: false, importEnabled: true },
+    { name: '未知编号 not-an-mpid', material: { material_id: 'not-an-mpid', formula_pretty: '未知编号' }, label: '未知编号', primaryId: 'not-an-mpid', apiIdVisible: false, importEnabled: true },
+    { name: '缺失编号', material: { formula_pretty: '缺失编号' }, label: '缺失编号', apiIdVisible: false, importEnabled: false },
+    { name: 'null 编号', material: { material_id: null, formula_pretty: '空值编号' }, label: '空值编号', apiIdVisible: false, importEnabled: false },
+    { name: '空字符串编号', material: { material_id: '', formula_pretty: '空字符串编号' }, label: '空字符串编号', apiIdVisible: false, importEnabled: false },
+    { name: '无化学式的 alpha 编号', material: { material_id: 'mp-aaaabwmb' }, label: 'mp-32761', fallbackId: 'mp-aaaabwmb', apiIdVisible: true, importEnabled: true },
+  ])('MP 候选 $name 独立显示且导入状态正确', async ({ material, label, primaryId, fallbackId, apiIdVisible, importEnabled }) => {
     server.use(
       http.get(`${TOOLBOX}/projects/:projectId/tasks/:taskId/detail`, () => HttpResponse.json(detail())),
       http.post(`${TOOLBOX}/projects/:projectId/tasks/:taskId/tools`, () => HttpResponse.json({
         mode: 'toolbox', task_id: 'task-two', ok: true, error: null, pending: null,
-        result: JSON.stringify({ materials }), flow: detail().flow,
+        result: JSON.stringify({ materials: [material] }), flow: detail().flow,
       })),
     );
     const user = userEvent.setup();
@@ -96,22 +95,21 @@ describe('Toolbox 无 AI 手动流程', () => {
     await screen.findByRole('heading', { name: '第二个精确任务' });
     await user.type(screen.getByLabelText('Materials Project 化学式'), 'SiO');
     await user.click(screen.getByRole('button', { name: '搜索候选结构' }));
-    await screen.findByText('数字编号');
 
-    for (const row of materials.slice(0, 3)) {
-      const candidate = screen.getByText(row.formula_pretty!).closest('li')!;
-      expect(within(candidate).getAllByText(row.material_id!)).toHaveLength(1);
-      expect(within(candidate).queryByText(/API ID:/)).not.toBeInTheDocument();
-      expect(within(candidate).getByRole('button', { name: '预览并请求写入确认' })).toBeEnabled();
+    const labelElement = fallbackId
+      ? (await screen.findAllByText(label)).find((element) => element.closest('.ant-list-item-meta-title'))!
+      : await screen.findByText(label);
+    const candidate = labelElement.closest('li')!;
+    if (apiIdVisible) expect(within(candidate).getByText(/API ID:/)).toBeInTheDocument();
+    else expect(within(candidate).queryByText(/API ID:/)).not.toBeInTheDocument();
+    if (primaryId) expect(within(candidate).getAllByText(primaryId)).toHaveLength(1);
+    if (fallbackId) {
+      expect(labelElement.closest('.ant-list-item-meta-title')).not.toBeNull();
+      expect(within(candidate).getByText(fallbackId)).toBeInTheDocument();
     }
-    for (const label of ['缺失编号', '空值编号', '空字符串编号']) {
-      const candidate = screen.getByText(label).closest('li')!;
-      expect(within(candidate).queryByText(/API ID:/)).not.toBeInTheDocument();
-      expect(within(candidate).getByRole('button', { name: '预览并请求写入确认' })).toBeDisabled();
-    }
-    const fallbackCandidate = screen.getAllByText('mp-32761').find((element) => element.closest('.ant-list-item-meta-title'))!.closest('li')!;
-    expect(within(fallbackCandidate).getByText('mp-aaaabwmb')).toBeInTheDocument();
-    expect(within(fallbackCandidate).getByText(/API ID:/)).toBeInTheDocument();
+    const importButton = within(candidate).getByRole('button', { name: '预览并请求写入确认' });
+    if (importEnabled) expect(importButton).toBeEnabled();
+    else expect(importButton).toBeDisabled();
   });
 
   it('结构化规划使用工具合同，不发送 raw JSON', async () => {

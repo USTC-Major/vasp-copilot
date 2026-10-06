@@ -35,6 +35,7 @@ SCF 双视图与磁性排列图仅调整文字、轴线、网格、tooltip、系
 | `src/components/diagnosis/SharedDiagnosisTheme.test.tsx` | 旧智能页共享面板仍使用原 provider 和 fallback |
 | `src/pages/DiagnosisPages.visual.test.tsx` | 扫描、显式诊断操作、失败重试、TTL与长摘要 |
 | `src/router.test.tsx` | 诊断页新版标题冒烟检查 |
+| `src/pages/ToolboxFlow.test.tsx` | 将集中在一个用例中的七种 MP 编号展示边界拆成独立用例，保留原断言与时限 |
 | `SCIENTIFIC_DIAGNOSIS.md` | 本回执 |
 
 没有修改 `scfPlotModel.ts`、`magneticPlotModel.ts`、科学数据／类型、API、hooks、后端、桌面、依赖或锁文件。智能项目父页面、首页和工作流科学组件保持原样。
@@ -47,6 +48,8 @@ SCF 双视图与磁性排列图仅调整文字、轴线、网格、tooltip、系
 - 最终 TypeScript 和生产构建通过；最后窄屏摘要与短页导航高度修正仅改 CSS，并再次构建通过。
 - lint 通过，仅 10 项既有 Fast Refresh 警告；没有新增告警。`git diff --check` 通过。
 - 首次磁性补测沿用了原测试的空图表桩，访问不存在的 tooltip 导致该补测失败；改用真实 builder 后通过，未为适应测试修改产品科学逻辑。
+
+GitHub 首轮全量前端测试有两项既有 Toolbox 用例触及 20 秒总时限；相关两个测试文件在本地补验 15 项通过。同提交仅重跑一次后，“单计算授权”用例通过，仍有同一 MP 编号用例超时（其余 330 项通过）。该用例在一张页面中集中断言七种候选，现拆为独立参数化用例，逐项保留编号、重复次行及导入按钮可用性约束，不调整产品源码、断言门槛或全局超时。最终准确提交的 CI 结果记录在 PR 中；本地补验不替代 CI。
 
 测试使用既有 MSW 或本地组件桩，没有调用真实 MP、LLM、SSH、HPC 或 VASP。jsdom 的伪元素计算样式和跨文档导航提示，不作为真实图表显示或下载落盘证据。
 
