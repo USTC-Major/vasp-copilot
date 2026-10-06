@@ -30,6 +30,7 @@ vi.mock("@xyflow/react", () => ({
   Controls: () => <div data-testid="controls" />,
   MiniMap: () => <div data-testid="minimap" />,
   MarkerType: { ArrowClosed: "arrowclosed" },
+  Position: { Right: "right", Left: "left" },
   applyNodeChanges: (_changes: unknown[], nodes: unknown[]) => nodes,
   applyEdgeChanges: (_changes: unknown[], edges: unknown[]) => edges,
 }));

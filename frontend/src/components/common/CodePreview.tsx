@@ -3,7 +3,7 @@
 // ============================================================
 
 import React, { useState } from 'react';
-import { Card, Button, Spin, Alert, Space, Typography } from 'antd';
+import { Card, Button, Spin, Alert, Space, Typography, theme } from 'antd';
 import { ExpandOutlined, FileTextOutlined } from '@ant-design/icons';
 import { useFilePreview } from '../../hooks/useApi';
 
@@ -23,6 +23,7 @@ const CodePreview: React.FC<CodePreviewProps> = ({
   maxHeight = 400,
 }) => {
   const [expanded, setExpanded] = useState(false);
+  const { token } = theme.useToken();
   const { data, isLoading, error } = useFilePreview(fileId);
 
   if (!fileId) {
@@ -109,7 +110,7 @@ const CodePreview: React.FC<CodePreviewProps> = ({
       )}
       <pre
         style={{
-          background: '#f6f8fa',
+          background: token.colorFillTertiary,
           padding: 12,
           borderRadius: 4,
           fontSize: 13,
@@ -117,7 +118,7 @@ const CodePreview: React.FC<CodePreviewProps> = ({
           overflow: 'auto',
           maxHeight: expanded ? undefined : maxHeight,
           margin: 0,
-          border: '1px solid #e8e8e8',
+          border: `1px solid ${token.colorBorderSecondary}`,
           fontFamily: 'Consolas, Monaco, "Courier New", monospace',
           whiteSpace: 'pre-wrap',
           wordBreak: 'break-all',

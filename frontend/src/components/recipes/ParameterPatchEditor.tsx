@@ -210,6 +210,7 @@ const ParameterPatchEditor: React.FC<ParameterPatchEditorProps> = ({
         columns={columns}
         rowKey="key"
         pagination={false}
+        scroll={{ x: 900 }}
         size="small"
         locale={{ emptyText: '暂无可编辑参数' }}
         rowClassName={(record) => (record.selected ? 'ant-table-row-selected-param' : '')}

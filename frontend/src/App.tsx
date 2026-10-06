@@ -12,6 +12,7 @@ import {
 import { useFeatureFlags } from './hooks/useApi';
 import LlmSettingsModal from './components/settings/LlmSettingsModal';
 import ChatPanel from './components/chat/ChatPanel';
+import ScientificWorkflowShell from './components/workflow/ScientificWorkflowShell';
 
 const { Header, Content, Footer } = Layout;
 const { Text } = Typography;
@@ -44,6 +45,14 @@ const App: React.FC = () => {
     menuItems
       .flatMap((item) => [...(item.children ?? []).map((child) => child.key), item.key])
       .find((key) => location.pathname === key || location.pathname.startsWith(key + '/')) || '/';
+
+  if (location.pathname === '/workflow') {
+    return <ScientificWorkflowShell>
+      <Outlet />
+      <LlmSettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <ChatPanel onOpenSettings={() => setSettingsOpen(true)} />
+    </ScientificWorkflowShell>;
+  }
 
   return (
     <Layout style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>

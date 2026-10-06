@@ -39,6 +39,7 @@ from backend.app.schemas.generation import (
     WorkflowGenerateRequest,
 )
 from backend.app.schemas.recipe import RecipePackManifest, SelectionContext, TaskType
+from backend.app.core.file_identity import generated_file_id
 from backend.app.schemas.workflow import (
     AssumptionsBlock,
     CompositionFileEntry,
@@ -731,12 +732,6 @@ class WorkflowGenerationPipeline:
 
         root_children: Dict[str, GeneratedFileNode] = {}
         root_files: List[GeneratedFileNode] = []
-        file_counter = [0]
-
-        def next_file_id() -> str:
-            file_counter[0] += 1
-            return f"file_{file_counter[0]:02d}"
-
         for relative_path in sorted(files):
             data = files[relative_path]
             parts = relative_path.split("/")
@@ -746,7 +741,7 @@ class WorkflowGenerationPipeline:
                         name=parts[0],
                         type="file",
                         relative_path=relative_path,
-                        file_id=next_file_id(),
+                        file_id=generated_file_id(workflow_id, relative_path, data),
                         mime_type="text/plain",
                         size_bytes=len(data),
                         sha256=hashlib.sha256(data).hexdigest(),
@@ -770,7 +765,7 @@ class WorkflowGenerationPipeline:
                     name=parts[1],
                     type="file",
                     relative_path=relative_path,
-                    file_id=next_file_id(),
+                    file_id=generated_file_id(workflow_id, relative_path, data),
                     mime_type="text/plain",
                     size_bytes=len(data),
                     sha256=hashlib.sha256(data).hexdigest(),

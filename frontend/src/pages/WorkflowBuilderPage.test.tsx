@@ -11,7 +11,7 @@ import { http, HttpResponse, delay } from 'msw';
 import WorkflowBuilderPage, { buildSnapshot, canBuildConfirmSnapshot } from './WorkflowBuilderPage';
 import type { DftuEntryFormData } from '../components/workflow/ParameterConfirmForm';
 import { server } from '../mocks/server';
-import { uploadSuccessFixture, structureAnalysisFixture, workflowPlanFixture } from '../mocks/fixtures';
+import { uploadSuccessFixture, structureAnalysisFixture, workflowPlanFixture, fileTreeFixture } from '../mocks/fixtures';
 import type { WorkflowPlanRequestBody } from '../types/workflow-contract';
 // 静态源码回归：通过 ?raw 导入生产文件源码（vite/client 提供类型声明），
 // 断言不得出现无条件的 confirmed_by_user: true。
@@ -113,6 +113,53 @@ beforeEach(() => {
 });
 
 describe('WorkflowBuilderPage', () => {
+  it('保留计划、可选编辑、生成、重新生成、下载与新工作流重置的真实请求路径', async () => {
+    useFastMocks();
+    const generationBodies: unknown[] = [];
+    let downloads = 0;
+    server.use(
+      http.post(`${API}/workflows/generate`, async ({ request }) => {
+        generationBodies.push(await request.json());
+        return HttpResponse.json({ request_id: 'req_gen', workflow_id: 'wf_01', workflow_status: 'generated', file_tree: fileTreeFixture });
+      }),
+      http.get(`${API}/workflows/:workflowId/download`, () => {
+        downloads++;
+        return new HttpResponse(new Uint8Array([0x50, 0x4b]).buffer, { headers: { 'Content-Type': 'application/zip' } });
+      }),
+    );
+    const BrowserURL = URL;
+    const createObjectURL = vi.fn(() => 'blob:workflow-test');
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal('URL', class extends BrowserURL { static createObjectURL = createObjectURL; static revokeObjectURL = revokeObjectURL; });
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    try {
+      const user = userEvent.setup();
+      renderPage();
+      await uploadAndEnterConfirm(user);
+      await openSummaryModal(user);
+      await confirmAndWaitPlan(user);
+      await user.click(screen.getByRole('button', { name: '编辑参数 (可选)' }));
+      expect(screen.getByText('参数白名单编辑')).toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: /下一步：生成文件/ }));
+      await screen.findByRole('button', { name: /下载工作流/ });
+      await user.click(screen.getByRole('button', { name: /修改参数后重新生成/ }));
+      expect(screen.queryByRole('button', { name: /下载工作流/ })).not.toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: /下一步：生成文件/ }));
+      await user.click(await screen.findByRole('button', { name: /下载工作流/ }));
+      await screen.findByText('工作流已准备就绪');
+      expect(generationBodies).toHaveLength(2);
+      expect(generationBodies[0]).toMatchObject({ workflow_id: 'wf_01' });
+      expect(downloads).toBe(1);
+      expect(createObjectURL).toHaveBeenCalledTimes(1);
+      expect(revokeObjectURL).toHaveBeenCalledWith('blob:workflow-test');
+      expect(click).toHaveBeenCalledTimes(1);
+      await user.click(screen.getByRole('button', { name: '开始新的工作流' }));
+      expect(screen.getByText('上传结构文件')).toBeInTheDocument();
+      expect(screen.getByText(/尚未载入结构/)).toBeInTheDocument();
+      expect(screen.queryByText('工作流已准备就绪')).not.toBeInTheDocument();
+    } finally { click.mockRestore(); vi.unstubAllGlobals(); }
+  });
+
   it('样品名编辑、空白回退与实际 POSCAR 首行进入同一确认快照和请求', async () => {
     useFastMocks();
     const user = userEvent.setup();
