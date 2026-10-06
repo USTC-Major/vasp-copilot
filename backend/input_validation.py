@@ -35,6 +35,9 @@ class PoscarInfo:
     coordinate_mode: str
     selective_dynamics: bool
     vasp4: bool
+    coordinates: tuple[tuple[float, float, float], ...] = ()
+    cartesian_scale: tuple[float, float, float] = (1.0, 1.0, 1.0)
+    selective_flags: tuple[tuple[bool, bool, bool], ...] = ()
 
 
 def _fail(code: str, message: str, line: int | None = None):
@@ -80,7 +83,7 @@ def _vector(tokens: list[str], label: str, line: int) -> tuple[float, float, flo
     return tuple(_number(token, label, line) for token in tokens[:3])  # type: ignore[return-value]
 
 
-def validate_poscar(raw: bytes | str) -> PoscarInfo:
+def validate_poscar(raw: bytes | str, *, include_coordinates: bool = False) -> PoscarInfo:
     lines = _text(raw, "POSCAR").splitlines()
     if len(lines) < 8:
         _fail("POSCAR_INCOMPLETE", "POSCAR 缺少必需头部或坐标行")
@@ -147,12 +150,20 @@ def validate_poscar(raw: bytes | str) -> PoscarInfo:
     start = mode_line + 1
     if len(lines) < start + total:
         _fail("POSCAR_COORDINATES_MISSING", "POSCAR 坐标行少于声明的原子数")
+    coordinates = []
+    flags = []
     for i in range(start, start + total):
         tokens = lines[i].split()
-        _vector(tokens, "原子坐标", i + 1)
+        coordinate = _vector(tokens, "原子坐标", i + 1)
         if selective and (len(tokens) < 6 or any(t.lower() not in ("t", "f") for t in tokens[3:6])):
             _fail("POSCAR_FLAGS_INVALID", "选择性动力学坐标需要三个 T/F 标志", i + 1)
-    return PoscarInfo(elements, counts, total, matrix, scaled_volume, mode, selective, vasp4)
+        if include_coordinates:
+            coordinates.append(coordinate)
+            if selective:
+                flags.append(tuple(t.lower() == "t" for t in tokens[3:6]))
+    cartesian_scale = (factor, factor, factor) if len(scales) == 1 else tuple(scales)
+    return PoscarInfo(elements, counts, total, matrix, scaled_volume, mode, selective, vasp4,
+                      tuple(coordinates), cartesian_scale, tuple(flags))
 
 
 def validate_incar(raw: bytes | str) -> None:

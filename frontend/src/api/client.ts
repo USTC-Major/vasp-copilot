@@ -118,6 +118,7 @@ export const filesApi = {
 
 // ---- Structure API ----
 export const structureApi = {
+  geometry: (structureId: string) => request<import('../types/structure-geometry').StructureGeometry>(`/structure/${encodeURIComponent(structureId)}/geometry`),
   analyze: (fileId: string, options?: { symmetry_tolerance?: number; standardize?: boolean }) =>
     request<import('../types/generated-api').StructureAnalysisResponse>('/structure/analyze', {
       method: 'POST',

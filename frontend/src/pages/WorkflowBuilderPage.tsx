@@ -13,6 +13,7 @@ import WorkflowPlanPreview from '../components/workflow/WorkflowPlanPreview';
 import RecipeCompositionPreview from '../components/recipes/RecipeCompositionPreview';
 import ParameterPatchEditor from '../components/recipes/ParameterPatchEditor';
 import GeneratedFilesPreview from '../components/workflow/GeneratedFilesPreview';
+import CrystalViewer from '../components/structure/CrystalViewer';
 import ErrorAlert from '../components/common/ErrorAlert';
 import AiPlanAssistant, { type AiPlanAssistantResult } from '../components/workflow/AiPlanAssistant';
 import { useWorkflowPlan, useWorkflowGenerate, useWorkflowDownload, useFeatureFlags } from '../hooks/useApi';
@@ -589,6 +590,7 @@ const WorkflowBuilderPage: React.FC = () => {
       </section>
       <aside className="wf-inspector" aria-label="当前结构与工作流摘要">
         <h4>当前工作区</h4>
+        {summary && structureId && <CrystalViewer key={structureId} structureId={structureId} />}
         {summary ? <dl>
           <div><dt>结构</dt><dd>{summary.formula}</dd></div>
           <div><dt>原子 / 元素</dt><dd>{summary.atom_count} 原子 · {summary.elements.join('、')}</dd></div>
