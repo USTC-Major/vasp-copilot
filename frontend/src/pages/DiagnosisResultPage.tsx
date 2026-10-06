@@ -4,11 +4,10 @@
 
 import React, { useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { Typography, Row, Col, Spin, Card, Statistic, Space, Tag } from 'antd';
-import {
-  BugOutlined,
-} from '@ant-design/icons';
+import { Typography, Row, Col, Spin, Card, Space, Tag } from 'antd';
+import { Link } from 'react-router-dom';
 import { useDiagnosis } from '../hooks/useApi';
+import { ApiError } from '../api/client';
 import LlmExplainPanel from '../components/diagnosis/LlmExplainPanel';
 import IssueCard from '../components/diagnosis/IssueCard';
 import ScfPlot from '../components/diagnosis/ScfPlot';
@@ -18,8 +17,9 @@ import RepairSuggestions from '../components/diagnosis/RepairSuggestions';
 import ErrorAlert from '../components/common/ErrorAlert';
 import EmptyState from '../components/common/EmptyState';
 import StatusBadge from '../components/common/StatusBadge';
+import '../components/diagnosis/scientific-diagnosis.css';
 
-const { Title, Text } = Typography;
+const { Text } = Typography;
 
 const DiagnosisResultPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -37,75 +37,53 @@ const DiagnosisResultPage: React.FC = () => {
 
   if (isLoading) {
     return (
-      <div style={{ textAlign: 'center', padding: 100 }}>
-        <Spin size="large" tip="加载诊断结果..." />
+      <div className="diagnosis-page diagnosis-state" role="status">
+        <Spin size="large" /><p>加载诊断结果...</p>
       </div>
     );
   }
 
   if (error) {
+    const missingRecord = error instanceof ApiError && error.code === 'DIAGNOSIS_NOT_FOUND';
     return (
-      <div style={{ maxWidth: 600, margin: '0 auto', padding: '24px 16px' }}>
-        <ErrorAlert error={error} onRetry={() => refetch()} />
+      <div className="diagnosis-page diagnosis-error-page">
+        <header className="diagnosis-heading"><h1>诊断结果</h1></header>
+        <ErrorAlert error={error} title={missingRecord ? '诊断记录不可用或已过期' : undefined} onRetry={() => refetch()} />
+        {missingRecord && <p className="diagnosis-history-note">诊断记录仅在当前进程的有效期内保留，请重新上传计算目录；此页面不会恢复已过期的记录。</p>}
+        <Link className="diagnosis-return-link" to="/diagnosis/upload">返回诊断上传</Link>
       </div>
     );
   }
 
   if (!data) {
     return (
-      <EmptyState
+      <div className="diagnosis-page diagnosis-state"><EmptyState
         title="未找到诊断结果"
         description="该诊断 ID 可能不存在或已过期"
-      />
+      /><Link className="diagnosis-return-link" to="/diagnosis/upload">返回诊断上传</Link></div>
     );
   }
 
   const { summary, issues, plots, provenance, recommended_fixes } = data;
 
   return (
-    <div style={{ maxWidth: 1200, margin: '0 auto', padding: '24px 16px' }}>
+    <div className="diagnosis-page diagnosis-result-page">
       {/* 标题 */}
-      <Title level={3}>
-        <BugOutlined style={{ marginRight: 8 }} />
-        诊断结果
+      <header className="diagnosis-heading diagnosis-report-heading">
+        <div><h1>诊断结果</h1><p>查看诊断问题、计算证据与修复建议。</p></div>
         <StatusBadge status={data.diagnosis_status} type="diagnosis" />
-      </Title>
+      </header>
 
       {/* 摘要统计 */}
-      <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
-        <Col xs={12} sm={6}>
-          <Card>
-            <Statistic title="诊断状态" value={summary.headline} valueStyle={{ fontSize: 16 }} />
-          </Card>
-        </Col>
-        <Col xs={12} sm={6}>
-          <Card>
-            <Statistic
-              title="严重问题"
-              value={summary.issue_count.critical + summary.issue_count.high}
-              valueStyle={{ color: '#ff4d4f' }}
-              suffix={`/ ${Object.values(summary.issue_count).reduce((a, b) => a + b, 0)}`}
-            />
-          </Card>
-        </Col>
-        <Col xs={12} sm={6}>
-          <Card>
-            <Statistic title="最高严重度" value={summary.highest_severity?.toUpperCase()} valueStyle={{ fontSize: 16, color: '#ff4d4f' }} />
-          </Card>
-        </Col>
-        <Col xs={12} sm={6}>
-          <Card>
-            <Statistic
-              title="VASP 版本"
-              value={provenance.vasp_version || '未知'}
-              valueStyle={{ fontSize: 14 }}
-            />
-          </Card>
-        </Col>
-      </Row>
+      <dl className="diagnosis-summary">
+        <div className="diagnosis-summary-headline"><dt>诊断状态</dt><dd>{summary.headline}</dd></div>
+        <div><dt>严重问题</dt><dd className="diagnosis-severity-count">{summary.issue_count.critical + summary.issue_count.high}<span> / {Object.values(summary.issue_count).reduce((a, b) => a + b, 0)}</span></dd></div>
+        <div><dt>最高严重度</dt><dd>{summary.highest_severity?.toUpperCase()}</dd></div>
+        <div><dt>VASP 版本</dt><dd>{provenance.vasp_version || '未知'}</dd></div>
+      </dl>
 
       {/* Provenance 信息 */}
-      <Card size="small" style={{ marginBottom: 16 }}>
+      <Card size="small" className="diagnosis-provenance" style={{ marginBottom: 16 }}>
         <Space wrap>
           <Text type="secondary">规则版本: {provenance.rule_set_version}</Text>
           <Text type="secondary">Recipe Pack: {provenance.recipe_pack_version}</Text>
@@ -184,7 +162,7 @@ const DiagnosisResultPage: React.FC = () => {
 
       {/* Next Step */}
       {!data.next_step.allowed && (
-        <Card size="small" style={{ marginTop: 16, background: '#fff7e6' }}>
+        <Card size="small" className="diagnosis-next-step" style={{ marginTop: 16 }}>
           <Text type="warning">
             ⚠ {data.next_step.reason}
           </Text>

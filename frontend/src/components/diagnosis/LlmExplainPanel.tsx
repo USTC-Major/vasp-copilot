@@ -80,13 +80,13 @@ const LlmExplainPanel: React.FC<LlmExplainPanelProps> = ({ diagnosisId }) => {
   return (
     <Card
       title={
-        <Space>
+        <Space wrap>
           <RobotOutlined />
           LLM 通俗解释 / 追问
           <Tag color={status.color}>{status.label}</Tag>
         </Space>
       }
-      style={{ marginTop: 16 }}
+      style={{ marginTop: 16 }} className="diagnosis-explain-panel"
     >
       {!enabled && !capabilitiesQuery.isLoading && (
         <Alert
@@ -104,12 +104,12 @@ const LlmExplainPanel: React.FC<LlmExplainPanelProps> = ({ diagnosisId }) => {
 
       <Space direction="vertical" style={{ width: '100%' }} size="middle">
         {answers.map((item, i) => (
-          <div key={i} style={{ whiteSpace: 'pre-wrap' }}>
+          <div key={i} style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
             <Paragraph style={{ marginBottom: 4 }}>
               <Text strong>问：</Text>
               <Text>{item.q}</Text>
             </Paragraph>
-            <div style={{ background: '#f6f8fa', padding: 12, borderRadius: 6 }}>
+            <div className="diagnosis-explain-answer" style={{ background: 'var(--diag-field, #f6f8fa)', padding: 12, borderRadius: 6 }}>
               <Text>{item.a}</Text>
             </div>
             {item.truncated && <Text type="warning" style={{ fontSize: 12 }}>解释上下文已裁剪，回答可能未包含全部诊断证据。</Text>}
@@ -139,6 +139,7 @@ const LlmExplainPanel: React.FC<LlmExplainPanelProps> = ({ diagnosisId }) => {
 
         <Space.Compact style={{ width: '100%' }}>
           <TextArea
+            aria-label="诊断解释问题"
             value={question}
             onChange={(e) => setQuestion(e.target.value)}
             placeholder={DEFAULT_QUESTION}

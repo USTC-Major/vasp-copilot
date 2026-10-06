@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EChartsOption } from 'echarts';
+import { ConfigProvider, theme } from 'antd';
 import type { ScfPlotData } from '../../types/generated-api';
 import ScfPlot from './ScfPlot';
 
@@ -54,6 +55,34 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('ScfPlot', () => {
+  it('recolors a mounted chart across themes without changing scientific data, ranges, references or linked zoom', async () => {
+    const tree = (dark: boolean) => <ConfigProvider theme={{ algorithm: dark ? theme.darkAlgorithm : theme.defaultAlgorithm, token: { colorText: dark ? '#E6EBF3' : '#202B3B', colorBgContainer: dark ? '#1B2028' : '#FFFFFF' } }}><ScfPlot data={scfFixture} /></ConfigProvider>;
+    const { rerender } = render(tree(true));
+    act(() => lastChart().onEvents.datazoom({ start: 18, end: 72 }));
+    await waitFor(() => expect(zoomRanges()).toEqual([{ start: 18, end: 72 }, { start: 18, end: 72 }]));
+    const before = lastChart().option;
+    rerender(tree(false));
+    const after = lastChart().option;
+    expect(chartHarness.mounts).toBe(1);
+    expect(chartHarness.unmounts).toBe(0);
+    expect(after.grid).toEqual(before.grid);
+    expect(after.dataZoom).toEqual(expect.arrayContaining([expect.objectContaining({ start: 18, end: 72, xAxisIndex: [0, 1] })]));
+    const getSeries = (option: EChartsOption) => option.series as { data: unknown[]; markLine?: { data: unknown[]; precision: number }; connectNulls: boolean }[];
+    for (const [index, series] of getSeries(after).entries()) {
+      expect(series.data).toBe(getSeries(before)[index].data);
+      expect(series.connectNulls).toBe(false);
+      if (series.markLine) {
+        expect(series.markLine.data).toBe(getSeries(before)[index].markLine?.data);
+        expect(series.markLine.precision).toBe(-1);
+      }
+    }
+    const axes = (option: EChartsOption) => option.yAxis as { type: string; min: number; max: number; axisLabel: { formatter: unknown; color: string } }[];
+    expect(axes(after).map(axis => [axis.type, axis.min, axis.max, axis.axisLabel.formatter])).toEqual(axes(before).map(axis => [axis.type, axis.min, axis.max, axis.axisLabel.formatter]));
+    expect((after.tooltip as { formatter: unknown }).formatter).toBe((before.tooltip as { formatter: unknown }).formatter);
+    expect(after.textStyle?.color).toBe('#202B3B');
+    expect(before.textStyle?.color).toBe('#E6EBF3');
+  });
+
   it('wires dual views, block and interval selection, linked zoom, and inspectable evidence details', async () => {
     const user = userEvent.setup();
     render(<ScfPlot data={scfFixture} />);

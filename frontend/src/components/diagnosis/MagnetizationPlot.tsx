@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Card, Col, Row, Select, Space, Table, Tag, Typography } from 'antd';
+import { Alert, Card, Col, Row, Select, Space, Table, Tag, Typography, theme } from 'antd';
 import ReactECharts from 'echarts-for-react';
 import type { CalculationMode, MagnetizationPlotData } from '../../types/generated-api';
 import { buildMagneticView, type MagneticFilters, type MagneticView } from './magneticPlotModel';
+import { diagnosisChartStyle } from './diagnosisChartStyle';
 
 const { Text } = Typography;
 
@@ -20,6 +21,7 @@ const rawColumns = [
 ];
 
 const MagnetizationPlot: React.FC<MagnetizationPlotProps> = ({ data, calculationMode }) => {
+  const { token } = theme.useToken();
   const containerRef = useRef<HTMLDivElement>(null);
   const [compact, setCompact] = useState(() => typeof window !== 'undefined' && window.innerWidth < 760);
   const [filters, setFilters] = useState<MagneticFilters>({});
@@ -35,6 +37,9 @@ const MagnetizationPlot: React.FC<MagnetizationPlotProps> = ({ data, calculation
   }, []);
 
   const view = useMemo(() => buildMagneticView(data, calculationMode, { ...filters, compact }), [data, calculationMode, filters, compact]);
+  const chartOption = useMemo(() => diagnosisChartStyle(view.option, token, {
+    'INCAR MAGMOM 输入参考': token.colorPrimary, '最近观测局域投影': token.colorWarning,
+  }), [view.option, token]);
   const hasAnalysis = 'analysis' in data && Boolean(data.analysis);
   const scalarComparisonUnsupported = calculationMode.is_soc
     || calculationMode.is_noncollinear
@@ -125,7 +130,7 @@ const MagnetizationPlot: React.FC<MagnetizationPlotProps> = ({ data, calculation
 
           {view.chartAvailable ? (
             <ReactECharts
-              option={view.option}
+              option={chartOption}
               notMerge
               autoResize
               style={{ height: compact ? 420 : 340, width: '100%' }}

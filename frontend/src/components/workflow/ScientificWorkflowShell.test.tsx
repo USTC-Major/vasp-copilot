@@ -5,7 +5,7 @@ import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { ConfigProvider, theme } from 'antd';
 import App from '../../App';
 import { readWorkflowTheme } from './workflowTheme';
-import { workspaceLocation } from './scientificNavigation';
+import { hasScientificContent, workspaceLocation } from './scientificNavigation';
 
 const flags = vi.hoisted(() => ({ data: {} as { ENABLE_FAKE_HPC?: boolean } }));
 vi.mock('../../hooks/useApi', () => ({ useFeatureFlags: () => flags }));
@@ -35,7 +35,7 @@ describe('shared scientific navigation and isolated content', () => {
     expect(localStorage.getItem('vasp-copilot.workflow-theme')).toBe('light');
     fireEvent.click(screen.getByRole('link', { name: '首页' }));
     expect(screen.getByTestId('theme-token')).toHaveTextContent('#FFFFFF');
-    fireEvent.click(screen.getByRole('link', { name: '诊断计算' }));
+    fireEvent.click(screen.getByRole('link', { name: '计算任务' }));
     expect(document.querySelector('.scientific-shell')).toHaveAttribute('data-workflow-theme', 'light');
     expect(screen.getByTestId('theme-token')).toHaveTextContent('#fafafa');
     expect(screen.getByTestId('theme-token').closest('.scientific-workflow')).toBeNull();
@@ -81,7 +81,7 @@ describe('shared scientific navigation and isolated content', () => {
     expect(screen.getByRole('link', { name })).toHaveAttribute('aria-current', 'page');
     expect(document.querySelectorAll('a[aria-current="page"]')).toHaveLength(1);
     expect(screen.getByLabelText('当前位置')).toHaveTextContent(title);
-    if (path !== '/' && path !== '/workflow') {
+    if (!hasScientificContent(path)) {
       expect(screen.getByTestId('theme-token').closest('.scientific-workflow')).toBeNull();
       expect(screen.getByTestId('theme-token')).toHaveTextContent('#fafafa');
     }
@@ -95,10 +95,24 @@ describe('shared scientific navigation and isolated content', () => {
     expect(document.querySelectorAll('a[aria-current="page"]')).toHaveLength(0);
   });
 
-  it.each(['/workflow/', '/Workflow/'])('applies the migrated theme to the builder route %s', path => {
+  it.each(['/workflow/', '/Workflow/', '/diagnosis/upload/', '/Diagnosis/CaseSensitiveId/'])('applies the migrated theme to %s', path => {
     setup(path);
     expect(screen.getByTestId('theme-token')).toHaveTextContent('#1B2028');
-    expect(screen.getByRole('link', { name: '生成工作流' })).toHaveAttribute('aria-current', 'page');
+    expect(document.querySelector('a[aria-current="page"]')).toHaveAttribute('href', workspaceLocation(path).current);
+  });
+
+  it('retains the diagnosis content theme on route/theme changes without migrating the embedded AI tools', () => {
+    setup('/diagnosis/upload');
+    expect(screen.getByTestId('theme-token')).toHaveTextContent('#1B2028');
+    fireEvent.click(screen.getByRole('button', { name: '切换浅色主题' }));
+    expect(screen.getByTestId('theme-token')).toHaveTextContent('#FFFFFF');
+    fireEvent.click(screen.getByRole('link', { name: '智能模式' }));
+    expect(screen.getByTestId('theme-token')).toHaveTextContent('#fafafa');
+    expect(screen.getByTestId('theme-token').closest('.scientific-workflow')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '切换深色主题' }));
+    expect(screen.getByTestId('theme-token')).toHaveTextContent('#fafafa');
+    fireEvent.click(screen.getByRole('link', { name: '诊断计算' }));
+    expect(screen.getByTestId('theme-token')).toHaveTextContent('#1B2028');
   });
 
   it.each([{}, { ENABLE_FAKE_HPC: false }])('requires an explicit true flag for the remote entry', data => {

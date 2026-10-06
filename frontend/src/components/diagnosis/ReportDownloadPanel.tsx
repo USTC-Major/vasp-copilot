@@ -63,7 +63,7 @@ const ReportDownloadPanel: React.FC<ReportDownloadPanelProps> = ({
   };
 
   return (
-    <Card title="下载" variant="borderless">
+    <Card title="下载" variant="borderless" className="diagnosis-download-panel">
       <Space orientation="vertical" style={{ width: '100%' }}>
         <Button
           icon={<FileMarkdownOutlined />}

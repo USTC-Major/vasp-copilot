@@ -38,6 +38,7 @@ const IssueCard: React.FC<IssueCardProps> = ({ issue, selected, onSelect }) => {
   return (
     <Card
       size="small"
+      className="diagnosis-issue-card"
       style={{
         marginBottom: 12,
         borderLeft: `4px solid ${
@@ -48,7 +49,7 @@ const IssueCard: React.FC<IssueCardProps> = ({ issue, selected, onSelect }) => {
         }`,
       }}
       title={
-        <Space>
+        <Space wrap>
           {SEVERITY_ICON[issue.severity] || SEVERITY_ICON.info}
           <span>{issue.title}</span>
           <Tag color={severityColor}>{issue.severity.toUpperCase()}</Tag>
@@ -114,12 +115,12 @@ const IssueCard: React.FC<IssueCardProps> = ({ issue, selected, onSelect }) => {
                         <div>{ev.message}</div>
                         {ev.excerpt && (
                           <pre style={{
-                            background: '#f6f8fa',
+                            background: 'var(--diag-field, #f6f8fa)',
                             padding: 4,
-                            fontSize: 11,
+                            fontSize: 12,
                             marginTop: 4,
                             borderRadius: 3,
-                            border: '1px solid #e8e8e8',
+                            border: '1px solid var(--diag-border, #e8e8e8)',
                             whiteSpace: 'pre-wrap',
                             wordBreak: 'break-all',
                           }}>
@@ -160,7 +161,7 @@ const IssueCard: React.FC<IssueCardProps> = ({ issue, selected, onSelect }) => {
                     renderItem={(rec) => (
                       <List.Item>
                         <div style={{ width: '100%' }}>
-                          <Space>
+                          <Space wrap>
                             <Text strong>{rec.action}</Text>
                             {rec.target && <Tag>{rec.target}</Tag>}
                             {rec.parameter && <Tag color="blue">{rec.parameter}</Tag>}
@@ -169,10 +170,10 @@ const IssueCard: React.FC<IssueCardProps> = ({ issue, selected, onSelect }) => {
                             <div style={{ marginTop: 4 }}>
                               <Text code delete>{String(rec.old_value)}</Text>
                               <span style={{ margin: '0 8px' }}>→</span>
-                              <Text code style={{ color: '#52c41a' }}>{String(rec.new_value)}</Text>
+                              <Text code style={{ color: 'var(--diag-success, #52c41a)' }}>{String(rec.new_value)}</Text>
                             </div>
                           )}
-                          <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>
+                          <div style={{ fontSize: 12, color: 'var(--diag-muted, #666)', marginTop: 4 }}>
                             {rec.rationale}
                           </div>
                           {rec.requires_user_confirmation && (
