@@ -1,21 +1,27 @@
-import React, { useState } from 'react';
+import React, { useContext, useState } from 'react';
 import { ConfigProvider, Button, theme } from 'antd';
-import { Link } from 'react-router-dom';
-import { HomeOutlined, BuildOutlined, BugOutlined, RobotOutlined, ToolOutlined, SettingOutlined, SunOutlined, MoonOutlined } from '@ant-design/icons';
+import { Link, useLocation } from 'react-router-dom';
+import { HomeOutlined, BuildOutlined, BugOutlined, RobotOutlined, ToolOutlined, SettingOutlined, SunOutlined, MoonOutlined, CloudUploadOutlined } from '@ant-design/icons';
 import './scientific-workflow.css';
+import { hasScientificContent, workspaceLocation } from './scientificNavigation';
 import { readWorkflowTheme, WORKFLOW_THEME_KEY, type WorkflowTheme } from './workflowTheme';
 
 const links = [
   { to: '/', label: '首页', icon: <HomeOutlined /> },
-  { to: '/workflow', label: '生成工作流', icon: <BuildOutlined /> },
-  { to: '/toolbox/projects', label: '计算任务', icon: <ToolOutlined /> },
-  { to: '/diagnosis/upload', label: '诊断计算', icon: <BugOutlined /> },
   { to: '/ai', label: '智能模式', icon: <RobotOutlined /> },
+  { to: '/toolbox/projects', label: '计算任务', icon: <ToolOutlined /> },
+  { to: '/workflow', label: '生成工作流', icon: <BuildOutlined /> },
+  { to: '/diagnosis/upload', label: '诊断计算', icon: <BugOutlined /> },
   { to: '/toolbox/settings', label: '执行设置', icon: <SettingOutlined /> },
 ];
 
-/** Route-local provider: other tools retain their existing application theme. */
-export default function ScientificWorkflowShell({ children }: { children: React.ReactNode }) {
+/** Shared navigation theme; other tools keep the enclosing application's content theme. */
+export default function ScientificWorkflowShell({ children, auxiliary, fakeHpcEnabled = false }: { children: React.ReactNode; auxiliary?: React.ReactNode; fakeHpcEnabled?: boolean }) {
+  const { theme: contentTheme } = useContext(ConfigProvider.ConfigContext);
+  const { pathname } = useLocation();
+  const position = workspaceLocation(pathname);
+  const scientificContent = hasScientificContent(pathname);
+  const navigation = fakeHpcEnabled ? [...links, { to: '/hpc/deploy', label: '远程部署（离线演示）', icon: <CloudUploadOutlined /> }] : links;
   const [mode, setMode] = useState<WorkflowTheme>(readWorkflowTheme);
   const dark = mode === 'dark';
   const toggleTheme = () => {
@@ -42,25 +48,29 @@ export default function ScientificWorkflowShell({ children }: { children: React.
         Steps: { titleLineHeight: 22, iconSize: 28 },
       },
     }}>
-      <div className="scientific-workflow" data-workflow-theme={mode}>
+      <div className="scientific-shell" data-workflow-theme={mode}>
+        <a className="wf-skip-link" href="#workspace-content">跳到主内容</a>
         <aside className="wf-sidebar" aria-label="工作区导航">
           <Link to="/" className="wf-brand" aria-label="VASP-Copilot 首页">
-            <svg viewBox="0 0 40 40" aria-hidden="true"><rect width="40" height="40" rx="10" fill="#15191F" /><path d="M8 10h7l5 17 5-17h7L22.5 32h-5Z" fill="#8AB7FA" /></svg>
+            <img src="/app-icon.svg" alt="" width="34" height="34" />
             <span>VASP-Copilot<small>材料计算工作区</small></span>
           </Link>
-          <nav>{links.map(link => <Link key={link.to} to={link.to} aria-label={link.label} aria-current={link.to === '/workflow' ? 'page' : undefined}><span aria-hidden="true">{link.icon}</span><span>{link.label}</span></Link>)}</nav>
-          <div className="wf-sidebar-bottom"><span>WORKFLOW BUILDER</span><p>从结构到计算输入文件</p></div>
+          <nav>{navigation.map(link => <Link key={link.to} to={link.to} aria-label={link.label} aria-current={link.to === position.current ? 'page' : undefined}><span aria-hidden="true">{link.icon}</span><span>{link.label}</span></Link>)}</nav>
+          <div className="wf-sidebar-bottom"><span>SCIENTIFIC COMPUTING</span><p>结构 · 输入文件 · 计算诊断</p></div>
         </aside>
         <div className="wf-workspace">
           <header className="wf-topbar">
-            <span className="wf-breadcrumb">工具箱 <span>/</span> <strong>生成工作流</strong></span>
+            <span className="wf-breadcrumb" aria-label="当前位置">{position.group}<span>/</span><strong>{position.title}</strong></span>
             <div className="wf-topbar-actions">
               <Button type="text" icon={dark ? <SunOutlined /> : <MoonOutlined />} onClick={toggleTheme} aria-label={dark ? '切换浅色主题' : '切换深色主题'}>{dark ? '浅色' : '深色'}</Button>
-              <Link to="/ai/settings" aria-label="智能设置"><SettingOutlined /></Link>
+              <Link to="/ai/settings" aria-label="智能设置" aria-current={position.current === '/ai/settings' ? 'page' : undefined}><SettingOutlined /></Link>
             </div>
           </header>
-          <main className="wf-main">{children}</main>
+          <main id="workspace-content" tabIndex={-1} className={`wf-main${scientificContent ? ' scientific-workflow' : ' wf-tool-content'}`}>
+            {scientificContent ? children : <ConfigProvider theme={{ ...contentTheme, inherit: false }}><div className="wf-tool-panel">{children}</div></ConfigProvider>}
+          </main>
         </div>
+        <div className="scientific-workflow wf-assistant-layer">{auxiliary}</div>
       </div>
     </ConfigProvider>
   );

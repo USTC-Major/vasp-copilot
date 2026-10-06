@@ -3,22 +3,18 @@
 // ============================================================
 
 import React, { useMemo } from 'react';
-import { Alert, Card, Row, Col, Typography, Space, Button, List, Tag, Spin } from 'antd';
-import { useNavigate } from 'react-router-dom';
+import { Alert, Button, Tag, Spin } from 'antd';
+import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
   RobotOutlined, ToolOutlined, BuildOutlined, BugOutlined, CloudUploadOutlined,
-  ArrowRightOutlined, ExperimentOutlined,
+  ArrowRightOutlined,
 } from '@ant-design/icons';
 import { useFeatureFlags } from '../hooks/useApi';
 import { aiApi, diagnosisApi, toolboxApi, workflowsApi } from '../api/client';
 import type { HistoryKind } from '../types/history';
 import { historyRecordPath, mergeRecentRecords } from '../utils/history';
-
-const { Title, Text, Paragraph } = Typography;
-
-const AppleBlue = '#0071e3';
-const AppleGreen = '#34c759';
+import './scientific-home.css';
 
 const HISTORY_LIMIT = 10;
 
@@ -37,7 +33,6 @@ const formatTime = (value: string): string => {
 };
 
 const HomePage: React.FC = () => {
-  const navigate = useNavigate();
   const fakeHpcEnabled = useFeatureFlags().data?.ENABLE_FAKE_HPC === true;
   const aiHistory = useQuery({
     queryKey: ['recent-history', 'ai'],
@@ -91,124 +86,68 @@ const HomePage: React.FC = () => {
   ];
 
   return (
-    <div style={{ maxWidth: 1080, margin: '0 auto', padding: '32px 16px' }}>
-      {/* 页首标题 */}
-      <div style={{ textAlign: 'center', marginBottom: 40 }}>
-        <Title level={1} style={{ fontWeight: 700, letterSpacing: '-0.5px', marginBottom: 12 }}>
-          <ExperimentOutlined style={{ marginRight: 10, color: AppleBlue, fontSize: 36 }} />
-          VASP-Copilot
-        </Title>
-        <Paragraph style={{ fontSize: 17, maxWidth: 600, margin: '0 auto 16px', color: '#6e6e73' }}>
-          面向材料计算初学者的 VASP 输入文件生成与计算结果诊断平台
-        </Paragraph>
+    <div className="home-workspace">
+      <header className="home-heading">
+        <h1>材料计算工作区</h1>
+        <p>准备 VASP 输入文件、管理计算任务与诊断计算结果。</p>
+      </header>
+
+      <div className="home-entry-grid">
+        <section className="home-panel home-ai" aria-labelledby="home-ai-title">
+          <div className="home-section-heading"><RobotOutlined aria-hidden="true" /><h2 id="home-ai-title">智能模式</h2></div>
+          <p className="home-panel-intro">以项目为中心，Agent 协助规划、排程并生成输入文件。</p>
+          <p className="home-action-note">文件写入和计算提交前，会请你确认。</p>
+          <Link className="home-primary-link" to="/ai">进入智能模式<ArrowRightOutlined aria-hidden="true" /></Link>
+        </section>
+        <section className="home-panel home-toolbox" aria-labelledby="home-toolbox-title">
+          <div className="home-section-heading"><ToolOutlined aria-hidden="true" /><h2 id="home-toolbox-title">工具箱</h2></div>
+          <p className="home-panel-intro">按当前任务选择工具，保留人工确认与操作控制。</p>
+          <div className="home-tools">
+            {toolboxEntries.map(entry => (
+              <Link className="home-tool-link" key={entry.key} to={entry.key}>
+                <span className="home-tool-icon" aria-hidden="true">{entry.icon}</span>
+                <span className="home-tool-copy"><strong>{entry.title}</strong><span>{entry.desc}</span></span>
+                <ArrowRightOutlined className="home-tool-arrow" aria-hidden="true" />
+              </Link>
+            ))}
+          </div>
+        </section>
       </div>
 
-      {/* 两大板块 */}
-      <Row gutter={[28, 28]} align="stretch">
-
-        {/* 板块一：智能模式 */}
-        <Col xs={24} md={12}>
-          <Card hoverable style={{ height: '100%' }}>
-            <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-              <div style={{ textAlign: 'center' }}>
-                <RobotOutlined style={{ fontSize: 48, color: AppleBlue }} />
-              </div>
-              <div style={{ textAlign: 'center' }}>
-                <Title level={3} style={{ marginTop: 4, marginBottom: 8, fontWeight: 700 }}>智能模式</Title>
-                <Paragraph type="secondary" style={{ fontSize: 14, marginBottom: 16, textAlign: 'left' }}>
-                  以项目为中心：Agent 协助规划、排程并生成输入文件；任何文件写入与作业提交都按本次精确内容确认。递进任务等待前置成功后重新预检与确认，不会自动补提。
-                </Paragraph>
-                <Button type="primary" size="large" block icon={<ArrowRightOutlined />} onClick={() => navigate('/ai')}>
-                  进入智能模式
-                </Button>
-              </div>
-            </Space>
-          </Card>
-        </Col>
-
-        {/* 板块二：工具箱 */}
-        <Col xs={24} md={12}>
-          <Card style={{ height: '100%' }}>
-            <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-              <div style={{ textAlign: 'center' }}>
-                <ToolOutlined style={{ fontSize: 48, color: AppleGreen }} />
-              </div>
-              <div style={{ textAlign: 'center' }}>
-                <Title level={3} style={{ marginTop: 4, marginBottom: 8, fontWeight: 700 }}>工具箱</Title>
-                <Paragraph type="secondary" style={{ fontSize: 14, marginBottom: 16 }}>
-                  三个独立小工具的人工集合，面向已有文件与集群操作。
-                </Paragraph>
-              </div>
-              {toolboxEntries.map((entry) => (
-                <Button
-                  key={entry.key}
-                  type="default"
-                  size="large"
-                  block
-                  onClick={() => navigate(entry.key)}
-                  style={{ height: 'auto', display: 'flex', alignItems: 'center', padding: '12px 16px' }}
-                >
-                  <Space style={{ flex: 1, marginLeft: 8 }} direction="vertical" size={2}>
-                    <Space size={8}>
-                      {entry.icon}
-                      <Text strong style={{ fontSize: 15 }}>{entry.title}</Text>
-                    </Space>
-                    <Text type="secondary" style={{ fontSize: 13 }}>{entry.desc}</Text>
-                  </Space>
-                  <ArrowRightOutlined style={{ color: '#86868b' }} />
-                </Button>
-              ))}
-            </Space>
-          </Card>
-        </Col>
-      </Row>
-
-      {/* 最近记录 */}
-      <Card title="最近记录" style={{ marginTop: 28 }}>
-        <Paragraph type="secondary" style={{ marginTop: -4, marginBottom: 12 }}>
-          智能模式记录持久保存；工作流与诊断仅显示当前进程中尚未过期的 TTL 记录，不等于完整历史。
-        </Paragraph>
-        {mockHistory && (
-          <Alert type="warning" showIcon message="演示数据" description="当前最近记录来自显式 Mock 模式，不是真实任务历史。" style={{ marginBottom: 12 }} />
-        )}
-        {failedSources.map(({ name }) => (
-          <Alert
-            key={name}
-            type="warning"
-            showIcon
-            message={`${name}历史暂不可用`}
+      <section className="home-panel home-history" aria-labelledby="home-history-title" aria-busy={historyLoading}>
+        <div className="home-history-heading"><h2 id="home-history-title">最近记录</h2>{historyLoading && <span className="home-loading-note" role="status"><Spin size="small" />正在加载记录</span>}</div>
+        <p className="home-history-note">智能模式记录持久保存；工作流与诊断仅显示当前进程中尚未过期的 TTL 记录，不等于完整历史。</p>
+        {mockHistory && <Alert type="warning" showIcon message="演示数据" description="当前最近记录来自显式 Mock 模式，不是真实任务历史。" />}
+        {failedSources.map(({ name, query }) => (
+          <Alert key={name} type="warning" showIcon message={`${name}历史暂不可用`}
             description="其他数据源的记录仍会正常显示。"
-            style={{ marginBottom: 8 }}
-          />
+            action={<Button size="small" loading={query.isFetching} onClick={() => void query.refetch()} aria-label={`重试${name}历史`}>重试</Button>} />
         ))}
-        {historyLoading && recentSessions.length === 0 ? <Spin size="small" /> : (
-        <List
-          size="small"
-          dataSource={recentSessions}
-          renderItem={(item) => (
-            <List.Item
-              style={{ cursor: 'pointer', borderRadius: 12, padding: '12px 8px' }}
-              onClick={() => navigate(historyRecordPath(item))}
-            >
-              <Space>
-                <Tag color={HISTORY_LABELS[item.kind].color}>{HISTORY_LABELS[item.kind].label}</Tag>
-                <Text>{item.title}</Text>
-                {item.project_name && <Text type="secondary">{item.project_name}</Text>}
-                <Tag>{item.status}</Tag>
-                {item.execution_mode && (
-                  <Tag color={item.execution_mode === 'Real' ? 'green' : item.execution_mode === 'Fake' ? 'gold' : 'default'}>
-                    {item.execution_mode}
-                  </Tag>
-                )}
-                {item.demo && <Tag color="warning">演示</Tag>}
-              </Space>
-              <Text type="secondary" style={{ fontSize: 12 }}>{formatTime(item.updated_at)}</Text>
-            </List.Item>
-          )}
-          locale={{ emptyText: failedSources.length === historySources.length ? '历史服务暂不可用' : '暂无可显示的真实记录' }}
-        />
+        {recentSessions.length > 0 ? (
+          <ul className="home-records">
+            {recentSessions.map(item => (
+              <li key={`${item.kind}:${item.id}`}>
+                <Link className="home-record-link" to={historyRecordPath(item)} aria-label={item.title}>
+                  <span className="home-record-kind"><Tag color={HISTORY_LABELS[item.kind].color}>{HISTORY_LABELS[item.kind].label}</Tag></span>
+                  <span className="home-record-content">
+                    <strong>{item.title}</strong>
+                    {item.project_name && <span className="home-record-project">{item.project_name}</span>}
+                    <span className="home-record-status">
+                      <Tag>{item.status}</Tag>
+                      {item.execution_mode && <Tag color={item.execution_mode === 'Real' ? 'green' : item.execution_mode === 'Fake' ? 'gold' : 'default'}>{item.execution_mode}</Tag>}
+                      {item.demo && <Tag color="warning">演示</Tag>}
+                    </span>
+                  </span>
+                  <time dateTime={item.updated_at}>{formatTime(item.updated_at)}</time>
+                  <ArrowRightOutlined className="home-record-arrow" aria-hidden="true" />
+                </Link>
+              </li>
+            ))}
+          </ul>
+        ) : !historyLoading && (
+          <p className="home-history-empty" role="status">{failedSources.length === historySources.length ? '历史服务暂不可用' : failedSources.length > 0 ? '已加载的数据源暂无记录；部分历史暂不可用' : '暂无可显示的真实记录'}</p>
         )}
-      </Card>
+      </section>
     </div>
   );
 };

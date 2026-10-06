@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { HttpResponse, http } from 'msw';
+import { HttpResponse, http, delay } from 'msw';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import HomePage from './HomePage';
 import WorkflowHistoryPage from './WorkflowHistoryPage';
@@ -166,6 +167,75 @@ describe('HomePage recent history', () => {
 
     renderHome(client);
     await waitFor(() => expect(calls).toEqual({ ai: 2, toolbox: 2, workflows: 2, diagnoses: 2 }));
+  });
+
+  it('keeps a loading source distinct from an empty history while showing ready records', async () => {
+    server.use(
+      http.get('/ai/v1/history/recent', async () => { await delay(200); return empty('ai', 'persistent'); }),
+      http.get('/api/v1/workflows/recent', () => empty('workflows', 'ttl')),
+      http.get('/api/v1/diagnosis/recent', () => HttpResponse.json({ source: 'diagnoses', retention: 'ttl', records: [
+        { id: 'ready', kind: 'diagnosis', title: '已加载的诊断', status: 'succeeded', updated_at: '2026-09-18T01:00:00Z' },
+      ] })),
+    );
+    renderHome();
+    expect(screen.getByText('正在加载记录')).toBeInTheDocument();
+    expect(screen.queryByText('暂无可显示的真实记录')).not.toBeInTheDocument();
+    expect(await screen.findByText('已加载的诊断')).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText('正在加载记录')).not.toBeInTheDocument());
+  });
+
+  it('does not describe a partial failure with no returned records as a successful empty history', async () => {
+    server.use(
+      http.get('/ai/v1/history/recent', () => empty('ai', 'persistent')),
+      http.get('/api/v1/workflows/recent', () => HttpResponse.json({ error: { code: 'DOWN' } }, { status: 503 })),
+      http.get('/api/v1/diagnosis/recent', () => empty('diagnoses', 'ttl')),
+    );
+    renderHome();
+    expect(await screen.findByText('已加载的数据源暂无记录；部分历史暂不可用')).toBeInTheDocument();
+    expect(screen.queryByText('暂无可显示的真实记录')).not.toBeInTheDocument();
+  });
+
+  it('retries only the failed source and retains ready records', async () => {
+    const calls = { ai: 0, workflow: 0, diagnosis: 0 };
+    server.use(
+      http.get('/ai/v1/history/recent', () => { calls.ai++; return empty('ai', 'persistent'); }),
+      http.get('/api/v1/workflows/recent', () => {
+        calls.workflow++;
+        return calls.workflow === 1 ? HttpResponse.json({ error: { code: 'DOWN' } }, { status: 503 }) : HttpResponse.json({
+          source: 'workflows', retention: 'ttl', records: [{ id: 'restored', kind: 'workflow', title: '恢复的工作流', status: 'planned', updated_at: '2026-09-18T01:00:00Z' }],
+        });
+      }),
+      http.get('/api/v1/diagnosis/recent', () => {
+        calls.diagnosis++;
+        return HttpResponse.json({ source: 'diagnoses', retention: 'ttl', records: [{ id: 'ready', kind: 'diagnosis', title: '保留的诊断', status: 'succeeded', updated_at: '2026-09-18T01:00:00Z' }] });
+      }),
+    );
+    renderHome();
+    const retry = await screen.findByRole('button', { name: '重试工作流历史' });
+    expect(screen.getByText('保留的诊断')).toBeInTheDocument();
+    fireEvent.click(retry);
+    expect(await screen.findByText('恢复的工作流')).toBeInTheDocument();
+    expect(screen.getByText('保留的诊断')).toBeInTheDocument();
+    expect(screen.queryByText('工作流历史暂不可用')).not.toBeInTheDocument();
+    expect(calls).toEqual({ ai: 1, workflow: 2, diagnosis: 1 });
+  });
+
+  it('opens long history titles with the keyboard through the unchanged encoded detail URL', async () => {
+    const title = '很长的真实工作流标题'.repeat(12);
+    server.use(
+      http.get('/ai/v1/history/recent', () => empty('ai', 'persistent')),
+      http.get('/api/v1/diagnosis/recent', () => empty('diagnoses', 'ttl')),
+      http.get('/api/v1/workflows/recent', () => HttpResponse.json({ source: 'workflows', retention: 'ttl', records: [
+        { id: 'a/b', kind: 'workflow', title, project_name: '项目名称'.repeat(12), status: 'planned', updated_at: '2026-09-18T01:00:00Z' },
+      ] })),
+    );
+    renderHome();
+    const link = await screen.findByRole('link', { name: title });
+    expect(link).toHaveAttribute('href', '/workflow/history/a%2Fb');
+    link.focus();
+    expect(link).toHaveFocus();
+    await userEvent.keyboard('{Enter}');
+    expect(screen.getByTestId('location')).toHaveTextContent('/workflow/history/a%2Fb');
   });
 });
 
