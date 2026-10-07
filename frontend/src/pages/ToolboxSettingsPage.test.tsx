@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { HttpResponse, http } from 'msw';
 import { server } from '../mocks/server';
 import ToolboxSettingsPage from './ToolboxSettingsPage';
+import { MemoryRouter } from 'react-router-dom';
 
 // Context Modal is owned by React and uses Testing Library's normal unmount cleanup.
 
@@ -18,7 +19,7 @@ const settingsBody = (username: string, maxJobs = 2) => ({
 
 const renderPage = () => {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  render(<QueryClientProvider client={client}><ToolboxSettingsPage /></QueryClientProvider>);
+  render(<MemoryRouter><QueryClientProvider client={client}><ToolboxSettingsPage /></QueryClientProvider></MemoryRouter>);
 };
 
 it('刷新后台查询状态后仍用原快照检测冲突，选择刷新则不覆盖', async () => {
@@ -107,7 +108,7 @@ it('keeps settings and credential actions unavailable until a failed read recove
     http.put('/api/v1/toolbox/settings', () => { writes += 1; return HttpResponse.json({}); }),
   );
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  render(<QueryClientProvider client={client}><ToolboxSettingsPage /></QueryClientProvider>);
+  render(<MemoryRouter><QueryClientProvider client={client}><ToolboxSettingsPage /></QueryClientProvider></MemoryRouter>);
 
   expect(await screen.findByText('无法读取 Toolbox 设置')).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: '保存执行设置' })).not.toBeInTheDocument();

@@ -1,0 +1,62 @@
+export type PotcarDatasetStatus = 'ready' | 'unsupported' | 'invalid' | 'ambiguous';
+export interface PotcarIssue { code: string; message: string }
+export interface PotcarScan {
+  scan_id: string;
+  library_id: string;
+  status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+  scanned_count: number;
+  candidate_count: number;
+  failed_count: number;
+  created_at: string;
+  finished_at: string | null;
+  error: (PotcarIssue & { retryable: boolean }) | null;
+  index_revision: number | null;
+}
+export interface PotcarLibrary {
+  library_id: string;
+  display_name: string;
+  root_path: string;
+  version_note: string | null;
+  revision: number;
+  index_revision: number | null;
+  source_ack: { confirmed: true; confirmed_at: string };
+  source_fingerprint: string | null;
+  created_at: string;
+  updated_at: string;
+  is_default: boolean;
+  reachable: boolean;
+  scan: PotcarScan | null;
+  summary: ({ total: number } & Record<PotcarDatasetStatus, number>) | null;
+}
+export interface PotcarDataset {
+  dataset_id: string;
+  library_id: string;
+  relative_path: string;
+  compression: 'raw' | 'gzip' | 'Z' | null;
+  element: string | null;
+  variant: string | null;
+  family: string | null;
+  lexch: string | null;
+  zval: number | null;
+  enmax_ev: number | null;
+  dataset_date: string | null;
+  title: string | null;
+  decoded_sha256: string | null;
+  source_sha256: string | null;
+  status: PotcarDatasetStatus;
+  issues: PotcarIssue[];
+  duplicate_of: string | null;
+}
+export interface PotcarDiscovery {
+  root_path: string;
+  requires_selection: boolean;
+  collections: { root_path: string; display_name: string; candidate_count: number }[];
+  candidate_count: number;
+}
+export interface PotcarLibrariesResponse {
+  mode: 'toolbox'; libraries: PotcarLibrary[]; default_library_id: string | null; revision: number;
+}
+export interface PotcarLibraryResponse { mode: 'toolbox'; library: PotcarLibrary; revision: number }
+export interface PotcarDatasetsResponse {
+  mode: 'toolbox'; index_revision: number | null; datasets: PotcarDataset[]; next_cursor: string | null; total: number;
+}

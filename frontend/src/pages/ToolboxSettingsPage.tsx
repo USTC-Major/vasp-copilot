@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Alert, Button, Card, Col, Form, Input, InputNumber, Modal, Row, Select, Space, Spin, Typography, message } from 'antd';
 import { useQuery } from '@tanstack/react-query';
+import { Link } from 'react-router-dom';
 import { toolboxApi } from '../api/client';
 import type { ToolboxSettings } from '../types/toolbox';
 import './scientific-settings.css';
@@ -131,6 +132,7 @@ const ToolboxSettingsPage: React.FC = () => {
       <div className="settings-heading"><Title level={1}>Toolbox 执行设置</Title></div>
       <Alert type="error" showIcon message="无法读取 Toolbox 设置" description="设置尚未读取成功，请检查 Toolbox 服务后重试。" />
       <Button onClick={() => void settingsQuery.refetch()} loading={settingsQuery.isFetching}>重试读取设置</Button>
+      <Link to="/toolbox/potcar">管理本地 POTCAR 赝势库</Link>
     </div>;
   }
 
@@ -138,6 +140,7 @@ const ToolboxSettingsPage: React.FC = () => {
     <div className="scientific-settings settings-toolbox">
       {contextHolder}
       <div className="settings-heading"><Title level={1}>Toolbox 执行设置</Title><Paragraph type="secondary">这些设置不依赖模型或智能模式。SSH 测试只检查连接，不提交作业。</Paragraph></div>
+      <Paragraph><Link to="/toolbox/potcar">管理本地 POTCAR 赝势库</Link>（登记、扫描与默认库，不改变 SSH 或模型设置）</Paragraph>
       <Form form={form} layout="vertical" onFinish={(values) => void save(values)}>
         <Row gutter={[18, 18]}>
           <Col xs={24} lg={10}>
