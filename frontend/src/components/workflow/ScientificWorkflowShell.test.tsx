@@ -37,6 +37,9 @@ describe('shared scientific navigation and isolated content', () => {
     expect(screen.getByTestId('theme-token')).toHaveTextContent('#FFFFFF');
     fireEvent.click(screen.getByRole('link', { name: '计算任务' }));
     expect(document.querySelector('.scientific-shell')).toHaveAttribute('data-workflow-theme', 'light');
+    expect(screen.getByTestId('theme-token')).toHaveTextContent('#FFFFFF');
+    expect(screen.getByTestId('theme-token').closest('.scientific-workflow')).not.toBeNull();
+    fireEvent.click(screen.getByRole('link', { name: '执行设置' }));
     expect(screen.getByTestId('theme-token')).toHaveTextContent('#fafafa');
     expect(screen.getByTestId('theme-token').closest('.scientific-workflow')).toBeNull();
     expect(screen.getByTestId('theme-token').closest('.wf-tool-panel')).not.toBeNull();
@@ -95,10 +98,17 @@ describe('shared scientific navigation and isolated content', () => {
     expect(document.querySelectorAll('a[aria-current="page"]')).toHaveLength(0);
   });
 
-  it.each(['/workflow/', '/Workflow/', '/diagnosis/upload/', '/Diagnosis/CaseSensitiveId/'])('applies the migrated theme to %s', path => {
+  it.each(['/workflow/', '/Workflow/', '/diagnosis/upload/', '/Diagnosis/CaseSensitiveId/', '/toolbox/projects', '/Toolbox/Projects/', '/toolbox/projects/ProjectCase/tasks/TaskCase/'])('applies the migrated theme to %s', path => {
     setup(path);
     expect(screen.getByTestId('theme-token')).toHaveTextContent('#1B2028');
     expect(document.querySelector('a[aria-current="page"]')).toHaveAttribute('href', workspaceLocation(path).current);
+  });
+
+  it.each(['/toolbox', '/toolbox/settings', '/toolbox/projects/project-only', '/toolbox/projects/p/tasks/t/extra', '/ai/projects/p'])('does not extend the toolbox content theme to %s', path => {
+    expect(hasScientificContent(path)).toBe(false);
+    setup(path);
+    expect(screen.getByTestId('theme-token')).toHaveTextContent('#fafafa');
+    expect(screen.getByTestId('theme-token').closest('.scientific-workflow')).toBeNull();
   });
 
   it('retains the diagnosis content theme on route/theme changes without migrating the embedded AI tools', () => {

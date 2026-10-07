@@ -5,11 +5,13 @@ import { useNavigate } from 'react-router-dom';
 import AiDirectoryPicker from '../components/ai/AiDirectoryPicker';
 import { toolboxApi } from '../api/client';
 import { useToolboxProjectCreate, useToolboxProjects, useToolboxTaskCreate, useToolboxTasks } from '../hooks/useApi';
+import '../components/toolbox/scientific-toolbox.css';
 
 const { Title, Text, Paragraph } = Typography;
 
 const ToolboxProjectsPage: React.FC = () => {
   const navigate = useNavigate();
+  const [modal, modalContextHolder] = Modal.useModal();
   const projectsQuery = useToolboxProjects();
   const createProjectMutation = useToolboxProjectCreate();
   const createTaskMutation = useToolboxTaskCreate();
@@ -84,7 +86,8 @@ const ToolboxProjectsPage: React.FC = () => {
   };
 
   const deleteProject = (projectId: string) => {
-    Modal.confirm({
+    modal.confirm({
+      className: 'toolbox-modal',
       title: '删除项目记录？',
       content: '只删除 Toolbox 记录，不删除用户文件，也不会取消远端作业。',
       okText: '删除记录', cancelText: '取消', okButtonProps: { danger: true },
@@ -101,7 +104,8 @@ const ToolboxProjectsPage: React.FC = () => {
   };
 
   const deleteTask = (projectId: string, taskId: string) => {
-    Modal.confirm({
+    modal.confirm({
+      className: 'toolbox-modal',
       title: '删除任务记录？',
       content: '只删除任务记录，不删除计算目录，也不会停止或取消远端作业。',
       okText: '删除记录', cancelText: '取消', okButtonProps: { danger: true },
@@ -130,13 +134,14 @@ const ToolboxProjectsPage: React.FC = () => {
   };
 
   return (
-    <Space direction="vertical" size="large" style={{ width: '100%' }}>
-      <div>
-        <Title level={2} style={{ marginBottom: 4 }}>Toolbox 计算任务</Title>
+    <>{modalContextHolder}<Space className="toolbox-page toolbox-projects-page" direction="vertical" size="large" style={{ width: '100%' }}>
+      <div className="toolbox-heading">
+        <Title level={1}>计算项目与任务</Title>
         <Paragraph type="secondary" style={{ marginBottom: 0 }}>
           无需配置 AI 模型，可直接准备、批准、提交和跟踪计算。
         </Paragraph>
       </div>
+      {/* A-4: the teammate-owned usage guide can connect below this page heading. */}
 
       {projectsQuery.isError && (
         <Alert
@@ -157,16 +162,16 @@ const ToolboxProjectsPage: React.FC = () => {
             <List
               loading={projectsQuery.isLoading}
               dataSource={projects}
-              locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="还没有 Toolbox 项目" /> }}
+              locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={projectsQuery.isError ? '项目列表暂不可用' : '还没有 Toolbox 项目'} /> }}
               renderItem={(project) => (
                 <List.Item
+                  className={`toolbox-project-row${project.id === selectedProjectId ? ' is-selected' : ''}`}
                   actions={[<Button key="delete" danger type="link" onClick={(event) => { event.stopPropagation(); deleteProject(project.id); }}>删除记录</Button>]}
                   onClick={() => setSelectedProjectId(project.id)}
-                  style={{ cursor: 'pointer', borderRadius: 10, paddingInline: 10, background: project.id === selectedProjectId ? '#e6f4ff' : undefined }}
                 >
                   <List.Item.Meta
-                    avatar={<ProjectOutlined style={{ color: '#1677ff' }} />}
-                    title={project.name}
+                    avatar={<ProjectOutlined style={{ color: 'var(--wf-blue, #1677ff)' }} />}
+                    title={<Button className="toolbox-project-select" type="text" aria-pressed={project.id === selectedProjectId}>{project.name}</Button>}
                     description={project.description || '无项目说明'}
                   />
                 </List.Item>
@@ -180,10 +185,12 @@ const ToolboxProjectsPage: React.FC = () => {
             title={selectedProject ? `${selectedProject.name} · 计算任务` : '计算任务'}
             extra={<Button type="primary" size="small" icon={<PlusOutlined />} disabled={!selectedProjectId} onClick={() => setTaskOpen(true)}>新建任务</Button>}
           >
+            {tasksQuery.isError && <Alert type="error" showIcon message="无法读取该项目的计算任务" style={{ marginBottom: 16 }}
+              action={<Button size="small" icon={<ReloadOutlined />} onClick={() => void tasksQuery.refetch()}>重试读取</Button>} />}
             <List
               loading={tasksQuery.isLoading}
               dataSource={tasks}
-              locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={selectedProjectId ? '该项目还没有计算任务' : '请先选择或创建项目'} /> }}
+              locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={tasksQuery.isError ? '任务列表暂不可用' : selectedProjectId ? '该项目还没有计算任务' : '请先选择或创建项目'} /> }}
               renderItem={(task) => (
                 <List.Item
                   actions={[
@@ -193,7 +200,7 @@ const ToolboxProjectsPage: React.FC = () => {
                 >
                   <List.Item.Meta
                     title={<Space wrap><Text strong>{task.title || task.id}</Text><Tag>{task.status}</Tag></Space>}
-                    description={<Space direction="vertical" size={1}><Text type="secondary">{task.goal || '未填写计算目标'}</Text><Text type="secondary" style={{ fontSize: 12 }}>{task.local_workspace || '未设置本地目录'}</Text></Space>}
+                    description={<Space direction="vertical" size={1}><Text type="secondary">{task.goal || '未填写计算目标'}</Text><Text className="toolbox-path" type="secondary" style={{ fontSize: 12 }}>{task.local_workspace || '未设置本地目录'}</Text></Space>}
                   />
                 </List.Item>
               )}
@@ -202,7 +209,7 @@ const ToolboxProjectsPage: React.FC = () => {
         </Col>
       </Row>
 
-      <Modal title="新建 Toolbox 项目" open={projectOpen} onCancel={() => setProjectOpen(false)} onOk={() => void createProject()} confirmLoading={createProjectMutation.isPending} okText="创建">
+      <Modal className="toolbox-modal" title="新建 Toolbox 项目" open={projectOpen} onCancel={() => setProjectOpen(false)} onOk={() => void createProject()} confirmLoading={createProjectMutation.isPending} okText="创建">
         <Space direction="vertical" style={{ width: '100%' }}>
           <label htmlFor="toolbox-project-name"><Text strong>项目名称</Text></label>
           <Input id="toolbox-project-name" value={projectName} onChange={(event) => setProjectName(event.target.value)} placeholder="如：Si 基础计算" />
@@ -211,13 +218,13 @@ const ToolboxProjectsPage: React.FC = () => {
         </Space>
       </Modal>
 
-      <Modal title="新建计算任务" open={taskOpen} onCancel={() => setTaskOpen(false)} onOk={() => void createTask()} confirmLoading={createTaskMutation.isPending} okText="创建任务" width={680}>
+      <Modal className="toolbox-modal" title="新建计算任务" open={taskOpen} onCancel={() => setTaskOpen(false)} onOk={() => void createTask()} confirmLoading={createTaskMutation.isPending} okText="创建任务" width={680}>
         <Space direction="vertical" size="middle" style={{ width: '100%' }}>
           <div><label htmlFor="toolbox-task-title"><Text strong>任务标题</Text></label><Input id="toolbox-task-title" value={taskTitle} onChange={(event) => setTaskTitle(event.target.value)} placeholder="如：Si 静态计算" /></div>
           <div><label htmlFor="toolbox-task-goal"><Text strong>计算目标</Text></label><Input.TextArea id="toolbox-task-goal" value={taskGoal} onChange={(event) => setTaskGoal(event.target.value)} rows={2} placeholder="说明这次计算要完成什么" /></div>
           <div>
             <label htmlFor="toolbox-local-workspace"><Text strong>本地工作区（必填）</Text></label>
-            <Space.Compact style={{ width: '100%' }}>
+            <Space.Compact className="toolbox-path-controls" style={{ width: '100%' }}>
               <Input id="toolbox-local-workspace" value={localWorkspace} onChange={(event) => setLocalWorkspace(event.target.value)} placeholder="选择已有输入所在目录" />
               <Button icon={<FolderOpenOutlined />} loading={pickingLocal} onClick={() => void pickLocal()}>系统选择</Button>
               <Button onClick={() => setPickerKind('local')}>浏览</Button>
@@ -225,7 +232,7 @@ const ToolboxProjectsPage: React.FC = () => {
           </div>
           <div>
             <label htmlFor="toolbox-hpc-workspace"><Text strong>超算工作区（可选）</Text></label>
-            <Space.Compact style={{ width: '100%' }}>
+            <Space.Compact className="toolbox-path-controls" style={{ width: '100%' }}>
               <Input id="toolbox-hpc-workspace" value={hpcWorkspace} onChange={(event) => setHpcWorkspace(event.target.value)} placeholder="未配置 SSH 时可留空" prefix={<CloudServerOutlined />} />
               <Button onClick={() => setPickerKind('hpc')}>浏览</Button>
             </Space.Compact>
@@ -234,6 +241,7 @@ const ToolboxProjectsPage: React.FC = () => {
       </Modal>
 
       <AiDirectoryPicker
+        scientific
         open={pickerKind !== null}
         kind={pickerKind ?? 'local'}
         initialPath={pickerKind === 'hpc' ? hpcWorkspace : localWorkspace}
@@ -244,7 +252,7 @@ const ToolboxProjectsPage: React.FC = () => {
           setPickerKind(null);
         }}
       />
-    </Space>
+    </Space></>
   );
 };
 

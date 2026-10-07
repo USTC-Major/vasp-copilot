@@ -285,7 +285,7 @@ const ToolboxFilesPanel: React.FC<ToolboxFilesPanelProps> = ({ projectId, taskId
     && fullAction.binding.manifest.items.every((entry) => entry.op !== 'write_text' || typeof entry.text === 'string');
   const itemStatus = (id: string) => action?.receipt.items.find((item) => item.item_id === id)?.state
     ?? action?.receipt.item_outcomes?.[id]?.state ?? (action?.state === 'pending' ? '等待批准' : '尚无回执');
-  return <Card id="toolbox-files" title="远端文件准备与授权" extra={<Tag>{scope?.approval_mode === 'reviewer' ? '独立 reviewer · 文件操作' : '人工逐次确认'}</Tag>}>
+  return <Card id="toolbox-files" className="toolbox-files-panel" title="远端文件准备与授权" extra={<Tag>{scope?.approval_mode === 'reviewer' ? '独立 reviewer · 文件操作' : '人工逐次确认'}</Tag>}>
     <Space direction="vertical" size="large" style={{ width: '100%' }}>
       <Alert type="info" showIcon message="文件准备完成不代表科学适用" description="从当前计算和尝试选择研究根与精确来源；目标已存在时失败，软链接可能被计算写回根外来源。" />
       {notice && <Alert type={/失败|错误|不可|勿|缺|变化|冲突/.test(notice) ? 'warning' : 'info'} showIcon message={notice} closable onClose={() => setNotice('')} />}
@@ -296,7 +296,7 @@ const ToolboxFilesPanel: React.FC<ToolboxFilesPanelProps> = ({ projectId, taskId
           options={jobs.map((entry) => ({ value: entry.key, label: `${entry.label || entry.key}${entry.attempt_id ? ` · 当前尝试 ${entry.attempt_id}` : ' · 缺少当前尝试身份'}` }))}
           placeholder="选择一个计算" /></div>
         {jobKey && !job?.attempt_id && <Text type="danger">此计算缺少当前尝试身份，无法建立文件范围。</Text>}
-        <Space.Compact style={{ width: '100%', maxWidth: 750, marginTop: 10 }}>
+        <Space.Compact className="toolbox-path-controls" style={{ width: '100%', maxWidth: 750, marginTop: 10 }}>
           <Input aria-label="研究根绝对路径" value={rootPath} onChange={(event) => setRootPath(event.target.value)} placeholder="远端已存在目录，如 /scratch/me/project" />
           <Button onClick={() => setPickerOpen(true)}>浏览远端目录</Button>
           <Button disabled={busy || !rootPath.trim()} onClick={() => void registerRoot()}>登记研究根</Button>
@@ -427,7 +427,7 @@ const ToolboxFilesPanel: React.FC<ToolboxFilesPanelProps> = ({ projectId, taskId
             <Text type="secondary">文件完成仅表示准备结果，科学适用性尚未判断。</Text>
             {action.state === 'pending' && fullAction && linkedScope?.approval_mode === 'reviewer' && linkedScope.state === 'active' && !action.review &&
               <Button disabled={busy || !canApprove || !fullAction.binding_hash} onClick={() => void requestReview()}>请求 reviewer 审查</Button>}
-            {action.state === 'pending' && fullAction && <Space>
+            {action.state === 'pending' && fullAction && <Space wrap>
               <Button type="primary" disabled={busy || !canApprove} onClick={() => void resolve(true)}>批准文件计划</Button>
               <Button danger disabled={busy} onClick={() => void resolve(false)}>拒绝文件计划</Button>
             </Space>}
@@ -439,7 +439,7 @@ const ToolboxFilesPanel: React.FC<ToolboxFilesPanelProps> = ({ projectId, taskId
         </Card>}
       </div>
     </Space>
-    <AiDirectoryPicker open={pickerOpen} kind="hpc" initialPath={rootPath} onCancel={() => setPickerOpen(false)}
+    <AiDirectoryPicker scientific open={pickerOpen} kind="hpc" initialPath={rootPath} onCancel={() => setPickerOpen(false)}
       onSelect={(path) => { setRootPath(path); setPickerOpen(false); }} />
   </Card>;
 };

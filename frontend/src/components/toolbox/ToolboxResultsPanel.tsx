@@ -76,10 +76,10 @@ const ToolboxResultsPanel: React.FC<Props> = ({ projectId, taskId, jobs, report,
     }
   };
 
-  return <Card title="计算结果取回" size="small">
+  return <Card className="toolbox-results-panel" title="计算结果取回" size="small">
     <Space direction="vertical" style={{ width: '100%' }}>
       <Text type="secondary">仅在作业终态后取回该次提交目录当前存在的 OUTCAR、OSZICAR、CONTCAR；单文件上限 32 MiB。文件完整性不证明由本次计算产生或计算已收敛。WAVECAR、CHGCAR 不在此入口。</Text>
-      {eligible.length > 1 && <Select aria-label="选择结果作业" style={{ width: 320 }} placeholder="选择已结束的计算作业"
+      {eligible.length > 1 && <Select aria-label="选择结果作业" style={{ width: 320, maxWidth: '100%' }} placeholder="选择已结束的计算作业"
         disabled={!!busy}
         value={jobKey || undefined} onChange={setJobKey}
         options={eligible.map((job) => ({ value: job.key, label: `${job.label || job.key} · ${job.attempt_id}` }))} />}

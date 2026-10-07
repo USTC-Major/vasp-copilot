@@ -152,7 +152,8 @@ const ToolboxTaskStatus: React.FC<Props> = ({
       size="small"
       title={title}
       extra={showTaskLink ? <Link to={`/toolbox/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(taskId)}`}>打开任务页</Link> : undefined}
-      style={{ borderColor: '#d6e4ff' }}
+      className="toolbox-task-status"
+      style={{ borderColor: 'var(--toolbox-border, #d6e4ff)' }}
     >
       <Space wrap style={{ marginBottom: 12 }}>
         <Tag title={flow.phase} color={colorForStatus(flow.phase)}>阶段：{statusLabel(flow.phase)}</Tag>
@@ -193,7 +194,7 @@ const ToolboxTaskStatus: React.FC<Props> = ({
       )}
 
       {pendingCards.map((card) => (
-        <Card key={card.card_id} size="small" style={{ marginBottom: 10, background: '#fffbe6', borderColor: '#ffe58f' }}>
+        <Card key={card.card_id} className="toolbox-pending-card" size="small" style={{ marginBottom: 10, background: 'var(--toolbox-pending-bg, #fffbe6)', borderColor: 'var(--toolbox-pending-border, #ffe58f)' }}>
           <Space direction="vertical" size={6} style={{ width: '100%' }}>
             <Space wrap align="start"><Tag color="gold">人工确认</Tag><Text strong style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{card.summary}</Text></Space>
             {card.reason && <Text type="secondary" style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{card.reason}</Text>}
@@ -211,7 +212,7 @@ const ToolboxTaskStatus: React.FC<Props> = ({
               <Link to={`/toolbox/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(taskId)}?fileAction=${encodeURIComponent(card.action_id || card.card_id)}#toolbox-files`}>
                 审阅完整文件计划与授权范围
               </Link>
-            ) : <Space>
+            ) : <Space wrap>
               <Button
                 type="primary"
                 size="small"
