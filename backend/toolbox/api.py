@@ -10,6 +10,8 @@ from .contracts import ToolboxError
 from .service import ExecutionService, envelope
 
 router = APIRouter(prefix='/toolbox', tags=['Toolbox execution'])
+from .potcar.api import router as potcar_router
+router.include_router(potcar_router)
 
 def service(request: Request) -> ExecutionService:
     return request.app.state.toolbox

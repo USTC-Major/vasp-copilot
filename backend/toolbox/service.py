@@ -24,6 +24,8 @@ class ExecutionService:
         self.file_factory = file_factory
         self.reviewer_transport = reviewer_transport
         self.files = None
+        self.potcar = None
+        self.potcar_error = None
         self._backend_mode = None
         self.owner = ProcessOwner(root)
         self.store = None
@@ -35,12 +37,22 @@ class ExecutionService:
         self.owner.acquire()
         try:
             self.store = ProjectStore(self.root)
+            from .potcar import PotcarLibraryService
+            try:
+                self.potcar = PotcarLibraryService(self.root)
+            except (OSError, ValueError, TypeError, KeyError, ToolboxError):
+                # An optional local library store must not disable unrelated
+                # Toolbox services. Preserve files and fail only its routes.
+                self.potcar_error = ToolboxError('POTCAR_STORE_INVALID',
+                    '本地赝势库状态无法读取；原文件保留，请检查状态目录后重启服务', 503, True)
             from .file_actions import FileActions
             self.files = FileActions(self, self.file_factory)
             self.files.start()
             if self.monitor_enabled:
                 self.monitor.start(self.store)
         except BaseException:
+            if self.potcar:
+                self.potcar.close()
             if self.files:
                 self.files.close()
             self.monitor.stop()
@@ -49,6 +61,8 @@ class ExecutionService:
         return self
 
     def close(self):
+        if self.potcar:
+            self.potcar.close()
         if self.files:
             self.files.close()
         self.monitor.stop()

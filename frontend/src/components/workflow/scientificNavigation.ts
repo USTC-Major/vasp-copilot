@@ -7,6 +7,7 @@ export function workspaceLocation(path: string): { current: string; group: strin
   if (matches('/', path)) return { current: '/', group: '工作区', title: '首页' };
   if (matches('/ai/settings', path)) return { current: '/ai/settings', group: '智能模式', title: '智能设置' };
   if (matches('/toolbox/settings', path)) return { current: '/toolbox/settings', group: '工具箱', title: '执行设置' };
+  if (matches('/toolbox/potcar', path)) return { current: '/toolbox/settings', group: '工具箱', title: '本地赝势库' };
   if (matches('/workflow', path)) return { current: '/workflow', group: '工具箱', title: '生成工作流' };
   if (matches('/workflow/history/:id', path)) return { current: '/workflow', group: '生成工作流', title: '工作流详情' };
   if (matches('/diagnosis/upload', path)) return { current: '/diagnosis/upload', group: '工具箱', title: '诊断计算' };
@@ -23,5 +24,5 @@ export function workspaceLocation(path: string): { current: string; group: strin
 export const hasScientificContent = (path: string) => matches('/', path) || matches('/workflow', path)
   || matches('/diagnosis/upload', path) || matches('/diagnosis/:id', path)
   || matches('/toolbox/projects', path) || matches('/toolbox/projects/:projectId/tasks/:taskId', path)
-  || matches('/toolbox/settings', path) || matches('/ai/settings', path) || matches('/ai', path)
+  || matches('/toolbox/settings', path) || matches('/toolbox/potcar', path) || matches('/ai/settings', path) || matches('/ai', path)
   || matches('/ai/projects/:projectId', path);

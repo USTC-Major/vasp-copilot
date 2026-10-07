@@ -231,6 +231,7 @@ const AiSettingsPage: React.FC = () => {
       {settingsQuery.error && <ErrorAlert error={settingsQuery.error} title="智能设置读取失败" />}
       {secretQuery.error && <ErrorAlert error={secretQuery.error} title="凭据状态读取失败" />}
       <Button onClick={() => { void settingsQuery.refetch(); void secretQuery.refetch(); }}>重试读取设置</Button>
+      <Link to="/toolbox/potcar">管理本地 POTCAR 赝势库</Link>
     </div>;
   }
 
@@ -283,6 +284,7 @@ const AiSettingsPage: React.FC = () => {
         <Button type="primary" size="large" onClick={onSubmit} loading={saveMutation.isPending}>保存设置</Button>
       </div>
 
+      <Paragraph><Link to="/toolbox/potcar">管理本地 POTCAR 赝势库</Link>（独立于模型配置，同一登记供工具复用）</Paragraph>
       {section("LLM", <LinkOutlined />, (
         <Row gutter={[16, 16]}>
           <Col span={24}><label htmlFor="settings-llm_base_url"><Text strong>接口地址</Text></label><Input id="settings-llm_base_url" value={form.llm_base_url} onChange={set("llm_base_url")} placeholder="https://api.openai.com/v1" /></Col>
