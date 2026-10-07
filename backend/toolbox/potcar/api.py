@@ -1,5 +1,6 @@
-"""Management routes only; no content, assembly, or workflow endpoints."""
+"""Local library metadata and explicitly confirmed artifact download routes."""
 from fastapi import APIRouter, Query, Request
+from fastapi.responses import Response
 
 router = APIRouter(prefix='/potcar', tags=['Local POTCAR libraries'])
 
@@ -12,7 +13,7 @@ def call(request, method, *args, **kwargs):
         raise service.potcar_error or ToolboxError('POTCAR_UNAVAILABLE', '本地赝势库服务暂不可用', 503, True)
     try:
         return envelope(**getattr(service.potcar, method)(*args, **kwargs))
-    except (OSError, ValueError):
+    except (OSError, ValueError, TypeError, KeyError):
         raise ToolboxError('POTCAR_STORE_INVALID', '本地赝势库状态无法读取或保存；原文件保留，请检查状态目录', 503, True) from None
 
 
@@ -80,3 +81,25 @@ def cancel(scan_id: str, request: Request):
 def datasets(library_id: str, request: Request, element: str | None = None,
              status: str | None = None, cursor: str | None = None, limit: int = Query(50, ge=1, le=100)):
     return call(request, 'datasets', library_id, element=element, status=status, cursor=cursor, limit=limit)
+
+
+@router.post('/previews')
+def preview(request: Request, payload: dict):
+    return call(request, 'preview', payload)
+
+
+@router.post('/artifacts')
+def generate(request: Request, payload: dict):
+    return call(request, 'generate', payload)
+
+
+@router.get('/artifacts/{artifact_id}')
+def artifact(artifact_id: str, request: Request):
+    return call(request, 'artifact', artifact_id)
+
+
+@router.get('/artifacts/{artifact_id}/download')
+def download(artifact_id: str, request: Request):
+    result = call(request, 'download_bytes', artifact_id)
+    return Response(content=result['raw'], media_type='application/octet-stream',
+                    headers={'Content-Disposition': 'attachment; filename="POTCAR"', 'Cache-Control': 'no-store'})

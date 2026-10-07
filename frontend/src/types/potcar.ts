@@ -60,3 +60,49 @@ export interface PotcarLibraryResponse { mode: 'toolbox'; library: PotcarLibrary
 export interface PotcarDatasetsResponse {
   mode: 'toolbox'; index_revision: number | null; datasets: PotcarDataset[]; next_cursor: string | null; total: number;
 }
+export interface PotcarPreviewRequest {
+  library_id: string;
+  index_revision: number;
+  poscar_text: string;
+  dataset_ids?: (string | null)[];
+  legacy_species?: string[];
+}
+export interface PotcarPreviewRow {
+  position: number;
+  element: string;
+  atom_count: number;
+  dataset_id: string | null;
+  candidates: PotcarDataset[];
+  reason: { code: 'USER_SELECTED' | 'UNIQUE_COMPATIBLE' | 'SELECTION_REQUIRED' | 'NO_COMPATIBLE_DATASET'; message: string };
+}
+export interface PotcarPreview {
+  mode: 'toolbox';
+  preview_id: string;
+  selection_digest: string;
+  structure_sha256: string;
+  library: { library_id: string; display_name: string; version_note: string | null; index_revision: number };
+  rows: PotcarPreviewRow[];
+  blockers: { code: string; message: string; position: number | null }[];
+  expires_at: string;
+}
+export interface PotcarArtifact {
+  artifact_id: string;
+  preview_id: string;
+  selection_digest: string;
+  structure_sha256: string;
+  library_id: string;
+  index_revision: number;
+  status: 'ready';
+  size_bytes: number;
+  sha256: string;
+  created_at: string;
+  expires_at: string;
+  rows: { position: number; element: string; atom_count: number; dataset_id: string; variant: string | null; title: string | null; decoded_sha256: string; source_sha256: string }[];
+}
+export interface PotcarArtifactRequest {
+  preview_id: string;
+  selection_digest: string;
+  confirmed_order_and_variants: true;
+  idempotency_key: string;
+}
+export interface PotcarArtifactResponse { mode: 'toolbox'; artifact: PotcarArtifact }

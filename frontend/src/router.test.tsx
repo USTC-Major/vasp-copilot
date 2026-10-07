@@ -6,6 +6,8 @@ import { render, screen } from '@testing-library/react';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { routes } from './router';
+import { http, HttpResponse } from 'msw';
+import { server } from './mocks/server';
 
 const renderRoute = (path: string) => {
   const router = createMemoryRouter(routes, { initialEntries: [path] });
@@ -20,6 +22,12 @@ const renderRoute = (path: string) => {
 };
 
 describe('路由懒加载', () => {
+  it('POTCAR独立拼接页可渲染（懒加载）', async () => {
+    server.use(http.get('/api/v1/toolbox/potcar/libraries', () => HttpResponse.json({ mode: 'toolbox', libraries: [], default_library_id: null, revision: 0 })));
+    renderRoute('/toolbox/potcar/assemble');
+    expect(await screen.findByRole('heading', { name: '拼接 POTCAR' })).toBeInTheDocument();
+    expect(await screen.findByText('尚未登记赝势库')).toBeInTheDocument();
+  });
   it('首页可渲染', async () => {
     renderRoute('/');
     expect(await screen.findAllByText(/VASP-Copilot/)).not.toHaveLength(0);

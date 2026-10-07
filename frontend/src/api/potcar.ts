@@ -1,9 +1,13 @@
 import { request } from './client';
-import type { PotcarDatasetStatus, PotcarDatasetsResponse, PotcarDiscovery, PotcarLibrariesResponse, PotcarLibraryResponse, PotcarScan } from '../types/potcar';
+import type { PotcarArtifactRequest, PotcarArtifactResponse, PotcarPreview, PotcarPreviewRequest, PotcarDatasetStatus, PotcarDatasetsResponse, PotcarDiscovery, PotcarLibrariesResponse, PotcarLibraryResponse, PotcarScan } from '../types/potcar';
 
 const BASE = '/toolbox/potcar';
 const libraryPath = (id: string) => `/libraries/${encodeURIComponent(id)}`;
 export const potcarApi = {
+  preview: (body: PotcarPreviewRequest, signal?: AbortSignal) => request<PotcarPreview>(`${BASE}/previews`, { method: 'POST', body, signal }),
+  assemble: (body: PotcarArtifactRequest, signal?: AbortSignal) => request<PotcarArtifactResponse>(`${BASE}/artifacts`, { method: 'POST', body, signal }),
+  artifact: (id: string, signal?: AbortSignal) => request<PotcarArtifactResponse>(`${BASE}/artifacts/${encodeURIComponent(id)}`, { signal }),
+  download: (id: string, signal?: AbortSignal) => request<Blob>(`${BASE}/artifacts/${encodeURIComponent(id)}/download`, { responseType: 'blob', signal }),
   libraries: (signal?: AbortSignal) => request<PotcarLibrariesResponse>(`${BASE}/libraries`, { signal }),
   library: (id: string, signal?: AbortSignal) => request<PotcarLibraryResponse>(`${BASE}${libraryPath(id)}`, { signal }),
   discover: (root_path: string, signal?: AbortSignal) => request<{ mode: 'toolbox' } & PotcarDiscovery>(`${BASE}/discover`, { method: 'POST', body: { root_path }, signal }),

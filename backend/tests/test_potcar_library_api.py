@@ -87,11 +87,18 @@ def test_http_errors_use_toolbox_envelope_and_revision(api):
 def test_http_no_assembly_download_or_ai_registration(api):
     client, _, root = api
     for path in ('/previews', '/artifacts'):
-        assert client.post(BASE + path, json={}).status_code == 404
-    assert client.get(BASE + '/artifacts/anything/download').status_code == 404
+        response = client.post(BASE + path, json={})
+        assert response.status_code == 400
+        assert response.json()['error']['code'] == 'POTCAR_INVALID_REQUEST'
+    assert client.get(BASE + '/artifacts/' + 'f'*32 + '/download').status_code == 404
     schema = client.get('/openapi.json').json()
     assert BASE + '/libraries' in schema['paths']
-    assert all('/potcar/' not in path or '/artifacts' not in path for path in schema['paths'])
+    assert BASE + '/artifacts/{artifact_id}/download' in schema['paths']
+    assert all('/potcar/' not in path or not any(segment in path for segment in ('content', 'body', 'preview-content'))
+               for path in schema['paths'])
+    from pathlib import Path
+    service_source = Path(__file__).parents[1].joinpath('toolbox/service.py').read_text('utf-8')
+    assert "'potcar_generate'" in service_source  # Existing AI retirement remains.
 
 
 def test_http_replace_only_ack_and_relink_no_ack(api, tmp_path):
