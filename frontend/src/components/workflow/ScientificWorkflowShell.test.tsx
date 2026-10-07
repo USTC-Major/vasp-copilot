@@ -40,13 +40,18 @@ describe('shared scientific navigation and isolated content', () => {
     expect(screen.getByTestId('theme-token')).toHaveTextContent('#FFFFFF');
     expect(screen.getByTestId('theme-token').closest('.scientific-workflow')).not.toBeNull();
     fireEvent.click(screen.getByRole('link', { name: '执行设置' }));
+    expect(screen.getByTestId('theme-token')).toHaveTextContent('#FFFFFF');
+    expect(screen.getByTestId('theme-token').closest('.scientific-workflow')).not.toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '切换深色主题' }));
+    expect(screen.getByTestId('theme-token')).toHaveTextContent('#1B2028');
+    fireEvent.click(screen.getByRole('link', { name: '智能模式' }));
     expect(screen.getByTestId('theme-token')).toHaveTextContent('#fafafa');
     expect(screen.getByTestId('theme-token').closest('.scientific-workflow')).toBeNull();
     expect(screen.getByTestId('theme-token').closest('.wf-tool-panel')).not.toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: '切换深色主题' }));
+    fireEvent.click(screen.getByRole('button', { name: '切换浅色主题' }));
     expect(screen.getByTestId('theme-token')).toHaveTextContent('#fafafa');
     fireEvent.click(screen.getByRole('link', { name: '生成工作流' }));
-    expect(screen.getByTestId('theme-token')).toHaveTextContent('#1B2028');
+    expect(screen.getByTestId('theme-token')).toHaveTextContent('#FFFFFF');
   });
 
   it('restores the existing preference and works with blocked browser storage', () => {
@@ -98,13 +103,14 @@ describe('shared scientific navigation and isolated content', () => {
     expect(document.querySelectorAll('a[aria-current="page"]')).toHaveLength(0);
   });
 
-  it.each(['/workflow/', '/Workflow/', '/diagnosis/upload/', '/Diagnosis/CaseSensitiveId/', '/toolbox/projects', '/Toolbox/Projects/', '/toolbox/projects/ProjectCase/tasks/TaskCase/'])('applies the migrated theme to %s', path => {
+  it.each(['/workflow/', '/Workflow/', '/diagnosis/upload/', '/Diagnosis/CaseSensitiveId/', '/toolbox/projects', '/Toolbox/Projects/', '/toolbox/projects/ProjectCase/tasks/TaskCase/', '/toolbox/settings', '/Toolbox/Settings/', '/ai/settings', '/AI/Settings/'])('applies the migrated theme to %s', path => {
+    expect(hasScientificContent(path)).toBe(true);
     setup(path);
     expect(screen.getByTestId('theme-token')).toHaveTextContent('#1B2028');
     expect(document.querySelector('a[aria-current="page"]')).toHaveAttribute('href', workspaceLocation(path).current);
   });
 
-  it.each(['/toolbox', '/toolbox/settings', '/toolbox/projects/project-only', '/toolbox/projects/p/tasks/t/extra', '/ai/projects/p'])('does not extend the toolbox content theme to %s', path => {
+  it.each(['/toolbox', '/toolbox/settings-extra', '/toolbox/settings/extra', '/toolbox/projects/project-only', '/toolbox/projects/p/tasks/t/extra', '/ai', '/ai/', '/ai/projects/p', '/ai/projects/p/progress/t', '/ai/settings-extra', '/ai/settings/extra'])('does not extend the migrated content theme to %s', path => {
     expect(hasScientificContent(path)).toBe(false);
     setup(path);
     expect(screen.getByTestId('theme-token')).toHaveTextContent('#fafafa');

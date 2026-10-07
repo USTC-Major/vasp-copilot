@@ -1,0 +1,50 @@
+/* Settings only: colors come from the shared Graphite / Cold Blue shell. */
+.scientific-settings {
+  max-width:1100px; min-width:0; margin:0 auto; color:var(--wf-text,#202b3b);
+  overflow-wrap:anywhere;
+}
+.scientific-settings .settings-heading { margin-bottom:0; }
+.scientific-settings .settings-heading h1.ant-typography {
+  margin:0 0 6px; font-size:24px; line-height:1.4; font-weight:600;
+}
+.scientific-settings .settings-heading .ant-typography-secondary { font-size:13px!important; line-height:1.7; }
+.scientific-settings .settings-heading p { margin-bottom:0; }
+.scientific-settings .settings-heading-actions { display:flex; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; gap:16px; margin-bottom:24px; }
+.scientific-settings .settings-heading-copy { flex:1 1 280px; min-width:0; }
+.scientific-settings .settings-section { margin-bottom:20px; }
+.scientific-settings.settings-toolbox>.settings-heading,.scientific-settings.settings-toolbox>form { margin-bottom:24px; }
+.scientific-settings .ant-card-head-title { min-width:0; white-space:normal; overflow-wrap:anywhere; padding-block:12px; }
+.scientific-settings .ant-card-head .ant-space { gap:8px; }
+.scientific-settings .ant-card-head .anticon { color:var(--wf-muted,#526278); }
+.scientific-settings .ant-row,.scientific-settings .ant-col { min-width:0; }
+.scientific-settings .ant-space,.scientific-settings .ant-space-item { min-width:0; max-width:100%; }
+.scientific-settings .ant-typography,.scientific-settings .ant-alert-message,.scientific-settings .ant-alert-description,
+.scientific-settings .ant-form-item-extra,.scientific-settings .ant-form-item-explain { overflow-wrap:anywhere; line-height:1.7; }
+.scientific-settings .ant-form-item-label { padding-bottom:6px; }
+.scientific-settings .ant-form-item-label>label { white-space:normal; }
+.scientific-settings label[for^="settings-"],.scientific-settings label[for="max-jobs"],.scientific-settings label[for="poll-interval"] { display:block; margin-bottom:6px; }
+.scientific-settings .ant-col[role="group"]>.ant-typography:first-child { display:block; margin-bottom:6px; }
+.scientific-settings .ant-input,.scientific-settings .ant-input-affix-wrapper,.scientific-settings .ant-select,.scientific-settings .ant-input-number { max-width:100%; min-width:0; }
+.scientific-settings .ant-space-compact { width:100%; max-width:100%; min-width:0; }
+/* The first input must share available width with its action buttons. */
+.scientific-settings .ant-space-compact>.ant-input:first-child,
+.scientific-settings .ant-space-compact>.ant-input-affix-wrapper:first-child { flex:1 1 0; width:0; min-width:0; }
+.scientific-settings .ant-space-compact>.ant-btn { flex-shrink:0; }
+.scientific-settings .ant-input-suffix { min-width:0; }
+.scientific-settings .ant-input-suffix .ant-tag { margin-inline-end:0; flex-shrink:0; }
+.scientific-settings.settings-loading { display:flex; align-items:center; justify-content:center; flex-direction:column; gap:16px; min-height:220px; }
+.scientific-settings.settings-unavailable { display:flex; flex-direction:column; align-items:flex-start; gap:20px; }
+.scientific-settings.settings-unavailable>.ant-alert { width:100%; }
+.scientific-settings-modal .ant-modal-confirm-title,.scientific-settings-modal .ant-modal-confirm-content { overflow-wrap:anywhere; }
+.scientific-settings-modal .ant-modal-confirm-btns { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; }
+.scientific-settings-modal .ant-modal-confirm-btns>.ant-btn+.ant-btn { margin-inline-start:0; }
+.scientific-settings-modal .ant-btn { max-width:100%; white-space:normal; height:auto; min-height:34px; }
+@media(max-width:760px) {
+  .scientific-settings .settings-heading h1.ant-typography { font-size:21px; }
+  .scientific-settings .ant-card-head { padding-inline:16px; }
+  .scientific-settings .ant-alert { align-items:flex-start; }
+  .scientific-settings .ant-alert-content { min-width:0; }
+  .scientific-settings .settings-secret-controls { display:flex; flex-wrap:wrap; gap:8px; }
+  .scientific-settings .settings-secret-controls>.ant-input-affix-wrapper:first-child { flex:1 0 100%; width:100%; border-radius:6px!important; }
+  .scientific-settings .settings-secret-controls>.ant-btn { border-radius:6px!important; margin-inline-start:0!important; }
+}

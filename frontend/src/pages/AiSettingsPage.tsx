@@ -7,6 +7,7 @@ import ErrorAlert from "../components/common/ErrorAlert";
 import SecretInput from "../components/ai/SecretInput";
 import type { AiSecretState, AiSettingsOut } from "../types/ai";
 import { useAiSettings, useAiSettingsSave, useAiSettingsTest, useAiSecretStatus, useAiSecretUpdate } from "../hooks/useApi";
+import "./scientific-settings.css";
 
 const { Title, Text, Paragraph } = Typography;
 
@@ -79,6 +80,7 @@ const toForm = (settings: AiSettingsOut): Form => ({
 });
 
 const AiSettingsPage: React.FC = () => {
+  const [modal, contextHolder] = Modal.useModal();
   const settingsQuery = useAiSettings(true);
   const secretQuery = useAiSecretStatus(true);
   const saveMutation = useAiSettingsSave();
@@ -120,7 +122,8 @@ const AiSettingsPage: React.FC = () => {
   patchFields.scheduler_backend = form.scheduler_backend;
   const confirmOverwrite = (conflicts: string[]) =>
     new Promise<boolean>((resolve) => {
-      Modal.confirm({
+      modal.confirm({
+        className: "scientific-settings-modal",
         title: "后台配置已被修改",
         content: `检测到这些字段在别处已更新：${conflicts.join("、")}。继续保存会用本页的值覆盖它。`,
         okText: "仍然覆盖",
@@ -219,20 +222,22 @@ const AiSettingsPage: React.FC = () => {
     }
   };
 
-  if (settingsQuery.isLoading || secretQuery.isLoading) return <Spin style={{ display: "block", margin: "80px auto" }} />;
+  if (settingsQuery.isLoading || secretQuery.isLoading) return <div className="scientific-settings settings-loading" role="status">{contextHolder}<Spin aria-label="智能设置加载中" /><Text type="secondary">正在读取智能设置与凭据状态…</Text></div>;
   if (settingsQuery.error || secretQuery.error || !settings || !rawSecrets) {
-    return <Space direction="vertical" style={{ width: "100%" }}>
+    return <div className="scientific-settings settings-unavailable">
+      {contextHolder}
+      <div className="settings-heading"><Title level={1}>智能体设置</Title></div>
       <Alert type="info" showIcon message="智能模式是可选服务，当前无法读取智能设置" description={<>智能服务未启动或暂时不可达时，仍可前往 <Link to="/toolbox/settings">Toolbox 执行设置</Link> 使用基础计算功能。恢复智能服务后可手动重试读取。</>} />
       {settingsQuery.error && <ErrorAlert error={settingsQuery.error} title="智能设置读取失败" />}
       {secretQuery.error && <ErrorAlert error={secretQuery.error} title="凭据状态读取失败" />}
       <Button onClick={() => { void settingsQuery.refetch(); void secretQuery.refetch(); }}>重试读取设置</Button>
-    </Space>;
+    </div>;
   }
 
   const section = (title: string, icon: React.ReactNode, children: React.ReactNode) => (
     <Row gutter={24}>
       <Col span={24}>
-        <Card title={<Space><>{icon}</><span>{title}</span></Space>} style={{ marginBottom: 16 }} styles={{ header: { whiteSpace: "normal" }, title: { whiteSpace: "normal", overflowWrap: "anywhere" } }}>
+        <Card className="settings-section" title={<Space><>{icon}</><span>{title}</span></Space>} styles={{ header: { whiteSpace: "normal" }, title: { whiteSpace: "normal", overflowWrap: "anywhere" } }}>
           {children}
         </Card>
       </Col>
@@ -266,10 +271,11 @@ const AiSettingsPage: React.FC = () => {
   );
 
   return (
-    <div style={{ maxWidth: 860, margin: "0 auto", padding: "8px 0", overflowWrap: "anywhere" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12, marginBottom: 20 }}>
-        <div style={{ flex: "1 1 280px", minWidth: 0 }}>
-          <Title level={3} style={{ marginBottom: 4 }}>智能体设置</Title>
+    <div className="scientific-settings settings-ai">
+      {contextHolder}
+      <div className="settings-heading settings-heading-actions">
+        <div className="settings-heading-copy">
+          <Title level={1}>智能体设置</Title>
           <Paragraph type="secondary" style={{ margin: 0 }}>
             所有私人信息仅本地保存。已保存密钥不可查看或复制，只能整体替换或清除。
           </Paragraph>

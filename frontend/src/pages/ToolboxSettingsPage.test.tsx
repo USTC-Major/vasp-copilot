@@ -1,17 +1,11 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { HttpResponse, http } from 'msw';
-import { Modal } from 'antd';
 import { server } from '../mocks/server';
 import ToolboxSettingsPage from './ToolboxSettingsPage';
 
-// antd 静态 Modal 不在 Testing Library 自动清理范围内，避免残留到下一条用例。
-afterEach(() => {
-  Modal.destroyAll();
-  document.querySelectorAll('.ant-modal-root, .ant-modal-wrap, .ant-modal-mask')
-    .forEach((node) => node.remove());
-});
+// Context Modal is owned by React and uses Testing Library's normal unmount cleanup.
 
 const settingsBody = (username: string, maxJobs = 2) => ({
   settings: {
@@ -126,5 +120,61 @@ it('keeps settings and credential actions unavailable until a failed read recove
   expect(screen.getByRole('button', { name: '测试 SSH 连接' })).toBeEnabled();
   expect(screen.getByLabelText('新的 SSH 密码')).toBeEnabled();
   expect(reads).toBe(2);
+  expect(writes).toBe(0);
+});
+
+it('tests the saved backend SSH configuration even when the form has unsaved edits', async () => {
+  let tests = 0;
+  let writes = 0;
+  server.use(
+    http.get('/api/v1/toolbox/settings', () => HttpResponse.json(settingsBody('saved-user'))),
+    http.post('/api/v1/toolbox/settings/test/ssh', async ({ request }) => {
+      expect(await request.text()).toBe('');
+      tests += 1;
+      return HttpResponse.json({ ok: true, message: '已测试后台 SSH 配置' });
+    }),
+    http.put('/api/v1/toolbox/settings', () => { writes += 1; return HttpResponse.json({}); }),
+  );
+  renderPage();
+  const username = await screen.findByLabelText('用户名');
+  fireEvent.change(username, { target: { value: 'unsaved-user' } });
+  await userEvent.click(screen.getByRole('button', { name: '测试 SSH 连接' }));
+  expect(await screen.findByText('已测试后台 SSH 配置')).toBeInTheDocument();
+  expect(tests).toBe(1);
+  expect(writes).toBe(0);
+  expect(username).toHaveValue('unsaved-user');
+});
+
+it('saves and clears each credential independently of the execution settings form', async () => {
+  const secrets: { kind: string; body: unknown }[] = [];
+  let writes = 0;
+  server.use(
+    http.get('/api/v1/toolbox/settings', () => HttpResponse.json(settingsBody('saved-user'))),
+    http.post('/api/v1/toolbox/settings/secrets/:kind', async ({ request, params }) => {
+      secrets.push({ kind: String(params.kind), body: await request.json() });
+      return HttpResponse.json({ mode: 'toolbox', configured: true });
+    }),
+    http.put('/api/v1/toolbox/settings', () => { writes += 1; return HttpResponse.json({}); }),
+  );
+  renderPage();
+  const password = await screen.findByLabelText('新的 SSH 密码');
+  const sshCard = within(password.closest('.ant-card')!);
+  expect(sshCard.getByRole('button', { name: /保\s*存/ })).toBeDisabled();
+  fireEvent.change(password, { target: { value: 'synthetic-password' } });
+  await userEvent.click(sshCard.getByRole('button', { name: /保\s*存/ }));
+  await waitFor(() => expect(password).toHaveValue(''));
+  await userEvent.click(sshCard.getByRole('button', { name: /清\s*除/ }));
+  const mp = screen.getByLabelText('新的 Materials Project 密钥');
+  fireEvent.change(mp, { target: { value: 'synthetic-mp-key' } });
+  const mpCard = within(mp.closest('.ant-card')!);
+  await userEvent.click(mpCard.getByRole('button', { name: /保\s*存/ }));
+  await waitFor(() => expect(mp).toHaveValue(''));
+  await userEvent.click(mpCard.getByRole('button', { name: /清\s*除/ }));
+  await waitFor(() => expect(secrets).toEqual([
+    { kind: 'ssh', body: { value: 'synthetic-password' } },
+    { kind: 'ssh', body: { value: '' } },
+    { kind: 'mp', body: { value: 'synthetic-mp-key' } },
+    { kind: 'mp', body: { value: '' } },
+  ]));
   expect(writes).toBe(0);
 });

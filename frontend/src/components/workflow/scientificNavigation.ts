@@ -22,4 +22,5 @@ export function workspaceLocation(path: string): { current: string; group: strin
 
 export const hasScientificContent = (path: string) => matches('/', path) || matches('/workflow', path)
   || matches('/diagnosis/upload', path) || matches('/diagnosis/:id', path)
-  || matches('/toolbox/projects', path) || matches('/toolbox/projects/:projectId/tasks/:taskId', path);
+  || matches('/toolbox/projects', path) || matches('/toolbox/projects/:projectId/tasks/:taskId', path)
+  || matches('/toolbox/settings', path) || matches('/ai/settings', path);
