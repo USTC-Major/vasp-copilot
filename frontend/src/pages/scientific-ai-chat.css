@@ -1,0 +1,141 @@
+/* Only the chat route fills the shared shell. Navigation and all other pages retain their layout. */
+.scientific-shell:has(.scientific-ai-chat) { height:100dvh; min-height:0; overflow:hidden; }
+.scientific-shell:has(.scientific-ai-chat) .wf-workspace { min-height:0; display:flex; flex-direction:column; }
+.scientific-shell:has(.scientific-ai-chat) .wf-topbar { flex-shrink:0; }
+.scientific-shell:has(.scientific-ai-chat) .wf-main { flex:1; min-height:0; display:flex; overflow:hidden; padding:16px 20px; }
+.scientific-ai-chat.ant-layout { flex:1; min-height:0; min-width:0; flex-direction:row; overflow:hidden; background:var(--wf-surface); color:var(--wf-text); border:1px solid var(--wf-border); border-radius:10px; }
+.scientific-ai-chat :where(.ant-space-item,.ant-alert-content,.ant-list-item-meta,.ant-list-item-meta-content) { min-width:0; }
+.scientific-ai-chat :where(.ant-tag,.ant-typography,.ant-alert-description,.ant-descriptions-item-content) { overflow-wrap:anywhere; }
+.scientific-ai-chat .ai-task-sidebar { position:relative; flex-shrink:0; min-height:0; min-width:0; background:var(--wf-raised); border-right:1px solid var(--wf-border); }
+.scientific-ai-chat .ai-task-sidebar-content { height:100%; min-height:0; display:flex; flex-direction:column; }
+.scientific-ai-chat .ai-task-sidebar-heading { flex-shrink:0; padding:16px 14px; max-height:45%; overflow-y:auto; }
+.scientific-ai-chat .ai-task-sidebar-heading h5 { overflow-wrap:anywhere; }
+.scientific-ai-chat .ai-task-list { flex:1; min-height:0; overflow:auto; overscroll-behavior:contain; padding:0 8px 12px; }
+.scientific-ai-chat .ai-task-item.ant-list-item { padding:10px 8px; align-items:flex-start; border:1px solid transparent; border-radius:6px; margin-bottom:4px; gap:4px; }
+.scientific-ai-chat .ai-task-item.is-selected { background:var(--wf-soft); border-color:var(--wf-border); }
+.scientific-ai-chat .ai-task-item:hover { background:var(--wf-soft); }
+.scientific-ai-chat .ai-task-item .ant-list-item-action { margin-left:0; }
+.scientific-ai-chat .ai-task-item .ant-list-item-action>li { padding:0; }
+.scientific-ai-chat .ai-task-select { border:0; background:none; color:var(--wf-text); padding:0; font:inherit; font-size:13px; font-weight:600; text-align:left; cursor:pointer; overflow-wrap:anywhere; width:100%; }
+.scientific-ai-chat .ai-task-empty { padding:16px 8px; color:var(--wf-muted); }
+.scientific-ai-chat .ai-task-resize { position:absolute; top:0; bottom:0; right:-4px; width:7px; cursor:col-resize; z-index:5; }
+.scientific-ai-chat .ai-task-resize:hover,.scientific-ai-chat .ai-task-resize:focus-visible { background:var(--wf-accent); outline:0; opacity:.7; }
+.scientific-ai-chat .ai-chat-content { display:flex; min-height:0; min-width:0; overflow:hidden; background:var(--wf-surface); }
+.scientific-ai-chat .ai-chat-conversation { display:flex; flex:1; flex-direction:column; min-height:0; min-width:0; }
+.scientific-ai-chat .ai-chat-header { flex-shrink:0; max-height:30%; overflow:auto; padding:16px 20px 12px; border-bottom:1px solid var(--wf-border); }
+.scientific-ai-chat .ai-chat-task-title { display:flex; }
+.scientific-ai-chat .ai-chat-task-title h5 { overflow-wrap:anywhere; }
+.scientific-ai-chat .ai-chat-task-meta { display:flex; margin-top:8px; }
+.scientific-ai-chat .ai-chat-goal { white-space:pre-wrap; }
+.scientific-ai-chat .ai-chat-task-meta .ant-tag { margin:0; max-width:100%; }
+.scientific-ai-chat .ai-chat-thread { flex:1; min-height:0; overflow:auto; overscroll-behavior:contain; padding:16px 20px; overflow-wrap:anywhere; scrollbar-gutter:stable; }
+.scientific-ai-chat .ai-chat-execution { margin-bottom:20px; --toolbox-border:var(--wf-border); --toolbox-pending-bg:var(--wf-raised); --toolbox-pending-border:var(--wf-warning); }
+.scientific-ai-chat .ai-chat-execution .ant-card-head { flex-wrap:wrap; }
+.scientific-ai-chat .ai-chat-execution .ant-card-head-wrapper { flex-wrap:wrap; gap:4px 12px; }
+.scientific-ai-chat .ai-chat-execution .ant-card-head-title { white-space:normal; }
+.scientific-ai-chat .ai-chat-execution .ant-descriptions-item-content { word-break:break-word; }
+.scientific-ai-chat .ai-chat-no-messages { color:var(--wf-muted); text-align:center; padding:32px 0; }
+.scientific-ai-chat .ai-chat-empty { margin:auto; text-align:center; padding:24px; }
+.scientific-ai-chat .ai-chat-empty-icon { font-size:40px; color:var(--wf-quiet); }
+.scientific-ai-chat .ai-chat-message { display:flex; align-items:flex-start; gap:10px; margin-bottom:20px; min-width:0; }
+.scientific-ai-chat .ai-chat-avatar { flex-shrink:0; color:var(--wf-blue); background:var(--wf-soft); border:1px solid var(--wf-border); }
+.scientific-ai-chat .ai-chat-message-body { min-width:0; max-width:calc(100% - 40px); }
+.scientific-ai-chat .ai-chat-message-name { color:var(--wf-muted); font-size:12px; margin-bottom:6px; }
+.scientific-ai-chat .ai-chat-bubble { background:var(--wf-raised); border:1px solid var(--wf-border); border-radius:8px; padding:12px 14px; font-size:14px; line-height:1.7; overflow-wrap:anywhere; }
+.scientific-ai-chat .ai-chat-message[data-message-role="user"] { flex-direction:row-reverse; }
+.scientific-ai-chat .ai-chat-message[data-message-role="user"] .ai-chat-message-body { max-width:82%; }
+.scientific-ai-chat .ai-chat-message[data-message-role="user"] .ai-chat-bubble { background:var(--wf-soft); }
+.scientific-ai-chat .ai-chat-user-text { white-space:pre-wrap; }
+.scientific-ai-chat .ai-chat-thinking { margin-bottom:10px; padding:8px 10px; background:var(--wf-field); border:1px solid var(--wf-border); border-left:3px solid var(--wf-accent); border-radius:6px; }
+.scientific-ai-chat summary { color:var(--wf-muted); font-size:12px; cursor:pointer; }
+.scientific-ai-chat summary:focus-visible,.scientific-ai-chat [tabindex="0"]:focus-visible { outline:2px solid var(--wf-blue); outline-offset:2px; }
+.scientific-ai-chat .ai-chat-thinking-text { white-space:pre-wrap; color:var(--wf-muted); font-size:13px; margin-top:8px; }
+.scientific-ai-chat .ai-chat-markdown { min-width:0; }
+.scientific-ai-chat .ai-chat-markdown p,.scientific-ai-chat .ai-chat-markdown li { white-space:pre-wrap; }
+.scientific-ai-chat .ai-chat-markdown pre { max-width:100%; overflow-x:auto; white-space:pre; overflow-wrap:normal; padding:12px!important; border-radius:6px; background:var(--wf-field)!important; border-color:var(--wf-border)!important; color:var(--wf-text); }
+.scientific-ai-chat .ai-chat-markdown :not(pre)>code { background:var(--wf-field)!important; border-color:var(--wf-border)!important; color:var(--wf-text); overflow-wrap:anywhere; }
+.scientific-ai-chat .ai-chat-markdown td,.scientific-ai-chat .ai-chat-markdown th { border-color:var(--wf-border)!important; }
+.scientific-ai-chat .ai-chat-markdown th { background:var(--wf-field)!important; }
+.scientific-ai-chat .ai-chat-markdown a { color:var(--wf-blue); }
+.scientific-ai-chat .ai-chat-generating { color:var(--wf-muted); font-size:13px; }
+.scientific-ai-chat .ai-chat-stopped,.scientific-ai-chat .ai-chat-draft-warning { color:var(--wf-warning); font-size:12px; margin-top:6px; }
+.scientific-ai-chat .ai-chat-consent-group { border:1px solid var(--wf-warning); background:var(--wf-raised); border-radius:8px; padding:12px 14px; margin-bottom:10px; }
+.scientific-ai-chat .ai-chat-consent-heading,.scientific-ai-chat .ai-chat-card-heading { display:flex; width:100%; justify-content:space-between; align-items:flex-start; }
+.scientific-ai-chat .ai-chat-pending-card { border-top:1px dashed var(--wf-border); padding-top:8px; margin-top:8px; }
+.scientific-ai-chat .ai-chat-card-reason { font-size:12px; color:var(--wf-warning); margin-top:4px; white-space:pre-wrap; }
+.scientific-ai-chat .ai-chat-card-preview { max-height:240px; overflow:auto; background:var(--wf-field); border:1px solid var(--wf-border); border-radius:6px; padding:8px 10px; margin-top:6px; }
+.scientific-ai-chat .ai-chat-composer { flex-shrink:0; padding:12px 20px 14px; border-top:1px solid var(--wf-border); background:var(--wf-surface); }
+.scientific-ai-chat .ai-chat-composer-row { display:flex; align-items:flex-start; gap:10px; }
+.scientific-ai-chat .ai-chat-composer-row>.ant-input { flex:1; min-width:0; }
+.scientific-ai-chat .ai-chat-composer-row>.ant-btn { flex-shrink:0; }
+.scientific-ai-chat .ai-task-mobile-bar { display:flex; align-items:center; gap:12px; padding:10px 12px; border-bottom:1px solid var(--wf-border); background:var(--wf-raised); flex-shrink:0; min-width:0; }
+.scientific-ai-chat .ai-task-mobile-bar>span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--wf-muted); font-size:13px; }
+.scientific-ai-chat .ai-task-drawer .ant-drawer-body { padding:0; min-height:0; overflow:hidden; }
+.scientific-ai-chat #ai-task-navigation { height:100%; }
+.scientific-ai-chat-modal .ai-chat-workspace-input { display:flex; gap:8px; margin-top:6px; min-width:0; }
+.scientific-ai-chat-modal .ai-chat-workspace-input>.ant-input { min-width:0; }
+.scientific-ai-chat-modal .ai-chat-workspace-input>.ant-btn { flex-shrink:0; }
+.scientific-ai-chat-modal .ant-modal-body,.scientific-ai-chat-directory .ant-modal-body { max-height:65dvh; overflow:auto; overflow-wrap:anywhere; }
+.scientific-ai-chat-modal .ant-modal-footer,.scientific-ai-chat-directory .ant-modal-footer { display:flex; justify-content:flex-end; flex-wrap:wrap; gap:8px; }
+.scientific-ai-chat-settings .ant-drawer-header { flex-wrap:wrap; gap:12px; }
+.scientific-ai-chat-settings .ant-drawer-header-title { flex-basis:100%; min-width:0; }
+.scientific-ai-chat-settings .ant-drawer-extra { flex:0 1 100%; min-width:0; max-width:100%; }
+.scientific-ai-chat-settings .ant-drawer-extra>.ant-space { display:flex; width:100%; flex-wrap:wrap; gap:8px; }
+.scientific-ai-chat-settings .ant-drawer-body { overflow-wrap:anywhere; }
+.scientific-ai-chat-settings button:focus-visible { outline:2px solid currentColor; outline-offset:3px; }
+.scientific-ai-chat-directory .ant-list-item { overflow-wrap:anywhere; }
+.scientific-ai-chat-popconfirm { max-width:calc(100vw - 28px); }
+.scientific-ai-chat-popconfirm .ant-popconfirm-message-text { min-width:0; max-width:300px; overflow-wrap:anywhere; }
+/* Dark-chat accents use explicit foreground/background pairs; the light palette stays inherited. */
+.scientific-shell[data-workflow-theme="dark"] .scientific-ai-chat {
+  --ai-tag-neutral-text:#bdcadb; --ai-tag-neutral-bg:#293240; --ai-tag-neutral-border:#4c5c70;
+  --ai-tag-blue-text:#a9ccff; --ai-tag-blue-bg:#22364e; --ai-tag-blue-border:#4c6f99;
+  --ai-tag-cyan-text:#a6dedc; --ai-tag-cyan-bg:#193839; --ai-tag-cyan-border:#477678;
+  --ai-tag-amber-text:#ead4a7; --ai-tag-amber-bg:#3e3526; --ai-tag-amber-border:#8a744d;
+  --ai-tag-success-text:#b5d9bb; --ai-tag-success-bg:#243a2d; --ai-tag-success-border:#4d7558;
+  --ai-tag-danger-text:#ffb3aa; --ai-tag-danger-bg:#3d282c; --ai-tag-danger-border:#b56965;
+}
+.scientific-shell[data-workflow-theme="dark"] .scientific-ai-chat .ant-tag {
+  color:var(--ai-tag-neutral-text); background:var(--ai-tag-neutral-bg); border-color:var(--ai-tag-neutral-border);
+}
+.scientific-shell[data-workflow-theme="dark"] .scientific-ai-chat .ant-tag:is(.ant-tag-processing,.ant-tag-blue,.ant-tag-geekblue) {
+  color:var(--ai-tag-blue-text); background:var(--ai-tag-blue-bg); border-color:var(--ai-tag-blue-border);
+}
+.scientific-shell[data-workflow-theme="dark"] .scientific-ai-chat .ant-tag:is(.ant-tag-cyan,.ai-chat-path-hpc) {
+  color:var(--ai-tag-cyan-text); background:var(--ai-tag-cyan-bg); border-color:var(--ai-tag-cyan-border);
+}
+.scientific-shell[data-workflow-theme="dark"] .scientific-ai-chat .ant-tag.ai-chat-path-local {
+  color:var(--ai-tag-blue-text); background:var(--ai-tag-blue-bg); border-color:var(--ai-tag-blue-border);
+}
+.scientific-shell[data-workflow-theme="dark"] .scientific-ai-chat .ant-tag:is(.ant-tag-warning,.ant-tag-gold,.ant-tag-orange) {
+  color:var(--ai-tag-amber-text); background:var(--ai-tag-amber-bg); border-color:var(--ai-tag-amber-border);
+}
+.scientific-shell[data-workflow-theme="dark"] .scientific-ai-chat .ant-tag:is(.ant-tag-success,.ant-tag-green) {
+  color:var(--ai-tag-success-text); background:var(--ai-tag-success-bg); border-color:var(--ai-tag-success-border);
+}
+.scientific-shell[data-workflow-theme="dark"] .scientific-ai-chat .ant-tag:is(.ant-tag-error,.ant-tag-red,.ant-tag-volcano) {
+  color:var(--ai-tag-danger-text); background:var(--ai-tag-danger-bg); border-color:var(--ai-tag-danger-border);
+}
+.scientific-shell[data-workflow-theme="dark"] .scientific-ai-chat .ant-btn-dangerous:not(:disabled) {
+  color:var(--ai-tag-danger-text); background:var(--ai-tag-danger-bg); border-color:var(--ai-tag-danger-border);
+}
+.scientific-shell[data-workflow-theme="dark"] .scientific-ai-chat .ant-btn-dangerous:not(:disabled):hover {
+  color:#ffd3cc; background:#55383c; border-color:#e1a09a;
+}
+@media(max-width:900px) {
+  .scientific-ai-chat.ant-layout { flex-direction:column; }
+  .scientific-ai-chat .ai-chat-content { flex:1; }
+  .scientific-ai-chat .ai-chat-header { padding:12px; }
+  .scientific-ai-chat .ai-chat-thread { padding:12px; }
+  .scientific-ai-chat .ai-chat-composer { padding:10px 12px; }
+}
+@media(max-width:760px) {
+  .scientific-shell:has(.scientific-ai-chat) { grid-template-rows:auto minmax(0,1fr); }
+  .scientific-shell:has(.scientific-ai-chat) .wf-main { padding:10px; }
+  .scientific-ai-chat .ai-chat-avatar { display:none; }
+  .scientific-ai-chat .ai-chat-message-body { max-width:100%; width:100%; }
+  .scientific-ai-chat .ai-chat-message[data-message-role="user"] .ai-chat-message-body { width:auto; max-width:92%; }
+  .scientific-ai-chat .ai-chat-bubble { padding:10px 12px; }
+  .scientific-ai-chat .ai-chat-execution .ant-card-body { padding:12px; }
+  .scientific-ai-chat-settings .ant-drawer-content-wrapper { max-width:calc(100vw - 16px); }
+}

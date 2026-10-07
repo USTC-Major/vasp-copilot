@@ -30,6 +30,7 @@ interface Props {
   onSelect: (path: string) => void;
   onCancel: () => void;
   scientific?: boolean;
+  className?: string;
 }
 
 const KIND_TITLE: Record<'local' | 'hpc', string> = {
@@ -47,7 +48,7 @@ const joinPath = (kind: 'local' | 'hpc', base: string, name: string) => {
   return base.endsWith(sep) ? `${base}${name}` : `${base}${sep}${name}`;
 };
 
-const AiDirectoryPicker: React.FC<Props> = ({ open, kind, initialPath, onSelect, onCancel, scientific = false }) => {
+const AiDirectoryPicker: React.FC<Props> = ({ open, kind, initialPath, onSelect, onCancel, scientific = false, className }) => {
   const { token } = theme.useToken();
   const [path, setPath] = useState<string | null>(null); // null = 起点视图
   const [parent, setParent] = useState<string | null>(null);
@@ -142,7 +143,7 @@ const AiDirectoryPicker: React.FC<Props> = ({ open, kind, initialPath, onSelect,
 
   return (
     <Modal
-      className={scientific ? 'toolbox-directory-picker' : undefined}
+      className={className ?? (scientific ? 'toolbox-directory-picker' : undefined)}
       title={KIND_TITLE[kind]}
       open={open}
       onCancel={onCancel}

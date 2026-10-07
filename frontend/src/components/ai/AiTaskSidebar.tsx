@@ -1,12 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Layout, List, Space, Typography, Button, Tag, Popconfirm, Tooltip } from 'antd';
-import { ArrowLeftOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons';
+import { List, Space, Typography, Button, Tag, Popconfirm, Tooltip, Drawer } from 'antd';
+import { ArrowLeftOutlined, EditOutlined, DeleteOutlined, MenuOutlined } from '@ant-design/icons';
 import { AI_JOB_STATUS_MAP } from '../../types/ai';
 import type { AiTask } from '../../types/ai';
 import { useAiProjects, useAiTasks } from '../../hooks/useApi';
 
-const { Sider } = Layout;
 const { Text, Title } = Typography;
 
 interface AiTaskSidebarProps {
@@ -50,6 +49,16 @@ const AiTaskSidebar: React.FC<AiTaskSidebarProps> = ({
     }
   });
   const dragging = useRef(false);
+  const dragCleanup = useRef<(() => void) | null>(null);
+  const [compact, setCompact] = useState(() => window.matchMedia('(max-width: 900px)').matches);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+
+  useEffect(() => {
+    const media = window.matchMedia('(max-width: 900px)');
+    const update = () => { setCompact(media.matches); setDrawerOpen(false); dragCleanup.current?.(); };
+    media.addEventListener('change', update);
+    return () => { media.removeEventListener('change', update); dragCleanup.current?.(); };
+  }, []);
 
   useEffect(() => {
     try { localStorage.setItem(WIDTH_KEY, String(width)); } catch { /* ignore */ }
@@ -57,6 +66,7 @@ const AiTaskSidebar: React.FC<AiTaskSidebarProps> = ({
 
   const startDrag = (e: React.MouseEvent) => {
     e.preventDefault();
+    dragCleanup.current?.();
     dragging.current = true;
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
@@ -70,26 +80,29 @@ const AiTaskSidebar: React.FC<AiTaskSidebarProps> = ({
       dragging.current = false;
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
+      dragCleanup.current = null;
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
     };
+    dragCleanup.current = onUp;
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
   };
 
-  return (
-    <div style={{ position: 'relative', height: '100%', minWidth: 0 }}>
-      <Sider width={width} style={{ background: '#f5f5f7', borderRight: '1px solid rgba(0,0,0,0.08)', padding: '16px 14px', height: '100%' }}>
+  const content = (
+      <div className="ai-task-sidebar-content">
+        <div className="ai-task-sidebar-heading">
         <Space direction="vertical" style={{ width: '100%' }} size={12}>
           <Button icon={<ArrowLeftOutlined />} type="text" onClick={() => navigate('/ai')} style={{ alignSelf: 'flex-start', padding: 0 }}>
             返回项目列表
           </Button>
           <Title level={5} style={{ margin: 0 }}>{project?.name ?? projectId}</Title>
           {contextHint && <Text type="secondary" style={{ fontSize: 12 }}>{contextHint}</Text>}
-          {extra}
+          <div onClick={() => setDrawerOpen(false)}>{extra}</div>
         </Space>
+        </div>
         <List
-          style={{ marginTop: 20 }}
+          className="ai-task-list"
           size="small"
           dataSource={tasks}
           loading={tasksQuery.isLoading}
@@ -100,33 +113,31 @@ const AiTaskSidebar: React.FC<AiTaskSidebarProps> = ({
             const statusColor = cfg?.color ?? 'default';
             return (
               <List.Item
-                onClick={() => onSelectTask(task.id)}
-                style={{
-                  cursor: 'pointer', borderRadius: 12, padding: '8px 6px 8px 12px',
-                  background: task.id === selectedTaskId ? '#fff' : 'transparent',
-                  boxShadow: task.id === selectedTaskId ? '0 1px 4px rgba(0,0,0,0.08)' : undefined,
-                  alignItems: 'flex-start',
-                }}
+                className={task.id === selectedTaskId ? 'ai-task-item is-selected' : 'ai-task-item'}
+                onClick={() => { onSelectTask(task.id); setDrawerOpen(false); }}
                 actions={[
                   <Tooltip key="edit" title="编辑任务">
                     <Button size="small" type="text" icon={<EditOutlined />}
-                      onClick={(e) => { e.stopPropagation(); onEditTask?.(task); }} />
+                      aria-label={`编辑任务 ${task.title}`} onClick={(e) => { e.stopPropagation(); onEditTask?.(task); }} />
                   </Tooltip>,
-                  <Popconfirm key="del" title="删除该计算任务？"
+                  <Popconfirm key="del" title="删除该计算任务？" classNames={{ root: 'scientific-ai-chat-popconfirm' }}
                     description="将同时删除它的聊天记录与上下文，不可恢复。"
                     okText="删除" cancelText="取消"
                     onConfirm={() => onDeleteTask?.(task)}>
                     <Tooltip title="删除任务">
                       <Button size="small" type="text" danger icon={<DeleteOutlined />}
-                        onClick={(e) => e.stopPropagation()} />
+                        aria-label={`删除任务 ${task.title}`} onClick={(e) => e.stopPropagation()} />
                     </Tooltip>
                   </Popconfirm>,
                 ]}
               >
                 <Space direction="vertical" size={2} style={{ width: '100%', minWidth: 0 }}>
-                  <Text strong style={{ fontSize: 13 }} ellipsis>{task.title}</Text>
+                  <button type="button" className="ai-task-select" aria-current={task.id === selectedTaskId ? 'true' : undefined}
+                    onClick={(event) => { event.stopPropagation(); onSelectTask(task.id); setDrawerOpen(false); }}>
+                    {task.title}
+                  </button>
                   {task.last_message ? (
-                    <Text type="secondary" style={{ fontSize: 12, color: '#86868b' }} ellipsis>
+                    <Text type="secondary" style={{ fontSize: 12 }} ellipsis>
                       {task.last_message}
                     </Text>
                   ) : null}
@@ -140,14 +151,35 @@ const AiTaskSidebar: React.FC<AiTaskSidebarProps> = ({
               </List.Item>
             );
           }}
-          locale={{ emptyText: <div style={{ padding: 8, color: '#999' }}>暂无计算任务</div> }}
+          locale={{ emptyText: <div className="ai-task-empty">暂无计算任务</div> }}
         />
-      </Sider>
-      <div
-        onMouseDown={startDrag}
-        style={{ position: 'absolute', top: 0, bottom: 0, right: -3, width: 7, cursor: 'col-resize', zIndex: 5 }}
-      />
+      </div>
+  );
+
+  if (compact) return (
+    <div className="ai-task-mobile-bar">
+      <Button icon={<MenuOutlined />} aria-label="任务列表" onClick={() => setDrawerOpen(true)} aria-expanded={drawerOpen} aria-controls="ai-task-navigation">任务列表</Button>
+      <span>{project?.name ?? projectId}</span>
+      <Drawer title="计算任务" placement="left" width="min(340px, calc(100vw - 24px))" open={drawerOpen}
+        onClose={() => setDrawerOpen(false)} getContainer={false} className="ai-task-drawer">
+        <div id="ai-task-navigation">{content}</div>
+      </Drawer>
     </div>
+  );
+
+  return (
+    <aside className="ai-task-sidebar" aria-label="计算任务列表" style={{ width }}>
+      {content}
+      <div className="ai-task-resize" role="separator" aria-label="调整任务栏宽度" aria-orientation="vertical"
+        aria-valuemin={SIDER_MIN} aria-valuemax={SIDER_MAX} aria-valuenow={width} tabIndex={0}
+        onMouseDown={startDrag}
+        onKeyDown={(event) => {
+          if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+          event.preventDefault();
+          setWidth((current) => event.key === 'Home' ? SIDER_MIN : event.key === 'End' ? SIDER_MAX
+            : clampWidth(current + (event.key === 'ArrowRight' ? 20 : -20)));
+        }} />
+    </aside>
   );
 };
 

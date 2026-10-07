@@ -102,14 +102,14 @@ describe('shared scientific navigation and isolated content', () => {
     expect(document.querySelectorAll('a[aria-current="page"]')).toHaveLength(0);
   });
 
-  it.each(['/workflow/', '/Workflow/', '/diagnosis/upload/', '/Diagnosis/CaseSensitiveId/', '/toolbox/projects', '/Toolbox/Projects/', '/toolbox/projects/ProjectCase/tasks/TaskCase/', '/toolbox/settings', '/Toolbox/Settings/', '/ai/settings', '/AI/Settings/', '/ai', '/ai/', '/AI/'])('applies the migrated theme to %s', path => {
+  it.each(['/workflow/', '/Workflow/', '/diagnosis/upload/', '/Diagnosis/CaseSensitiveId/', '/toolbox/projects', '/Toolbox/Projects/', '/toolbox/projects/ProjectCase/tasks/TaskCase/', '/toolbox/settings', '/Toolbox/Settings/', '/ai/settings', '/AI/Settings/', '/ai', '/ai/', '/AI/', '/ai/projects/p', '/AI/Projects/CaseSensitiveId/'])('applies the migrated theme to %s', path => {
     expect(hasScientificContent(path)).toBe(true);
     setup(path);
     expect(screen.getByTestId('theme-token')).toHaveTextContent('#1B2028');
     expect(document.querySelector('a[aria-current="page"]')).toHaveAttribute('href', workspaceLocation(path).current);
   });
 
-  it.each(['/toolbox', '/toolbox/settings-extra', '/toolbox/settings/extra', '/toolbox/projects/project-only', '/toolbox/projects/p/tasks/t/extra', '/ai-extra', '/ai/projects/p', '/AI/Projects/CaseSensitiveId/', '/ai/projects/p/progress/t', '/AI/Projects/p/Progress/t/', '/ai/settings-extra', '/ai/settings/extra'])('does not extend the migrated content theme to %s', path => {
+  it.each(['/toolbox', '/toolbox/settings-extra', '/toolbox/settings/extra', '/toolbox/projects/project-only', '/toolbox/projects/p/tasks/t/extra', '/ai-extra', '/ai/projects', '/ai/projects/p/extra', '/ai/projects/prefix/child', '/ai/projects/p/progress/t', '/AI/Projects/p/Progress/t/', '/ai/settings-extra', '/ai/settings/extra'])('does not extend the migrated content theme to %s', path => {
     expect(hasScientificContent(path)).toBe(false);
     setup(path);
     expect(screen.getByTestId('theme-token')).toHaveTextContent('#fafafa');

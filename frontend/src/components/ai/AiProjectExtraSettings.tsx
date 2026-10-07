@@ -18,6 +18,7 @@ import {
   Space,
   Typography,
   message,
+  theme,
 } from 'antd';
 import {
   ArrowDownOutlined,
@@ -106,7 +107,9 @@ const AiProjectExtraSettings: React.FC<{
   projectId: string;
   open: boolean;
   onClose: () => void;
-}> = ({ projectId, open, onClose }) => {
+  scientific?: boolean;
+}> = ({ projectId, open, onClose, scientific = false }) => {
+  const { token } = theme.useToken();
   const dataQuery = useAiProjectSettings(projectId, open);
   const saveMutation = useAiProjectSettingsSave();
   const deleteMutation = useAiProjectSettingsDelete();
@@ -236,18 +239,19 @@ const AiProjectExtraSettings: React.FC<{
 
   return (
     <Drawer
+      rootClassName={scientific ? 'scientific-ai-chat-settings' : undefined}
       title="额外设置 · 计算任务要求与指引"
       width={640}
       open={open}
       onClose={onClose}
       extra={
-        <Space>
+        <Space wrap={scientific}>
           <span
             style={{
               fontSize: 13,
               minWidth: 76,
               textAlign: 'right',
-              color: saveState === 'saved' ? '#52c41a' : '#999',
+              color: scientific ? (saveState === 'saved' ? token.colorSuccess : token.colorTextSecondary) : (saveState === 'saved' ? '#52c41a' : '#999'),
             }}
           >
             {saveState === 'saving' ? '自动保存中…' : saveState === 'saved' ? '已自动保存' : '改动即自动保存'}
@@ -256,7 +260,7 @@ const AiProjectExtraSettings: React.FC<{
             type="button"
             disabled={!canEdit}
             onClick={clearAll}
-            style={{ all: 'unset', color: '#ff3b30', cursor: canEdit ? 'pointer' : 'not-allowed', opacity: canEdit ? 1 : 0.5, fontSize: 13 }}
+            style={{ all: 'unset', color: scientific ? token.colorError : '#ff3b30', cursor: canEdit ? 'pointer' : 'not-allowed', opacity: canEdit ? 1 : 0.5, fontSize: 13 }}
           >
             清空
           </button>
@@ -284,7 +288,7 @@ const AiProjectExtraSettings: React.FC<{
         />
       )}
 
-      <Card size="small" style={{ marginBottom: 16, background: '#fafafa' }}>
+      <Card size="small" style={{ marginBottom: 16, background: scientific ? token.colorFillAlter : '#fafafa' }}>
         <Typography.Text strong>内置常用模板</Typography.Text>
         <Typography.Paragraph type="secondary" style={{ fontSize: 12, margin: '4px 0 10px' }}>
           模板不会自动启用，也不会替换已有条目。请先阅读摘要，再明确点击“追加”；追加后仍可逐条修改或删除。
@@ -365,7 +369,7 @@ const AiProjectExtraSettings: React.FC<{
             </Space>
           }
         >
-          <div style={{ fontSize: 12, color: '#999', marginBottom: 4 }}>
+          <div style={{ fontSize: 12, color: scientific ? token.colorTextSecondary : '#999', marginBottom: 4 }}>
             条目 {idx + 1}（只有内容，没有名字 · 内容可写很多行、回车换行）
           </div>
           <Input.TextArea

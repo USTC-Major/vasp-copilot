@@ -18,6 +18,8 @@ import ToolboxTaskStatus, { ToolboxEnvironmentTags } from '../components/toolbox
 import { aiApi, toolboxApi } from '../api/client';
 import { AI_JOB_STATUS_MAP } from '../types/ai';
 import { useAiTasks, useAiTaskCreate, useAiMessages, useAiTaskContext, useAiTaskUpdate, useAiTaskDelete, useToolboxTaskDetail, useAiSettings } from '../hooks/useApi';
+import { renderMarkdown } from '../utils/markdown';
+import './scientific-ai-chat.css';
 import type { AiMessage as AiMsg, AiTask, AiConsentCard, AiConsentResponse } from '../types/ai';
 
 const { Content } = Layout;
@@ -106,12 +108,12 @@ const PendingCardRow: React.FC<{
 }> = ({ card, resolving, onResolve, toolboxLink }) => {
   const [open, setOpen] = useState(false);
   return (
-    <div style={{ borderTop: '1px dashed rgba(0,0,0,0.10)', paddingTop: 8, marginTop: 8 }}>
-      <Space style={{ width: '100%', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+    <div className="ai-chat-pending-card">
+      <Space wrap className="ai-chat-card-heading">
         <div style={{ paddingRight: 8 }}>
           <div style={{ fontSize: 13 }}>{cardFingerprint(card.summary)}</div>
           {reasonBrief(card.reason) && (
-            <div style={{ fontSize: 12, color: '#8c6d1f', marginTop: 2 }}>{reasonBrief(card.reason)}</div>
+            <div className="ai-chat-card-reason">{reasonBrief(card.reason)}</div>
           )}
         </div>
         <Button size="small" type="link" onClick={() => setOpen((v) => !v)}>
@@ -119,15 +121,15 @@ const PendingCardRow: React.FC<{
         </Button>
       </Space>
       {open && (
-        <div style={{ maxHeight: 240, overflowY: 'auto', background: '#fafafa', borderRadius: 6, padding: '8px 10px', marginTop: 6 }}>
+        <div className="ai-chat-card-preview" tabIndex={0} role="region" aria-label="完整授权预览">
           <div style={{ whiteSpace: 'pre-wrap', fontSize: 12 }}>{card.summary}</div>
-          <div style={{ fontSize: 12, color: '#8c6d1f', marginTop: 8, whiteSpace: 'pre-wrap' }}>{card.reason}</div>
+          <div className="ai-chat-card-reason">{card.reason}</div>
         </div>
       )}
       {card.kind === 'remote_file' ? (
         <Link to={toolboxLink ?? '#'} style={{ fontSize: 13 }}>审阅完整文件计划与授权范围</Link>
       ) : (
-        <Space style={{ marginTop: 8 }}>
+        <Space wrap style={{ marginTop: 8 }}>
           {(card.options && card.options.length
             ? card.options.filter((opt) => opt !== '同意本批' && opt !== 'allow_batch')
             : ['同意本次', '拒绝']).map((opt) => (
@@ -150,6 +152,7 @@ const PendingCardRow: React.FC<{
 
 const AiProjectPage: React.FC = () => {
   const { projectId = '' } = useParams();
+  const [modal, modalContextHolder] = Modal.useModal();
   const tasksQuery = useAiTasks(projectId);
   const createTaskMutation = useAiTaskCreate();
   const updateTaskMutation = useAiTaskUpdate();
@@ -417,7 +420,8 @@ const AiProjectPage: React.FC = () => {
     const isCurrent = () => selectedTaskIdRef.current === taskId && taskSelectionRef.current === selection;
     if (!taskId || resolvingCardId || batchBusy || cards.length === 0) return;
     const confirmed = await new Promise<boolean>((resolve) => {
-      Modal.confirm({
+      modal.confirm({
+        className: 'scientific-ai-chat-modal',
         title: approved ? `批准本批 ${cards.length} 项` : `拒绝本批 ${cards.length} 项`,
         content: (
           <div style={{ maxHeight: 220, overflowY: 'auto' }}>
@@ -547,7 +551,8 @@ const AiProjectPage: React.FC = () => {
   );
 
   return (
-    <Layout style={{ height: 'calc(100vh - 64px)', minHeight: 520, minWidth: 0, background: '#fff', margin: '-32px -24px' }}>
+    <Layout className="scientific-ai-chat">
+      {modalContextHolder}
       <AiTaskSidebar
         projectId={projectId}
         selectedTaskId={selectedTaskId}
@@ -558,28 +563,29 @@ const AiProjectPage: React.FC = () => {
         onDeleteTask={deleteTask}
       />
 
-      <Content style={{ display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0, overflow: 'hidden', background: '#fff' }}>
+      <Content className="ai-chat-content">
         {!selectedTask ? (
-          <Space direction="vertical" align="center" style={{ margin: 'auto', textAlign: 'center' }}>
-            <RobotOutlined style={{ fontSize: 48, color: '#c7c7cc' }} />
+          <Space direction="vertical" align="center" className="ai-chat-empty">
+            <RobotOutlined className="ai-chat-empty-icon" />
             <Title level={5}>选择或新建一个计算任务开始对话</Title>
           </Space>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', height: '100%', padding: '20px 28px 18px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 10 }}>
-              <Space size={10} wrap style={{ minWidth: 0 }}>
+          <div className="ai-chat-conversation">
+            <header className="ai-chat-header">
+              <Space size={10} wrap className="ai-chat-task-title">
                 <Title level={5} style={{ margin: 0 }}>{selectedTask.title}</Title>
                 {statusLabel && <Tag color={currentColor || 'default'} style={{ margin: 0 }}>{statusLabel}</Tag>}
                 <ToolboxEnvironmentTags detail={executionQuery.data} unavailable={executionQuery.isError} />
-                <Text type="secondary" style={{ fontSize: 12, maxWidth: 'min(60vw, 460px)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selectedTask.goal}</Text>
+                <Text type="secondary" className="ai-chat-goal">{selectedTask.goal}</Text>
               </Space>
-              <Space size={8} wrap>
-                {selectedTask.local_workspace && <Tag icon={<FolderOutlined />} color="geekblue" style={{ margin: 0 }}>{selectedTask.local_workspace}</Tag>}
-                {selectedTask.hpc_workspace && <Tag icon={<CloudServerOutlined />} color="purple" style={{ margin: 0 }}>{selectedTask.hpc_workspace}</Tag>}
-                <AiContextBar context={taskContextQuery.data} />
+              <Space size={8} wrap className="ai-chat-task-meta">
+                {selectedTask.local_workspace && <Tag className="ai-chat-path-local" icon={<FolderOutlined />} color="geekblue" style={{ margin: 0 }}>{selectedTask.local_workspace}</Tag>}
+                {selectedTask.hpc_workspace && <Tag className="ai-chat-path-hpc" icon={<CloudServerOutlined />} color="purple" style={{ margin: 0 }}>{selectedTask.hpc_workspace}</Tag>}
+                <AiContextBar context={taskContextQuery.data} scientific />
                 <Button size="small" danger onClick={() => void handleStop()}>停止生成</Button>
                 <Button size="small" danger icon={<DeleteOutlined />} onClick={() => {
-                  Modal.confirm({
+                  modal.confirm({
+                    className: 'scientific-ai-chat-modal',
                     title: "删除该计算任务？",
                     content: "将同时删除它的聊天记录与上下文，不可恢复。",
                     okText: "删除", cancelText: "取消", okButtonProps: { danger: true },
@@ -587,10 +593,10 @@ const AiProjectPage: React.FC = () => {
                   });
                 }}>删除</Button>
               </Space>
-            </div>
+            </header>
 
-            <div ref={threadRef} style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', padding: '4px 4px 16px', marginBottom: 10 }}>
-              <div style={{ marginBottom: 16 }}>
+            <div ref={threadRef} className="ai-chat-thread" role="region" aria-label="对话与授权记录" tabIndex={0}>
+              <div className="ai-chat-execution">
                 <ToolboxTaskStatus
                   projectId={projectId}
                   taskId={selectedTask.id}
@@ -598,19 +604,19 @@ const AiProjectPage: React.FC = () => {
                   showTaskLink
                 />
               </div>
-              {allMsgs.length === 0 && <div style={{ color: '#999', textAlign: 'center', marginTop: 40 }}>还没有消息，说点什么吧。</div>}
+              {allMsgs.length === 0 && <div className="ai-chat-no-messages">还没有消息，说点什么吧。</div>}
               {messages.map((m, i) => (
                 <AiChatBubble key={i} role={m.role} name={m.role === 'assistant' ? 'VASP 计算助手' : undefined}>
                   <>
                     {m.role === 'assistant' && m.thinking ? (
-                      <details style={{ marginBottom: 10, padding: '8px 12px', background: 'rgba(0,0,0,0.035)', borderRadius: 8, borderLeft: '3px solid #0071e3', cursor: 'pointer' }}>
-                        <summary style={{ fontSize: 12, fontWeight: 600, color: '#6e6e73', cursor: 'pointer', userSelect: 'none' }}>
+                      <details className="ai-chat-thinking">
+                        <summary>
                           思考过程 <Text type="secondary" style={{ fontSize: 11 }}>（点击展开/收起）</Text>
                         </summary>
-                        <div style={{ whiteSpace: 'pre-wrap', color: '#6e6e73', fontSize: 13, marginTop: 8 }}>{m.thinking}</div>
+                        <div className="ai-chat-thinking-text">{m.thinking}</div>
                       </details>
                     ) : null}
-                    <div style={{ whiteSpace: 'pre-wrap' }}>{m.content}</div>
+                    <div className={m.role === 'assistant' ? 'ai-chat-markdown' : 'ai-chat-user-text'}>{m.role === 'assistant' ? renderMarkdown(m.content) : m.content}</div>
                   </>
                 </AiChatBubble>
               ))}
@@ -620,31 +626,30 @@ const AiProjectPage: React.FC = () => {
                     {m.role === 'assistant' && m.thinking ? (
                       // 思考过程默认收起：模型的自述/中间推理（常含英文）不占聊天版面，
                       // 想看过程点一下即可展开。
-                      <details style={{ marginBottom: 10, padding: '8px 12px', background: 'rgba(0,0,0,0.035)', borderRadius: 8, borderLeft: '3px solid #0071e3' }}>
-                        <summary style={{ fontSize: 12, fontWeight: 600, color: '#6e6e73', cursor: 'pointer', userSelect: 'none' }}>
+                      <details className="ai-chat-thinking">
+                        <summary>
                           思考过程 <Text type="secondary" style={{ fontSize: 11 }}>（点击展开）</Text>
                         </summary>
-                        <div style={{ whiteSpace: 'pre-wrap', color: '#6e6e73', fontSize: 13, marginTop: 8 }}>{m.thinking}</div>
+                        <div className="ai-chat-thinking-text">{m.thinking}</div>
                       </details>
                     ) : null}
                     {m.role === 'assistant' && !m.thinking && !m.content ? (
-                      <div style={{ color: '#8a8a8e', fontSize: 13 }}>
+                      <div className="ai-chat-generating" role="status">
                         <LoadingOutlined spin style={{ marginRight: 8 }} />正在理解并思考，工作区可随时让我查看…
                       </div>
                     ) : null}
-                    {m.content ? <div style={{ whiteSpace: 'pre-wrap' }}>{m.content}</div> : null}
+                    {m.content ? <div className={m.role === 'assistant' ? 'ai-chat-markdown' : 'ai-chat-user-text'}>{m.role === 'assistant' ? renderMarkdown(m.content) : m.content}</div> : null}
                     {m.stopped ? (
-                      <div style={{ color: '#b25000', fontSize: 12, marginTop: 6 }}>
+                      <div className="ai-chat-stopped">
                         ⏹ 已停止生成，以上为已生成的部分内容。
                       </div>
                     ) : null}
                   </>
                 </AiChatBubble>
               ))}
-            </div>
 
             {pendingCards.length > 0 && (
-              <div style={{ marginBottom: 10 }}>
+              <div className="ai-chat-consents">
                 {(() => {
                   // 同类卡（仅限机械文件准备）折成一组，可一次批准/拒绝；科学输入、
                   // 脚本认领、提交与重试保持逐项确认。
@@ -658,9 +663,9 @@ const AiProjectPage: React.FC = () => {
                                        cards: [card], batchable });
                   }
                   return groups.map((group) => (
-                    <div key={group.key} style={{ border: '1px solid #f0c36d', background: '#fffbe6', borderRadius: 10, padding: '10px 14px', marginBottom: 8 }}>
-                      <Space style={{ width: '100%', justifyContent: 'space-between' }}>
-                        <Space size={8}>
+                    <div key={group.key} className="ai-chat-consent-group">
+                      <Space wrap className="ai-chat-consent-heading">
+                        <Space size={8} wrap>
                           <Tag color="gold">{group.label}</Tag>
                           <Text type="secondary" style={{ fontSize: 12 }}>
                             {group.cards.length} 项待批准{group.batchable ? '（可批量）' : '（逐项确认）'}
@@ -682,7 +687,7 @@ const AiProjectPage: React.FC = () => {
                       {group.batchable ? (
                         // 准备阶段只显示"一组 + 一个全部批准"，明细默认收起，不再糊满屏幕
                         <details style={{ marginTop: 6 }}>
-                          <summary style={{ fontSize: 12, color: '#6e6e73', cursor: 'pointer' }}>
+                          <summary>
                             查看这 {group.cards.length} 项明细（默认收起）
                           </summary>
                           {group.cards.map((card) => (
@@ -745,8 +750,11 @@ const AiProjectPage: React.FC = () => {
                 description="页面正在自动同步已持久化的消息。你可以等待完成，或点击“停止”。"
               />
             )}
-            <div style={{ display: 'flex', gap: 10, borderTop: '1px solid rgba(0,0,0,0.06)', paddingTop: 14 }}>
+            </div>
+            <div className="ai-chat-composer">
+            <div className="ai-chat-composer-row">
               <Input
+                aria-label="计算需求消息"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onPressEnter={send}
@@ -755,27 +763,28 @@ const AiProjectPage: React.FC = () => {
                 disabled={conversationBusy}
               />
               {conversationBusy ? (
-                <Button danger size="large" icon={<StopOutlined />} onClick={() => void handleStop()}>
+                <Button danger size="large" aria-label="停止" icon={<StopOutlined />} onClick={() => void handleStop()}>
                   停止
                 </Button>
               ) : (
-                <Button type="primary" size="large" icon={<SendOutlined />} onClick={send}>
+                <Button type="primary" size="large" aria-label="发送" icon={<SendOutlined />} onClick={send}>
                   发送
                 </Button>
               )}
             </div>
             {draftOverLimit && (
-              <div style={{ marginTop: 6, fontSize: 12, color: '#d46b08' }}>
+              <div className="ai-chat-draft-warning" role="status">
                 本条消息 {draftLength} 字，超过 {messageLimit} 字上限；超出部分不会进入模型上下文，建议分段发送。
               </div>
             )}
+            </div>
           </div>
         )}
       </Content>
 
-      <AiProjectExtraSettings projectId={projectId} open={extraOpen} onClose={() => setExtraOpen(false)} />
+      <AiProjectExtraSettings scientific projectId={projectId} open={extraOpen} onClose={() => setExtraOpen(false)} />
 
-      <Modal title="新建计算任务" open={newTaskOpen} onCancel={() => setNewTaskOpen(false)} onOk={createTask} okText="创建" confirmLoading={createTaskMutation.isPending}>
+      <Modal className="scientific-ai-chat-modal" title="新建计算任务" open={newTaskOpen} onCancel={() => setNewTaskOpen(false)} onOk={createTask} okText="创建" confirmLoading={createTaskMutation.isPending}>
         <Space direction="vertical" style={{ width: '100%' }}>
           <Input placeholder="任务标题（可选）" value={newTitle} onChange={(e) => setNewTitle(e.target.value)} maxLength={80} />
           <div>
@@ -784,7 +793,7 @@ const AiProjectPage: React.FC = () => {
             <Text type="secondary" style={{ fontSize: 12 }}>存放初始计算文件与导出报告；多个计算任务可共用同一本地文件夹。</Text>
 
             <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 2 }}>点击「浏览」会在本机弹出系统目录选择窗口，选取后自动填入路径；超算工作区仍走 SSH 浏览。</Text>
-            <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+            <div className="ai-chat-workspace-input">
               <Input placeholder="如 D:\calc\fe2o3_relax" value={newLocalWorkspace} onChange={(e) => setNewLocalWorkspace(e.target.value)} style={{ flex: 1 }} />
               <Button icon={<FolderOpenOutlined />} loading={pickingLocal} onClick={() => void handlePickLocalWorkspace()}>浏览</Button>
             </div>
@@ -793,7 +802,7 @@ const AiProjectPage: React.FC = () => {
             <Text strong><CloudServerOutlined /> 超算工作区（可留空）</Text>
             <br />
             <Text type="secondary" style={{ fontSize: 12 }}>划定计算操作区域；若不在超算正式计算可留空。</Text>
-            <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+            <div className="ai-chat-workspace-input">
               <Input placeholder="如 /lustre/hpc_home/u01/fe2o3_relax（可留空）" value={newHpcWorkspace} onChange={(e) => setNewHpcWorkspace(e.target.value)} style={{ flex: 1 }} />
               <Button icon={<FolderOpenOutlined />} onClick={() => setPickerKind('hpc')}>浏览</Button>
             </div>
@@ -807,6 +816,7 @@ const AiProjectPage: React.FC = () => {
       </Modal>
 
       <Modal
+        className="scientific-ai-chat-modal"
         title="编辑计算任务"
         open={editOpen}
         onCancel={() => setEditOpen(false)}
@@ -821,6 +831,8 @@ const AiProjectPage: React.FC = () => {
       </Modal>
 
       <AiDirectoryPicker
+        scientific
+        className="scientific-ai-chat-directory"
         open={pickerKind !== null}
         kind="hpc"
         initialPath={newHpcWorkspace}
