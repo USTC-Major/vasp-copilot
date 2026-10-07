@@ -10,6 +10,7 @@ import { toolboxApi } from '../api/client';
 import { useToolboxRunTool, useToolboxTaskDetail } from '../hooks/useApi';
 import { formatMaterialId } from '../utils/materialId';
 import type { ToolboxIncarEntry, ToolboxJob, ToolboxPlanJobInput } from '../types/toolbox';
+import '../components/toolbox/scientific-toolbox.css';
 
 const { Title, Text, Paragraph } = Typography;
 
@@ -203,22 +204,23 @@ const ToolboxTaskPage: React.FC = () => {
     const error = detailQuery.error;
     const missing = typeof error === 'object' && error !== null && 'status' in error && error.status === 404;
     return (
-      <Alert
+      <div className="toolbox-page toolbox-error-page"><Alert
         type={missing ? 'warning' : 'error'}
         showIcon
         message={missing ? '指定的 Toolbox 任务不存在' : '无法读取 Toolbox 任务'}
         description={<Space direction="vertical"><Text>{missing ? '任务可能已删除，页面不会自动选择同项目的其他任务。' : '请确认 8000 服务可用。'}</Text><Link to="/toolbox/projects">返回项目列表</Link></Space>}
-      />
+      /></div>
     );
   }
 
   return (
-    <Space direction="vertical" size="large" style={{ width: '100%' }}>
-      <div>
-        <Link to="/toolbox/projects"><ArrowLeftOutlined /> 返回项目与任务</Link>
-        <Title level={2} style={{ margin: '10px 0 4px' }}>{detail?.task.title || 'Toolbox 计算任务'}</Title>
+    <Space className="toolbox-page toolbox-task-page" direction="vertical" size="large" style={{ width: '100%' }}>
+      <div className="toolbox-heading">
+        <Link className="toolbox-return-link" to="/toolbox/projects"><ArrowLeftOutlined /> 返回项目与任务</Link>
+        <Title level={1}>{detail?.task.title || 'Toolbox 计算任务'}</Title>
         <Paragraph type="secondary" style={{ margin: 0 }}>{detail?.task.goal || '使用结构化表单准备并执行计算，不需要模型。'}</Paragraph>
       </div>
+      {/* A-4: the teammate-owned usage guide can connect below this task heading. */}
 
       <Card title="任务信息与工作区" size="small">
         <Row gutter={[12, 12]}>
@@ -226,11 +228,11 @@ const ToolboxTaskPage: React.FC = () => {
           <Col xs={24} md={16}><label htmlFor="task-edit-goal"><Text strong>计算目标</Text></label><Input id="task-edit-goal" value={editGoal} onChange={(event) => setEditGoal(event.target.value)} /></Col>
           <Col xs={24} md={12}>
             <label htmlFor="task-edit-local"><Text strong>本地工作区</Text></label>
-            <Space.Compact style={{ width: '100%' }}><Input id="task-edit-local" value={editLocal} onChange={(event) => setEditLocal(event.target.value)} /><Button icon={<FolderOpenOutlined />} onClick={() => setPickerKind('local')}>浏览</Button></Space.Compact>
+            <Space.Compact className="toolbox-path-controls" style={{ width: '100%' }}><Input id="task-edit-local" value={editLocal} onChange={(event) => setEditLocal(event.target.value)} /><Button icon={<FolderOpenOutlined />} onClick={() => setPickerKind('local')}>浏览</Button></Space.Compact>
           </Col>
           <Col xs={24} md={12}>
             <label htmlFor="task-edit-hpc"><Text strong>超算工作区</Text></label>
-            <Space.Compact style={{ width: '100%' }}><Input id="task-edit-hpc" value={editHpc} onChange={(event) => setEditHpc(event.target.value)} placeholder="可留空" /><Button icon={<FolderOpenOutlined />} onClick={() => setPickerKind('hpc')}>浏览</Button></Space.Compact>
+            <Space.Compact className="toolbox-path-controls" style={{ width: '100%' }}><Input id="task-edit-hpc" value={editHpc} onChange={(event) => setEditHpc(event.target.value)} placeholder="可留空" /><Button icon={<FolderOpenOutlined />} onClick={() => setPickerKind('hpc')}>浏览</Button></Space.Compact>
           </Col>
           <Col span={24}><Button type="primary" loading={savingMetadata} onClick={() => void saveMetadata()}>保存任务信息</Button></Col>
         </Row>
@@ -299,7 +301,7 @@ const ToolboxTaskPage: React.FC = () => {
             <Space wrap style={{ width: '100%' }}>
               <Select aria-label="工作区位置" value={browseKind} onChange={setBrowseKind} options={[{ value: 'local', label: '本地工作区' }, { value: 'hpc', label: '超算工作区' }]} style={{ minWidth: 140 }} />
               <Select aria-label="查看方式" value={browseAction} onChange={setBrowseAction} options={[{ value: 'list', label: '列出目录' }, { value: 'read', label: '读取文本文件' }]} style={{ minWidth: 150 }} />
-              <Input aria-label="工作区相对路径" value={browsePath} onChange={(event) => setBrowsePath(event.target.value)} placeholder={browseAction === 'read' ? '相对文件路径，如 static/INCAR' : '超算子目录可选；本地列目录使用根目录'} style={{ flex: 1, minWidth: 260 }} />
+              <Input aria-label="工作区相对路径" value={browsePath} onChange={(event) => setBrowsePath(event.target.value)} placeholder={browseAction === 'read' ? '相对文件路径，如 static/INCAR' : '超算子目录可选；本地列目录使用根目录'} style={{ flex: 1, minWidth: 0, width: 260, maxWidth: '100%' }} />
               <Button onClick={inspectWorkspace}>查看</Button>
             </Space>
             <Text type="secondary" style={{ display: 'block', marginTop: 8 }}>路径受任务工作区边界限制；敏感文件与越界路径由执行服务拒绝。</Text>
@@ -479,7 +481,7 @@ const ToolboxTaskPage: React.FC = () => {
                   <Button key="diagnose" onClick={() => void runTool('diagnose_job', { job_key: job.key })}>诊断</Button>,
                   <Button key="retry" danger disabled={!retryAllowed} onClick={() => void runTool('retry_job', retryArgs(job))}>请求恢复确认</Button>,
                 ]}>
-                  <List.Item.Meta title={<Space><Text strong>{job.label || job.key}</Text><Tag>{job.status}</Tag></Space>} description={retryAllowed ? '已有终态诊断，可请求恢复到待准备状态。' : '当前状态不允许恢复；可先诊断或继续等待状态核对。'} />
+                  <List.Item.Meta title={<Space wrap><Text strong>{job.label || job.key}</Text><Tag>{job.status}</Tag></Space>} description={retryAllowed ? '已有终态诊断，可请求恢复到待准备状态。' : '当前状态不允许恢复；可先诊断或继续等待状态核对。'} />
                 </List.Item>
               );
             }}
@@ -488,6 +490,7 @@ const ToolboxTaskPage: React.FC = () => {
       </Card>
 
       <AiDirectoryPicker
+        scientific
         open={pickerKind !== null}
         kind={pickerKind ?? 'local'}
         initialPath={pickerKind === 'hpc' ? editHpc : editLocal}

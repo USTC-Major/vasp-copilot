@@ -1,0 +1,76 @@
+.toolbox-page {
+  --toolbox-border:var(--wf-border,#d4dce6);
+  --toolbox-pending-bg:#302a20;
+  --toolbox-pending-border:#806a43;
+  min-width:0; max-width:1220px; margin:0 auto; color:var(--wf-text,#202b3b); overflow-wrap:anywhere;
+}
+.scientific-shell[data-workflow-theme="light"] .toolbox-page {
+  --toolbox-pending-bg:#fff8e8; --toolbox-pending-border:#d9bd84;
+}
+.toolbox-page.ant-space { display:flex; }
+.toolbox-heading h1.ant-typography { margin:0 0 6px; color:var(--wf-text,#202b3b); font-size:24px; line-height:1.4; font-weight:600; }
+.toolbox-heading .ant-typography-secondary { font-size:13px!important; }
+.toolbox-return-link { display:inline-block; color:var(--wf-blue,#285fa9); margin-bottom:12px; }
+.toolbox-page .ant-card-head-wrapper { flex-wrap:wrap; gap:8px 12px; }
+.toolbox-page .ant-card-head-title { min-width:0; flex:1 1 12rem; white-space:normal; overflow-wrap:anywhere; padding-block:12px; }
+.toolbox-page .ant-card-extra { margin-inline-start:0; max-width:100%; white-space:normal; }
+.toolbox-page .ant-card-head .ant-space { flex-wrap:wrap; }
+.toolbox-page .ant-space,.toolbox-page .ant-space-item { min-width:0; max-width:100%; }
+.toolbox-page .ant-list-item-meta,.toolbox-page .ant-list-item-meta-content { min-width:0; }
+.toolbox-page .ant-list-item-meta-title,.toolbox-page .ant-list-item-meta-description { overflow-wrap:anywhere; }
+.toolbox-page .ant-list-item-action { max-width:100%; }
+.toolbox-page .ant-typography,.toolbox-page .ant-alert-message,.toolbox-page .ant-alert-description { overflow-wrap:anywhere; }
+.toolbox-page .ant-tag { height:auto; }
+.toolbox-page .ant-descriptions-view table { table-layout:fixed; }
+.toolbox-page .ant-descriptions-item-label,.toolbox-page .ant-descriptions-item-content { overflow-wrap:anywhere; }
+.toolbox-page .ant-select,.toolbox-page .ant-input-number { max-width:100%; }
+.toolbox-page .ant-checkbox-wrapper { min-width:0; overflow-wrap:anywhere; }
+.toolbox-page .ant-space-compact { max-width:100%; min-width:0; }
+.toolbox-page .ant-space-compact>.ant-input { min-width:0; }
+.toolbox-page .ant-space-compact>.ant-btn { flex-shrink:0; }
+  .toolbox-page .ant-space-compact:not(.toolbox-path-controls)>.ant-input:first-child:not(:only-child) { flex-shrink:0; }
+  .toolbox-page .toolbox-path-controls>.ant-input,.toolbox-page .toolbox-path-controls>.ant-input-affix-wrapper,
+  .toolbox-modal .toolbox-path-controls>.ant-input,.toolbox-modal .toolbox-path-controls>.ant-input-affix-wrapper { flex:1 1 0; min-width:0; width:0; }
+  .toolbox-page .toolbox-path-controls>.ant-btn,.toolbox-modal .toolbox-path-controls>.ant-btn { flex-shrink:0; }
+.toolbox-page .toolbox-project-row { cursor:pointer; border-radius:6px; padding-inline:10px; border:1px solid transparent; }
+.toolbox-page .toolbox-project-row { flex-wrap:wrap; gap:8px; }
+.toolbox-page .ant-list .toolbox-project-row .ant-list-item-meta { flex:1 1 100%; width:100%; }
+.toolbox-page .ant-list .toolbox-project-row .ant-list-item-action { width:100%; margin-inline-start:0; display:flex; justify-content:flex-end; }
+.toolbox-page .toolbox-project-row.is-selected { border-color:var(--toolbox-border); background:var(--wf-soft,#e7effb); }
+.toolbox-page .toolbox-project-select.ant-btn { height:auto; min-height:28px; padding:2px 0; white-space:normal; text-align:left; font-weight:600; color:inherit; }
+.toolbox-page .toolbox-project-select.ant-btn>span { overflow-wrap:anywhere; }
+.toolbox-page .toolbox-project-select.ant-btn:hover { background:transparent; color:var(--wf-blue,#285fa9); }
+.toolbox-path { font-family:Consolas,"Microsoft YaHei",monospace; }
+.toolbox-page details>summary { cursor:pointer; color:var(--wf-blue,#285fa9); padding:6px 0; font-size:13px; }
+.toolbox-page details>summary:focus-visible { outline:2px solid var(--wf-blue,#285fa9); outline-offset:3px; border-radius:4px; }
+.toolbox-page pre { max-width:100%; overflow-x:auto; padding:12px; white-space:pre-wrap; overflow-wrap:anywhere; border:1px solid var(--toolbox-border); }
+.toolbox-page code { color:var(--wf-text,#202b3b); background:var(--wf-field,#f8f9fb)!important; border-color:var(--toolbox-border)!important; overflow-wrap:anywhere; }
+.toolbox-page th { background:var(--wf-raised,#f3f6fa)!important; }
+.toolbox-page th,.toolbox-page td { border-color:var(--toolbox-border)!important; }
+.toolbox-page table { max-width:100%; }
+.toolbox-modal .ant-space,.toolbox-modal .ant-space-item,.toolbox-directory-picker .ant-list-item { min-width:0; max-width:100%; }
+.toolbox-modal .ant-modal-title,.toolbox-modal .ant-modal-confirm-title,.toolbox-modal .ant-modal-confirm-content { overflow-wrap:anywhere; }
+.toolbox-directory-picker .ant-list-item>span:last-child { min-width:0; overflow-wrap:anywhere; }
+.toolbox-directory-picker .ant-typography { overflow-wrap:anywhere; }
+.toolbox-directory-picker .ant-modal-footer { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; }
+.toolbox-directory-picker .ant-modal-footer>.ant-btn+.ant-btn { margin-inline-start:0; }
+@media(max-width:900px) {
+  .toolbox-page .ant-list-item { flex-wrap:wrap; gap:8px; }
+  .toolbox-page .ant-list .ant-list-item .ant-list-item-meta { flex:1 1 100%; width:100%; }
+  .toolbox-page .ant-list .ant-list-item .ant-list-item-action { width:100%; margin-inline-start:0; display:flex; flex-wrap:wrap; gap:6px; }
+  .toolbox-page .ant-list-item-action>li { padding-inline:0; }
+  .toolbox-page .ant-list-item-action-split { display:none; }
+}
+@media(max-width:760px) {
+  .toolbox-heading h1.ant-typography { font-size:21px; }
+  .toolbox-page .ant-card-head { padding-inline:16px; }
+  .toolbox-page .ant-alert { flex-wrap:wrap; gap:8px; }
+  .toolbox-page .ant-alert-content { min-width:0; flex:1 1 12rem; }
+  .toolbox-page .ant-alert-actions { margin-inline-start:0; }
+  .toolbox-page .ant-descriptions-item-label { white-space:normal; }
+  .toolbox-page .toolbox-path-controls,.toolbox-modal .toolbox-path-controls { display:flex; flex-wrap:wrap; gap:8px; }
+  .toolbox-page .toolbox-path-controls>.ant-input,.toolbox-page .toolbox-path-controls>.ant-input-affix-wrapper,
+  .toolbox-modal .toolbox-path-controls>.ant-input,.toolbox-modal .toolbox-path-controls>.ant-input-affix-wrapper { flex:1 0 100%; width:100%; border-radius:6px!important; }
+  .toolbox-page .toolbox-path-controls>.ant-btn,.toolbox-modal .toolbox-path-controls>.ant-btn { border-radius:6px!important; margin-inline-start:0!important; }
+  .toolbox-directory-picker .ant-modal-body>.ant-typography { font-size:12px; }
+}

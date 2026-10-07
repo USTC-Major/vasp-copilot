@@ -7,7 +7,7 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
-import { Modal, List, Button, Spin, Alert, Typography, Empty, Tag, Input, message } from 'antd';
+import { Modal, List, Button, Spin, Alert, Typography, Empty, Tag, Input, message, theme } from 'antd';
 import {
   FolderFilled,
   FolderOpenFilled,
@@ -29,6 +29,7 @@ interface Props {
   initialPath: string;
   onSelect: (path: string) => void;
   onCancel: () => void;
+  scientific?: boolean;
 }
 
 const KIND_TITLE: Record<'local' | 'hpc', string> = {
@@ -46,7 +47,8 @@ const joinPath = (kind: 'local' | 'hpc', base: string, name: string) => {
   return base.endsWith(sep) ? `${base}${name}` : `${base}${sep}${name}`;
 };
 
-const AiDirectoryPicker: React.FC<Props> = ({ open, kind, initialPath, onSelect, onCancel }) => {
+const AiDirectoryPicker: React.FC<Props> = ({ open, kind, initialPath, onSelect, onCancel, scientific = false }) => {
+  const { token } = theme.useToken();
   const [path, setPath] = useState<string | null>(null); // null = 起点视图
   const [parent, setParent] = useState<string | null>(null);
   const [entries, setEntries] = useState<ToolboxBrowseEntry[]>([]);
@@ -140,6 +142,7 @@ const AiDirectoryPicker: React.FC<Props> = ({ open, kind, initialPath, onSelect,
 
   return (
     <Modal
+      className={scientific ? 'toolbox-directory-picker' : undefined}
       title={KIND_TITLE[kind]}
       open={open}
       onCancel={onCancel}
@@ -166,14 +169,14 @@ const AiDirectoryPicker: React.FC<Props> = ({ open, kind, initialPath, onSelect,
     >
       {/* 顶部说明区——风格对齐「上传结构文件」弹窗 */}
       <div style={{
-        border: '1px dashed #d0d7de',
+        border: `1px dashed ${scientific ? token.colorBorder : '#d0d7de'}`,
         borderRadius: 8,
-        background: '#fafbfc',
+        background: scientific ? token.colorFillAlter : '#fafbfc',
         padding: '18px 14px',
         textAlign: 'center',
         marginBottom: 12,
       }}>
-        <FolderOpenFilled style={{ fontSize: 40, color: '#0071e3' }} />
+        <FolderOpenFilled style={{ fontSize: 40, color: scientific ? token.colorPrimary : '#0071e3' }} />
         <div style={{ marginTop: 6 }}>
           <Text strong style={{ fontSize: 15 }}>
             {inFolder ? path : kind === 'local' ? '本机磁盘 / 用户主目录' : '超算根目录 / 主目录'}
@@ -197,7 +200,7 @@ const AiDirectoryPicker: React.FC<Props> = ({ open, kind, initialPath, onSelect,
 
       {notice && <Alert type="warning" showIcon closable message={notice} style={{ marginBottom: 10 }} />}
 
-      <div style={{ maxHeight: 320, overflowY: 'auto', border: '1px solid rgba(0,0,0,0.08)', borderRadius: 8 }}>
+      <div style={{ maxHeight: 320, overflowY: 'auto', border: `1px solid ${scientific ? token.colorBorder : 'rgba(0,0,0,0.08)'}`, borderRadius: 8 }}>
         {loading ? (
           <div style={{ padding: 32, textAlign: 'center' }}><Spin /></div>
         ) : !inFolder ? (
@@ -209,11 +212,11 @@ const AiDirectoryPicker: React.FC<Props> = ({ open, kind, initialPath, onSelect,
               dataSource={roots}
               renderItem={(r) => (
                 <List.Item
-                  style={{ cursor: 'pointer', background: selectedName === r.name ? '#e6f4ff' : undefined }}
+                  style={{ cursor: 'pointer', background: selectedName === r.name ? (scientific ? token.colorPrimaryBg : '#e6f4ff') : undefined }}
                   onClick={() => setSelectedName(r.name)}
                   onDoubleClick={() => void loadPath(r.name)}
                 >
-                  <FolderFilled style={{ color: '#f0a020', marginRight: 8 }} />
+                  <FolderFilled style={{ color: scientific ? token.colorWarning : '#f0a020', marginRight: 8 }} />
                   <span>{rootName(r.name)}</span>
                 </List.Item>
               )}
@@ -227,11 +230,11 @@ const AiDirectoryPicker: React.FC<Props> = ({ open, kind, initialPath, onSelect,
             dataSource={dirs}
             renderItem={(d) => (
               <List.Item
-                style={{ cursor: 'pointer', background: selectedName === d.name ? '#e6f4ff' : undefined }}
+                style={{ cursor: 'pointer', background: selectedName === d.name ? (scientific ? token.colorPrimaryBg : '#e6f4ff') : undefined }}
                 onClick={() => setSelectedName(d.name)}
                 onDoubleClick={() => void loadPath(joinPath(kind, path, d.name))}
               >
-                <FolderFilled style={{ color: '#f0a020', marginRight: 8 }} />
+                <FolderFilled style={{ color: scientific ? token.colorWarning : '#f0a020', marginRight: 8 }} />
                 <span>{d.name}</span>
               </List.Item>
             )}
