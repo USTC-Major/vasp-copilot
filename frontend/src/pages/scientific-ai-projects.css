@@ -1,0 +1,58 @@
+/* Scoped to the AI project index and its own portals. Uses existing shell tokens. */
+.scientific-ai-projects { max-width:1220px; min-width:0; margin:0 auto; color:var(--wf-text); overflow-wrap:anywhere; }
+.scientific-ai-projects .ai-projects-heading { display:flex; justify-content:space-between; align-items:flex-start; gap:20px; margin-bottom:24px; }
+.scientific-ai-projects .ai-projects-heading-copy { min-width:0; max-width:760px; }
+.scientific-ai-projects .ai-projects-heading h1 { margin:0 0 6px; font-size:24px; line-height:1.4; font-weight:600; }
+.scientific-ai-projects .ai-projects-heading h1 .anticon { color:var(--wf-blue); margin-right:4px; font-size:21px; }
+.scientific-ai-projects .ai-projects-heading .ant-typography-secondary { margin:0; font-size:13px!important; line-height:1.7; }
+.scientific-ai-projects .ai-projects-heading>.ant-btn { flex-shrink:0; }
+.scientific-ai-projects .ai-projects-toolbar { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-bottom:12px; }
+.scientific-ai-projects .ai-projects-sort { min-width:0; display:flex; align-items:center; flex-wrap:wrap; gap:10px; }
+.scientific-ai-projects .ai-projects-sort .ant-segmented { max-width:100%; }
+.scientific-ai-projects .ai-projects-list .ant-list-item { display:block; padding:0 0 10px; }
+.scientific-ai-projects .ai-project-record .ant-card-body { padding:18px 20px; }
+.scientific-ai-projects .ai-project-record:hover { border-color:var(--wf-accent); }
+.scientific-ai-projects .ai-project-record.is-selected { border-color:var(--wf-accent); box-shadow:inset 3px 0 0 var(--wf-accent); }
+.scientific-ai-projects .ai-project-row { display:flex; align-items:center; gap:20px; min-width:0; }
+.scientific-ai-projects .ai-project-select { display:flex; flex:1; min-width:0; flex-direction:column; align-items:flex-start; gap:6px; padding:0; border:0; border-radius:4px; background:transparent; color:var(--wf-text); font:inherit; text-align:left; cursor:pointer; overflow-wrap:anywhere; }
+.scientific-ai-projects .ai-project-name { font-size:15px; font-weight:600; line-height:1.6; max-width:100%; }
+.scientific-ai-projects .ai-project-description { font-size:13px; color:var(--wf-muted); max-width:100%; white-space:pre-wrap; }
+.scientific-ai-projects .ai-project-meta { display:flex; align-items:center; flex-wrap:wrap; gap:8px 12px; margin-top:4px; font-size:12px; color:var(--wf-muted); }
+.scientific-ai-projects .ai-project-meta .ant-tag { margin:0; background:var(--wf-raised); color:var(--wf-muted); border-color:var(--wf-border); }
+.scientific-ai-projects .ai-project-actions { display:flex; align-items:center; flex-wrap:wrap; justify-content:flex-end; gap:10px; flex-shrink:0; }
+.scientific-ai-projects .ai-projects-loading { display:flex; justify-content:center; align-items:center; min-height:180px; }
+.scientific-ai-projects .ai-projects-empty .ant-card-body { padding:32px 20px; }
+.scientific-ai-projects .ai-projects-error { display:flex; flex-direction:column; align-items:flex-start; gap:12px; margin-bottom:16px; }
+.scientific-ai-projects .ai-projects-error>.ant-alert { width:100%; }
+.scientific-ai-projects .ai-projects-error .ant-alert-content { min-width:0; }
+.scientific-ai-projects .ai-projects-queue { margin-top:24px; }
+.scientific-ai-projects .ai-projects-queue .ant-card-head-title { white-space:normal; padding-block:14px; }
+.scientific-ai-projects .ai-queue-heading { display:flex; flex-wrap:wrap; align-items:center; gap:10px; }
+.scientific-ai-projects .ai-queue-heading h2 { margin:0; font-size:15px; font-weight:600; line-height:1.5; }
+.scientific-ai-projects .ai-queue-heading .anticon { color:var(--wf-muted); margin-right:5px; }
+.scientific-ai-projects .ai-queue-heading .ant-tag { margin:0; }
+.scientific-ai-projects .ai-queue-note.ant-typography { margin:0 0 14px; }
+.scientific-ai-projects .ai-queue-entry { display:flex; min-width:0; width:100%; gap:12px; padding:4px 0; }
+.scientific-ai-projects .ai-queue-position { flex-shrink:0; min-width:16px; }
+.scientific-ai-projects .ai-queue-copy { min-width:0; flex:1; }
+.scientific-ai-projects .ai-queue-title { display:flex; align-items:baseline; flex-wrap:wrap; gap:6px 10px; margin-bottom:5px; }
+.scientific-ai-projects .ai-queue-title .ant-tag { margin:0; }
+.scientific-ai-projects .ai-queue-reason.ant-typography { margin:0 0 4px; white-space:pre-wrap; }
+.scientific-ai-projects-modal .ai-projects-create-fields { display:grid; gap:18px; padding-block:10px 4px; }
+.scientific-ai-projects-modal .ai-projects-create-fields label { display:block; font-weight:500; margin-bottom:8px; }
+.scientific-ai-projects-modal .ant-modal-title { overflow-wrap:anywhere; }
+.scientific-ai-projects-modal .ant-modal-footer { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; }
+.scientific-ai-projects-modal .ant-modal-footer>.ant-btn+.ant-btn { margin-inline-start:0; }
+.scientific-ai-projects-popconfirm { max-width:calc(100vw - 28px); }
+.scientific-ai-projects-popconfirm .ant-popconfirm-message-text { min-width:0; max-width:300px; overflow-wrap:anywhere; }
+.scientific-ai-projects-popconfirm .ant-popconfirm-buttons { display:flex; justify-content:flex-end; flex-wrap:wrap; gap:8px; }
+.scientific-ai-projects-popconfirm .ant-popconfirm-buttons>.ant-btn+.ant-btn { margin-inline-start:0; }
+@media(max-width:760px) {
+  .scientific-ai-projects .ai-projects-heading { flex-wrap:wrap; gap:14px; margin-bottom:20px; }
+  .scientific-ai-projects .ai-projects-heading h1 { font-size:21px; }
+  .scientific-ai-projects .ai-project-row { flex-direction:column; align-items:stretch; gap:16px; }
+  .scientific-ai-projects .ai-project-actions { border-top:1px solid var(--wf-border); padding-top:12px; }
+  .scientific-ai-projects .ai-project-record .ant-card-body { padding:16px; }
+  .scientific-ai-projects .ai-projects-queue .ant-card-head { padding-inline:16px; }
+  .scientific-ai-projects .ai-projects-toolbar { align-items:flex-start; }
+}
