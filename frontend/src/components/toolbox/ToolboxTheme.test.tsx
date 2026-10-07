@@ -6,6 +6,7 @@ import App from '../../App';
 import { toolboxApi } from '../../api/client';
 import type { ToolboxTaskDetail } from '../../types/toolbox';
 import AiDirectoryPicker from '../ai/AiDirectoryPicker';
+import { hasScientificContent } from '../workflow/scientificNavigation';
 import ToolboxTaskStatus from './ToolboxTaskStatus';
 import './scientific-toolbox.css';
 
@@ -39,8 +40,8 @@ function Content({ scientific }: { scientific: boolean }) {
     <AiDirectoryPicker scientific={scientific} open kind="local" initialPath="/synthetic" onCancel={() => undefined} onSelect={() => undefined} />
   </div>;
 }
-function setup(scientific: boolean) {
-  render(<ConfigProvider theme={{ token: { colorBgContainer: '#fafafa' } }}><MemoryRouter initialEntries={[scientific ? '/toolbox/projects/p/tasks/t' : '/ai/projects/p']}><Routes><Route element={<App />}><Route path="*" element={<Content scientific={scientific} />} /></Route></Routes></MemoryRouter></ConfigProvider>);
+function setup(path: string, scientific: boolean) {
+  render(<ConfigProvider theme={{ token: { colorBgContainer: '#fafafa' } }}><MemoryRouter initialEntries={[path]}><Routes><Route element={<App />}><Route path="*" element={<Content scientific={scientific} />} /></Route></Routes></MemoryRouter></ConfigProvider>);
 }
 const panel = (dialog: HTMLElement) => dialog.querySelector('.ant-modal-body')?.firstElementChild as HTMLElement;
 beforeEach(() => {
@@ -51,8 +52,10 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 describe('shared toolbox theme boundaries', () => {
-  it('keeps AI embedded status and the default directory picker on the original fallback', async () => {
-    setup(false);
+  it('keeps shared toolbox content on its fallback provider at the legacy AI progress route', async () => {
+    const fallbackPath = '/ai/projects/p/progress/t';
+    expect(hasScientificContent(fallbackPath)).toBe(false);
+    setup(fallbackPath, false);
     const dialog = await screen.findByRole('dialog', { name: '选择本地工作区目录' });
     expect(dialog).not.toHaveClass('toolbox-directory-picker');
     expect(panel(dialog).style.background).toBe('rgb(250, 251, 252)');
@@ -72,7 +75,7 @@ describe('shared toolbox theme boundaries', () => {
   });
 
   it('changes the task and portal colors without clearing selection, evidence or pending authorization', async () => {
-    setup(true);
+    setup('/toolbox/projects/p/tasks/t', true);
     const dialog = await screen.findByRole('dialog', { name: '选择本地工作区目录' });
     expect(dialog).toHaveClass('toolbox-directory-picker');
     expect(screen.getByTestId('content-color')).toHaveTextContent('#1B2028');
@@ -94,6 +97,38 @@ describe('shared toolbox theme boundaries', () => {
     fireEvent.click(screen.getByRole('button', { name: '切换深色主题' }));
     await waitFor(() => expect(panel(dialog).style.background).toBe(darkPanel));
     expect(selected.style.background).toBe(darkSelection);
+    expect(toolboxApi.browse).toHaveBeenCalledTimes(1);
+    expect(resolve).not.toHaveBeenCalled();
+  });
+
+  it('follows the scientific provider in migrated AI chat while keeping the picker fallback and task content', async () => {
+    setup('/ai/projects/p', false);
+    expect(screen.getByTestId('content-color')).toHaveTextContent('#1B2028');
+    const dialog = await screen.findByRole('dialog', { name: '选择本地工作区目录' });
+    expect(dialog).not.toHaveClass('toolbox-directory-picker');
+    expect(panel(dialog).style.background).toBe('rgb(250, 251, 252)');
+    const pending = document.querySelector('.toolbox-pending-card') as HTMLElement;
+    expect(pending.style.background).toBe('var(--toolbox-pending-bg, #fffbe6)');
+    expect(pending.closest('.toolbox-page')).toBeNull();
+    expect(screen.getByText('合成人工确认：只确认本次计算')).toBeInTheDocument();
+    expect(screen.getByText('范围：synthetic-scope')).toBeInTheDocument();
+    expect(screen.getByText('服务恢复后等待重新采集')).toBeInTheDocument();
+    expect(screen.getByText('提交结果待核实')).toBeInTheDocument();
+    expect(screen.getByText('历史执行：模拟')).toBeInTheDocument();
+    expect(screen.getByText('当前后端：未配置')).toBeInTheDocument();
+    fireEvent.click(await within(dialog).findByText('synthetic-child'));
+    const selected = within(dialog).getByText('synthetic-child').closest('.ant-list-item') as HTMLElement;
+    expect(selected.style.background).toBe('rgb(230, 244, 255)');
+    fireEvent.click(screen.getByRole('button', { name: '切换浅色主题' }));
+    expect(screen.getByTestId('content-color')).toHaveTextContent('#FFFFFF');
+    expect(panel(dialog).style.background).toBe('rgb(250, 251, 252)');
+    expect(selected.style.background).toBe('rgb(230, 244, 255)');
+    expect(screen.getByText('提交结果待核实')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '切换深色主题' }));
+    expect(screen.getByTestId('content-color')).toHaveTextContent('#1B2028');
+    expect(panel(dialog).style.background).toBe('rgb(250, 251, 252)');
+    expect(selected.style.background).toBe('rgb(230, 244, 255)');
+    expect(screen.getByText('合成人工确认：只确认本次计算')).toBeInTheDocument();
     expect(toolboxApi.browse).toHaveBeenCalledTimes(1);
     expect(resolve).not.toHaveBeenCalled();
   });

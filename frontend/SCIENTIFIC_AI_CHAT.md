@@ -1,5 +1,7 @@
 # S-3 智能项目与任务聊天视觉交付回执
 
+GitHub 全量 CI 补查发现两份既有主题边界测试仍将 `/ai/projects/:projectId` 视为未迁移页面。该前提已被本批批准的聊天主题迁移替代。交付范围因此从13文件增加至15文件：新增修改 `src/components/diagnosis/SharedDiagnosisTheme.test.tsx`、`src/components/toolbox/ToolboxTheme.test.tsx`，保留旧进度页的外层主题隔离及共享组件默认行为断言，并补聊天路由深浅切换、内容/选择保持和不增加业务调用的覆盖。此修正只更新测试合同，产品实现与用户复测版本保持一致。下方13文件为首轮冻结状态。
+
 本批交付基线为 `c58d0a972222f3ba47ff012636b690b826dc246d`（S-2 PR45已合并），目录 `.tmp/scientific-ai-chat-ui`，分支 `feat/scientific-ai-chat-ui`。聊天视觉、深色配色及公共助手拖动共13文件，用户已复测通过。原验收基线5d3ed29与该main代码树完全一致，12个产品/测试文件保持验收内容，只有本回执更新交付记录。后续准确提交CI结论以PR正文与统筹记录为准；不自动合并本批或发布。下文保留分阶段验收历史，其中“未提交”和11文件描述属于当时状态。
 
 ## 布局与主题
