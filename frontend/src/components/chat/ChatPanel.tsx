@@ -131,6 +131,8 @@ const FAB_STYLE: React.CSSProperties = {
   fontSize: 20,
   userSelect: 'none',
   touchAction: 'none',
+  // Ant Button defaults to `all`; dragging coordinates must never interpolate.
+  transitionProperty: 'background-color, border-color, color, box-shadow',
 };
 
 const ChatPanel: React.FC<ChatPanelProps> = ({ onOpenSettings }) => {
@@ -150,57 +152,93 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onOpenSettings }) => {
     orig: Pos;
     w: number;
     h: number;
+    moved: boolean;
   } | null>(null);
   const suppressClickRef = useRef(false);
+  const positionsRef = useRef({ fab: fabPos, panel: panelPos });
+  const pendingMoveRef = useRef<{ key: 'fab' | 'panel'; pos: Pos } | null>(null);
+  const frameRef = useRef<number | null>(null);
 
   useEffect(() => {
-    try {
-      localStorage.setItem(FAB_POS_KEY, JSON.stringify(fabPos));
-    } catch { /* ignore */ }
-  }, [fabPos]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(PANEL_POS_KEY, JSON.stringify(panelPos));
-    } catch { /* ignore */ }
-  }, [panelPos]);
-
-  useEffect(() => {
+    const persist = (key: 'fab' | 'panel') => {
+      try { localStorage.setItem(key === 'fab' ? FAB_POS_KEY : PANEL_POS_KEY, JSON.stringify(positionsRef.current[key])); } catch { /* ignore */ }
+    };
+    const apply = (key: 'fab' | 'panel', pos: Pos, render = true) => {
+      positionsRef.current[key] = pos;
+      if (render) {
+        if (key === 'fab') setFabPos(pos);
+        else setPanelPos(pos);
+      }
+    };
+    const cancelFrame = () => {
+      if (frameRef.current !== null) window.cancelAnimationFrame(frameRef.current);
+      frameRef.current = null;
+    };
+    const flushMove = (render = true) => {
+      cancelFrame();
+      const pending = pendingMoveRef.current;
+      pendingMoveRef.current = null;
+      if (pending) apply(pending.key, pending.pos, render);
+    };
+    const positionAt = (drag: NonNullable<typeof dragRef.current>, x: number, y: number) => clampPos({
+      left: drag.orig.left + x - drag.startX,
+      top: drag.orig.top + y - drag.startY,
+    }, drag.w, drag.h);
     const onMove = (e: MouseEvent) => {
       const drag = dragRef.current;
       if (!drag) return;
-      const next = clampPos(
-        {
-          left: drag.orig.left + e.clientX - drag.startX,
-          top: drag.orig.top + e.clientY - drag.startY,
-        },
-        drag.w,
-        drag.h,
-      );
-      if (drag.key === 'fab') setFabPos(next);
-      else setPanelPos(next);
+      const dx = e.clientX - drag.startX;
+      const dy = e.clientY - drag.startY;
+      if (dx * dx + dy * dy > 36) drag.moved = true;
+      pendingMoveRef.current = { key: drag.key, pos: positionAt(drag, e.clientX, e.clientY) };
+      if (frameRef.current === null) frameRef.current = window.requestAnimationFrame(() => {
+        frameRef.current = null;
+        flushMove();
+      });
     };
     const onUp = (e: MouseEvent) => {
       const drag = dragRef.current;
       if (!drag) return;
       const dx = e.clientX - drag.startX;
       const dy = e.clientY - drag.startY;
-      if (dx * dx + dy * dy > 36) suppressClickRef.current = true;
+      if (drag.moved || dx * dx + dy * dy > 36) suppressClickRef.current = true;
+      // Mouseup can arrive before the pending frame or after the last move event.
+      cancelFrame();
+      pendingMoveRef.current = null;
+      apply(drag.key, positionAt(drag, e.clientX, e.clientY));
+      persist(drag.key);
+      dragRef.current = null;
+    };
+    const endDrag = (render = true) => {
+      const drag = dragRef.current;
+      flushMove(render);
+      if (drag) {
+        if (drag.moved) suppressClickRef.current = true;
+        persist(drag.key);
+      }
       dragRef.current = null;
     };
     const onResize = () => {
-      dragRef.current = null;
-      setFabPos((p) => clampPos(p, FAB_SIZE, FAB_SIZE));
+      endDrag();
+      apply('fab', clampPos(positionsRef.current.fab, FAB_SIZE, FAB_SIZE));
       const { width, height } = panelSize();
-      setPanelPos((p) => clampPos(p, width, height));
+      apply('panel', clampPos(positionsRef.current.panel, width, height));
+      persist('fab');
+      persist('panel');
     };
-    window.addEventListener('mousemove', onMove as EventListener);
+    const onBlur = () => endDrag();
+    persist('fab');
+    persist('panel');
+    window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
     window.addEventListener('resize', onResize);
+    window.addEventListener('blur', onBlur);
     return () => {
-      window.removeEventListener('mousemove', onMove as EventListener);
+      endDrag(false);
+      window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
       window.removeEventListener('resize', onResize);
+      window.removeEventListener('blur', onBlur);
     };
   }, []);
 
@@ -208,7 +246,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onOpenSettings }) => {
     if (e.button !== 0) return;
     e.preventDefault();
     suppressClickRef.current = false;
-    const pos = key === 'fab' ? fabPos : panelPos;
+    const pos = positionsRef.current[key];
     dragRef.current = {
       key,
       startX: e.clientX,
@@ -216,6 +254,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onOpenSettings }) => {
       orig: pos,
       w: key === 'fab' ? FAB_SIZE : panelSize().width,
       h: key === 'fab' ? FAB_SIZE : panelSize().height,
+      moved: false,
     };
   };
   const listRef = useRef<HTMLDivElement>(null);
@@ -327,8 +366,12 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onOpenSettings }) => {
         icon={open ? <CloseOutlined /> : <MessageOutlined />}
         style={{ ...FAB_STYLE, left: fabPos.left, top: fabPos.top, cursor: 'grab' }}
         onMouseDown={(e) => startDrag('fab', e)}
-        onClick={() => {
-          if (suppressClickRef.current) return;
+        onClick={(event) => {
+          if (suppressClickRef.current && event.detail > 0) {
+            suppressClickRef.current = false;
+            return;
+          }
+          suppressClickRef.current = false;
           setOpen((v) => !v);
         }}
         aria-label={open ? '关闭 AI 助手' : '打开 AI 助手'}
