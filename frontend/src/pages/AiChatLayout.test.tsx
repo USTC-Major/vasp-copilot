@@ -44,7 +44,7 @@ it('任务键盘切换保留原草稿；任务栏鼠标与键盘调整有边界�
   const user = userEvent.setup();
   renderChat();
   const task = await screen.findByRole('button', { name: '带结构计算的能带' });
-  const input = screen.getByRole('textbox', { name: '计算需求消息' });
+  const input = await screen.findByRole('textbox', { name: '计算需求消息' });
   await user.type(input, '保留这一段草稿');
   task.focus();
   await user.keyboard('{Enter}');
