@@ -91,6 +91,23 @@ class PotcarLibraryService:
         self._recover()
         if not self._registry_path.exists():
             atomic_json(self._registry_path, self._data)
+        from .assembly import PotcarAssemblyService
+        self.assembly = PotcarAssemblyService(self)
+
+    def preview(self, payload):
+        return self.assembly.preview(payload)
+
+    def generate(self, payload):
+        return self.assembly.generate(payload)
+
+    def artifact(self, artifact_id):
+        return self.assembly.artifact(artifact_id)
+
+    def download(self, artifact_id):
+        return self.assembly.download(artifact_id)
+
+    def download_bytes(self, artifact_id):
+        return {'raw': self.assembly.download(artifact_id)}
 
     def _validate_store(self):
         data = self._data

@@ -190,8 +190,8 @@ export default function PotcarLibraryPage() {
   ];
 
   return <div className="wf-page potcar-library-page">
-    <div className="wf-page-heading"><div><Title level={1}>本地 POTCAR 赝势库</Title><Paragraph type="secondary">登记已有目录，查看元素、变体和异常。库管理不依赖智能模式。</Paragraph></div><Space wrap><Link to="/toolbox/settings">返回执行设置</Link><Button type="primary" aria-label="登记现有库" icon={<PlusOutlined />} disabled={!librariesQuery.data || busy} onClick={() => openDialog('register')}>登记现有库</Button></Space></div>
-    <Alert type="info" showIcon title="登记并检查本地赝势库，源文件保持不变" description="目录位于运行后端的电脑；远端或 Docker 后端需使用其可访问路径。拼接功能尚未接入。" />
+    <div className="wf-page-heading"><div><Title level={1}>本地 POTCAR 赝势库</Title><Paragraph type="secondary">登记已有目录，查看元素、变体和异常。库管理不依赖智能模式。</Paragraph></div><Space wrap><Link to="/toolbox/settings">返回执行设置</Link><Link to="/toolbox/potcar/assemble">拼接 POTCAR</Link><Button type="primary" aria-label="登记现有库" icon={<PlusOutlined />} disabled={!librariesQuery.data || busy} onClick={() => openDialog('register')}>登记现有库</Button></Space></div>
+    <Alert type="info" showIcon title="登记并检查本地赝势库，源文件保持不变" description="目录位于运行后端的电脑；远端或 Docker 后端需使用其可访问路径。完成扫描后，可在独立拼接页读取 POSCAR 并核对变体。" />
     {notice && <Alert type="success" showIcon title={notice} closable onClose={() => setNotice('')} />}
     {!dialog && errorAlert}
     {librariesQuery.isError && <Alert type="error" showIcon title="无法读取赝势库登记" description={librariesQuery.error.message} action={<Button onClick={() => void librariesQuery.refetch()}>重试读取库列表</Button>} />}
