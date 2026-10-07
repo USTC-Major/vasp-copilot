@@ -2,7 +2,6 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import userEvent from "@testing-library/user-event";
 import { beforeEach, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
-import { Modal } from "antd";
 import { useState } from "react";
 import AiSettingsPage from "./AiSettingsPage";
 
@@ -45,16 +44,10 @@ beforeEach(() => {
   mocks.refetch.mockImplementation(() => Promise.resolve({ data: mocks.data }));
   mocks.save.mockClear();
   mocks.test.mockClear();
+  mocks.secret.mockClear();
 });
 
-// antd 的静态 Modal 不在 Testing Library 的自动清理范围内：不显式销毁会残留到
-// 下一条用例，导致确认框重复、点到旧对话框的按钮。
-afterEach(() => {
-  Modal.destroyAll();
-  // 静态 Modal 的容器不在 umount 范围内，显式清掉避免残留到下一條用例。
-  document.querySelectorAll(".ant-modal-root, .ant-modal-wrap, .ant-modal-mask")
-    .forEach((node) => node.remove());
-});
+// Context Modal is owned by React and uses Testing Library's normal unmount cleanup.
 
 it('does not show an editable form when credential status fails, and guides to Toolbox', async () => {
   mocks.secretError = new Error('智能服务不可达');
@@ -122,7 +115,7 @@ it("后台配置已被改动时先提示冲突，选择刷新则不覆盖", asyn
   await user.click(await screen.findByRole("button", { name: "保存设置" }));
 
   expect(mocks.refetch).toHaveBeenCalledTimes(1);
-  // antd 的静态 Modal 在 jsdom 下会渲染出多份节点，这里取最后一份（最新创建）即可。
+  // The conflict dialog retains the original refresh/cancel decision.
   expect((await screen.findAllByText("后台配置已被修改")).length).toBeGreaterThan(0);
   const refreshButtons = await screen.findAllByRole("button", { name: "用后台值刷新" });
   refreshButtons.forEach((button) => fireEvent.click(button));
@@ -236,4 +229,28 @@ it("字段说明关联各自控件，默认值说明不覆盖已保存的轮询�
   } finally {
     mocks.data.settings.poll_interval_seconds = previousInterval;
   }
+});
+
+it('saves secret replacements through the dedicated endpoint and leaves blank credentials unchanged', async () => {
+  render(<MemoryRouter><AiSettingsPage /></MemoryRouter>);
+  const llm = within(await screen.findByRole('group', { name: 'API Key' })).getByLabelText('输入新的密钥以整体替换');
+  const ssh = within(screen.getByRole('group', { name: '密码' })).getByLabelText('输入新的密钥以整体替换');
+  const mp = within(screen.getByRole('group', { name: 'MP API Key' })).getByLabelText('输入新的密钥以整体替换');
+  expect(llm).toHaveValue('');
+  expect(ssh).toHaveValue('');
+  expect(mp).toHaveValue('');
+  fireEvent.change(llm, { target: { value: 'synthetic-llm-key' } });
+  fireEvent.change(ssh, { target: { value: 'synthetic-ssh-password' } });
+  await userEvent.click(screen.getByRole('button', { name: '保存设置' }));
+  await waitFor(() => expect(mocks.secret.mock.calls).toEqual([
+    [{ kind: 'llm', action: 'replace', value: 'synthetic-llm-key' }],
+    [{ kind: 'ssh', action: 'replace', value: 'synthetic-ssh-password' }],
+  ]));
+  const patch = mocks.save.mock.calls[0][0];
+  expect(patch).not.toHaveProperty('llm_api_key');
+  expect(patch).not.toHaveProperty('mp_api_key');
+  expect(patch).not.toHaveProperty('ssh_password');
+  await waitFor(() => expect(llm).toHaveValue(''));
+  expect(ssh).toHaveValue('');
+  expect(mp).toHaveValue('');
 });
