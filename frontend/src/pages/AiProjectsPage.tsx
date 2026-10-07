@@ -1,16 +1,16 @@
 // ============================================================
-// AiProjectsPage — 初始页（项目列表：通讯录式排列 + 创建/修改时间切换排序
-// + 列表最上方「＋」新建入口 + 等待空位队列界面）
+// AiProjectsPage — 科研项目列表、创建/删除确认与等待空位队列。
 // ============================================================
 
 import React, { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Card, Typography, Button, Space, Tag, Input, Modal, List, Empty, Popconfirm, message, Segmented, Spin } from 'antd';
+import { Card, Typography, Button, Tag, Input, Modal, List, Empty, Popconfirm, message, Segmented, Spin } from 'antd';
 import {
   PlusOutlined, RobotOutlined, ArrowRightOutlined, DeleteOutlined,
   FieldTimeOutlined, FolderOpenOutlined,
 } from '@ant-design/icons';
 import ErrorAlert from '../components/common/ErrorAlert';
+import './scientific-ai-projects.css';
 import {
   useAiProjects, useAiProjectCreate, useAiProjectDelete,
   useAiWaitQueue,
@@ -83,70 +83,83 @@ const AiProjectsPage: React.FC = () => {
   };
 
   return (
-    <div style={{ maxWidth: 960, margin: '0 auto', padding: '8px 0' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20, gap: 16, flexWrap: 'wrap' }}>
-        <div>
-          <Title level={3} style={{ marginBottom: 4 }}><RobotOutlined /> 智能模式 · 项目</Title>
-          <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+    <div className="scientific-ai-projects">
+      <header className="ai-projects-heading">
+        <div className="ai-projects-heading-copy">
+          <Title level={1}><RobotOutlined aria-hidden="true" /> 智能模式 · 项目</Title>
+          <Paragraph type="secondary">
             每个项目可包含多个计算任务；每个计算任务是一段独立对话，需绑定本地/超算工作区。
           </Paragraph>
         </div>
-      </div>
+        {!projectsQuery.isLoading && !projectsQuery.isError && (
+          <Button type="primary" icon={<PlusOutlined aria-hidden="true" />} onClick={() => setCreateOpen(true)}>新建项目</Button>
+        )}
+      </header>
 
-      {projectsQuery.error && <Space direction="vertical"><ErrorAlert error={projectsQuery.error} title="项目加载失败" /><Button onClick={() => void projectsQuery.refetch()}>重试项目</Button></Space>}
+      {projectsQuery.error && <div className="ai-projects-error"><ErrorAlert error={projectsQuery.error} title="项目加载失败" /><Button onClick={() => void projectsQuery.refetch()}>重试项目</Button></div>}
 
       {/* 排序切换（创建时间 / 修改时间） */}
-      {!projectsQuery.isLoading && !projectsQuery.isError && <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, gap: 12 }}>
-        <Text type="secondary">排序：</Text>
-        <Segmented
-          value={sortMode}
-          onChange={(v) => setSortMode(v as SortMode)}
-          options={[
-            { label: '按创建时间', value: 'created' },
-            { label: '按修改时间', value: 'updated' },
-          ]}
-        />
+      {!projectsQuery.isLoading && !projectsQuery.isError && <div className="ai-projects-toolbar">
         <Text type="secondary">共 {projects.length} 个项目</Text>
+        <div className="ai-projects-sort">
+          <Text type="secondary" id="ai-projects-sort-label">排序</Text>
+          <Segmented
+            aria-labelledby="ai-projects-sort-label"
+            value={sortMode}
+            onChange={(v) => setSortMode(v as SortMode)}
+            options={[
+              { label: '按创建时间', value: 'created' },
+              { label: '按修改时间', value: 'updated' },
+            ]}
+          />
+        </div>
       </div>}
 
-      {projectsQuery.isLoading ? <Spin aria-label="项目加载中" /> : projectsQuery.isError ? null : projects.length === 0 ? (
-        <Card><Empty description="暂无项目 — 点击下方「＋ 新建项目」开始" /></Card>
+      {projectsQuery.isLoading ? <div className="ai-projects-loading"><Spin aria-label="项目加载中" /></div> : projectsQuery.isError ? null : projects.length === 0 ? (
+        <Card className="ai-projects-empty"><Empty description="暂无项目 — 点击「新建项目」开始" /></Card>
       ) : (
         <List
+          className="ai-projects-list"
+          rowKey="id"
           dataSource={projects}
           loading={projectsQuery.isLoading}
           split={false}
           renderItem={(project) => (
-            <List.Item style={{ padding: '8px 0' }}>
+            <List.Item>
               <Card
-                hoverable
-                styles={{ body: { padding: '14px 18px' } }}
-                style={selectedProjectId === project.id ? { borderColor: '#0071e3', boxShadow: '0 0 0 1px #0071e3' } : undefined}
+                className={`ai-project-record${selectedProjectId === project.id ? ' is-selected' : ''}`}
                 onClick={() => setSelectedProjectId(project.id)}
               >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16 }}>
-                  <div style={{ minWidth: 0 }}>
-                    <Title level={5} style={{ margin: 0 }}>{project.name}</Title>
+                <div className="ai-project-row">
+                  <button
+                    type="button"
+                    className="ai-project-select"
+                    aria-label={`选择项目 ${project.name}`}
+                    aria-pressed={selectedProjectId === project.id}
+                    onClick={() => setSelectedProjectId(project.id)}
+                  >
+                    <span className="ai-project-name">{project.name}</span>
                     {project.description && (
-                      <Text type="secondary" style={{ fontSize: 13 }}>{project.description}</Text>
+                      <span className="ai-project-description">{project.description}</span>
                     )}
-                    <div style={{ marginTop: 8 }}>
-                      <Tag color="blue">任务 {project.job_count}</Tag>
-                      <Text type="secondary" style={{ fontSize: 12, marginLeft: 8 }}>
+                    <span className="ai-project-meta">
+                      <Tag>任务 {project.job_count}</Tag>
+                      <span>
                         修改于 {formatTime(project.updated_at)}
-                      </Text>
-                    </div>
-                  </div>
-                  <Space onClick={(e) => e.stopPropagation()}>
+                      </span>
+                    </span>
+                  </button>
+                  <div className="ai-project-actions" onClick={(e) => e.stopPropagation()}>
                     <Popconfirm
                       title="删除项目？"
-                      description="将删除该项目下的全部计算任务（仅演示数据）。"
+                      description="将删除该项目及其计算任务记录；不会取消超算作业或删除工作区文件。"
+                      classNames={{ root: 'scientific-ai-projects-popconfirm' }}
                       onConfirm={() => removeProject(project.id)}
                     >
                       <Button type="text" danger size="small" icon={<DeleteOutlined />} aria-label="删除项目" />
                     </Popconfirm>
-                    <Button type="primary" icon={<ArrowRightOutlined />} onClick={() => navigate(`/ai/projects/${project.id}`)}>进入</Button>
-                  </Space>
+                    <Button type="primary" icon={<ArrowRightOutlined aria-hidden="true" />} onClick={() => navigate(`/ai/projects/${project.id}`)}>进入</Button>
+                  </div>
                 </div>
               </Card>
             </List.Item>
@@ -154,30 +167,19 @@ const AiProjectsPage: React.FC = () => {
         />
       )}
 
-      {/* 列表最上方「＋」新建入口（已确认） */}
-      {!projectsQuery.isLoading && !projectsQuery.isError && <Card
-        hoverable
-        onClick={() => setCreateOpen(true)}
-        styles={{ body: { padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 12 } }}
-        style={{ marginTop: 12 }}
-      >
-        <Button type="primary" shape="circle" icon={<PlusOutlined />} />
-        <Text strong>新建项目</Text>
-      </Card>}
-
       {/* 等待空位队列：条件满足后重新预检与确认，不自动补提。 */}
       <Card
-        style={{ marginTop: 20 }}
+        className="ai-projects-queue"
         title={
-          <Space>
-            <FieldTimeOutlined />
-            等待空位队列
-            {queued > 0 && <Tag color="orange">{queued}</Tag>}
-          </Space>
+          <div className="ai-queue-heading">
+            <Title level={2}><FieldTimeOutlined aria-hidden="true" /> 等待空位队列</Title>
+            {queued > 0 && <Tag>{queued}</Tag>}
+          </div>
         }
       >
+        <Paragraph type="secondary" className="ai-queue-note">条件满足后重新预检并确认提交，不自动补提。</Paragraph>
         {queueQuery.isLoading ? <Spin aria-label="队列加载中" /> : queueQuery.isError ? (
-          <Space direction="vertical"><ErrorAlert error={queueQuery.error} title="等待队列加载失败" /><Button onClick={() => void queueQuery.refetch()}>重试队列</Button></Space>
+          <div className="ai-projects-error"><ErrorAlert error={queueQuery.error} title="等待队列加载失败" /><Button onClick={() => void queueQuery.refetch()}>重试队列</Button></div>
         ) : queue.length === 0 ? (
           <Empty description="当前无排队作业 — 前置完成或有空位后仍会重新预检并确认提交" />
         ) : (
@@ -186,18 +188,17 @@ const AiProjectsPage: React.FC = () => {
             dataSource={queue}
             renderItem={(entry, i) => (
               <List.Item key={`${entry.queued_at}_${i}`}>
-                <Space align="start" style={{ width: '100%' }}>
-                  <Text strong type="secondary">{i + 1}.</Text>
-                  <div>
-                    <div>
-                      {entry.task_title || '待定任务'}
-                      <Tag color="default" style={{ marginLeft: 8, fontSize: 12 }}>排队中</Tag>
+                <div className="ai-queue-entry">
+                  <Text type="secondary" className="ai-queue-position">{i + 1}.</Text>
+                  <div className="ai-queue-copy">
+                    <div className="ai-queue-title">
+                      <Text strong>{entry.task_title || '待定任务'}</Text>
+                      <Tag>排队中</Tag>
                     </div>
-                    <Text type="secondary" style={{ fontSize: 12 }}>
-                      {entry.reason} · 排队时间 {formatTime(entry.queued_at)} · 条件满足后重新预检并确认提交
-                    </Text>
+                    <Paragraph type="secondary" className="ai-queue-reason">{entry.reason}</Paragraph>
+                    <Text type="secondary">排队时间 {formatTime(entry.queued_at)} · 条件满足后重新预检并确认提交</Text>
                   </div>
-                </Space>
+                </div>
               </List.Item>
             )}
           />
@@ -205,23 +206,24 @@ const AiProjectsPage: React.FC = () => {
       </Card>
 
       <Modal
-        title={<>新建项目 <FolderOpenOutlined /></>}
+        title={<>新建项目 <FolderOpenOutlined aria-hidden="true" /></>}
+        className="scientific-ai-projects-modal"
         open={createOpen}
         onCancel={() => setCreateOpen(false)}
         onOk={createProject}
         okText="创建"
         confirmLoading={createMutation.isPending}
       >
-        <Space direction="vertical" style={{ width: '100%' }}>
+        <div className="ai-projects-create-fields">
           <div>
-            <Text strong>项目名称</Text>
-            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="如：Fe2O3 表面能研究" maxLength={80} />
+            <label htmlFor="ai-project-name">项目名称</label>
+            <Input id="ai-project-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="如：Fe2O3 表面能研究" maxLength={80} />
           </div>
           <div>
-            <Text strong>描述（可选）</Text>
-            <Input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="一句话描述目标" maxLength={200} />
+            <label htmlFor="ai-project-description">描述（可选）</label>
+            <Input id="ai-project-description" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="一句话描述目标" maxLength={200} />
           </div>
-        </Space>
+        </div>
       </Modal>
     </div>
   );
