@@ -54,7 +54,7 @@ spec=importlib.util.spec_from_file_location('actual_runtime',RUNTIME_PATH)
 module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
 module.main()
 '''.replace('RUNTIME_PATH',repr(str(ROOT/'launcher/runtime.py'))),encoding='utf-8')
-env={k:v for k,v in os.environ.items() if k.upper() in {'SYSTEMROOT','WINDIR','PATH','PATHEXT','TEMP','TMP','COMSPEC','PROCESSOR_ARCHITECTURE','NUMBER_OF_PROCESSORS'}}
+env={k:v for k,v in os.environ.items() if k.upper() in {'SYSTEMROOT','SYSTEMDRIVE','WINDIR','PATH','PATHEXT','TEMP','TMP','COMSPEC','PROCESSOR_ARCHITECTURE','NUMBER_OF_PROCESSORS'}}
 env.update(VASP_LAUNCHER_STATE_DIR=str(OUT/'state'),OPENAI_API_KEY='synthetic-controller-secret',PYTHONUTF8='1')
 child=test_support.start_process([str(HARNESS),str(ROOT),sys.executable,str(wrapper),str(OUT),'actual'],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
 def wait(file,seconds):

@@ -201,7 +201,7 @@ namespace VaspCopilot.Launcher
         {
             // Pass only OS plumbing. Preparation must never inherit model, SSH,
             // materials, reviewer, .env, Python path or pip configuration secrets.
-            var allowed = new HashSet<string>(new [] { "SYSTEMROOT", "WINDIR", "PATH", "PATHEXT", "TEMP", "TMP", "COMSPEC", "PROCESSOR_ARCHITECTURE", "NUMBER_OF_PROCESSORS" }, StringComparer.OrdinalIgnoreCase);
+            var allowed = new HashSet<string>(new [] { "SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "PATH", "PATHEXT", "TEMP", "TMP", "COMSPEC", "PROCESSOR_ARCHITECTURE", "NUMBER_OF_PROCESSORS" }, StringComparer.OrdinalIgnoreCase);
             var overrides = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             foreach (System.Collections.DictionaryEntry entry in Environment.GetEnvironmentVariables())
                 if (!allowed.Contains((string)entry.Key)) overrides[(string)entry.Key] = null;

@@ -93,7 +93,7 @@ def run(name, mode='full', helper='success', python=sys.executable, extra_env=No
     runtime=installation/'launcher/stub-runtime.py';runtime.write_text(RUNTIME,encoding='utf-8')
     (installation/'helper-mode').write_text(helper)
     if check_fail:(installation/'check-fail').touch()
-    env={k:v for k,v in os.environ.items() if k.upper() in {'SYSTEMROOT','WINDIR','PATH','PATHEXT','TEMP','TMP','COMSPEC','PROCESSOR_ARCHITECTURE','NUMBER_OF_PROCESSORS'}}
+    env={k:v for k,v in os.environ.items() if k.upper() in {'SYSTEMROOT','SYSTEMDRIVE','WINDIR','PATH','PATHEXT','TEMP','TMP','COMSPEC','PROCESSOR_ARCHITECTURE','NUMBER_OF_PROCESSORS'}}
     env.update(VASP_LAUNCHER_STATE_DIR=str(directory/'state'),OPENAI_API_KEY='synthetic-controller-secret',
         VASP_AI_HOME='synthetic-personal-home',MP_API_KEY='synthetic-materials-secret',
         VASP_REVIEWER_SHARED_SECRET='synthetic-reviewer-secret',PIP_INDEX_URL='https://synthetic:password@invalid.test/simple',
@@ -109,9 +109,18 @@ def run(name, mode='full', helper='success', python=sys.executable, extra_env=No
             with socket.socket() as probe:assert probe.connect_ex(('127.0.0.1',service['Port']))!=0
     calls=[json.loads(line) for line in (installation/'helper-calls.jsonl').read_text().splitlines()] if (installation/'helper-calls.jsonl').exists() else []
     for call in calls:
+        assert 'SystemDrive' in call['env_keys'] or 'SYSTEMDRIVE' in call['env_keys'],call
         assert not set(call['env_keys']) & {'OPENAI_API_KEY','MP_API_KEY','VASP_AI_HOME','VASP_REVIEWER_SHARED_SECRET','PIP_INDEX_URL','PYTHONPATH','HTTP_PROXY','HTTPS_PROXY','ALL_PROXY','CONDA_PREFIX'},call
         assert Path(call['state'])==directory/'state/runtime/full'
     return result,calls,installation
+
+
+if '--environment-smoke' in sys.argv:
+    r,c,i=run('os-environment-smoke')
+    assert r['outcomes'][0]['ok'] and len(c)==1,r
+    record('system-drive-preserved-secrets-filtered-prepared-python-three-services-ready')
+    print('Evidence: '+str(OUT),flush=True)
+    sys.exit(0)
 
 
 r,c,i=run('successful-full-three-services')
@@ -170,14 +179,10 @@ r,c,i=run('unsupported-base',python=PROBE_BIN/'python.exe')
 assert not r['outcomes'][0]['ok'] and not c and '3.11 / 3.12' in r['outcomes'][0]['error'],r
 record('unsupported-python-version-rejected-before-helper')
 
-# Anaconda's stdlib SSL extension needs its DLL directory, which contains no
-# python.exe and therefore does not add an alternate discovery candidate.
-r,c,i=run('py-launcher-discovery',python='',extra_env={'PATH':str(PROBE_BIN)+os.pathsep+str(Path(sys.base_prefix)/'Library/bin'),'CONDA_PREFIX':str(PROBE_BIN)},check_fail=True)
-# Deliberately stop after preparation/dependency verification: this case tests
-# py.exe discovery under a synthetic PATH, while ordinary PATH service startup
-# is covered by the successful full-controller case above.
-assert not r['outcomes'][0]['ok'] and len(c)==1 and 'synthetic-dependency' in r['outcomes'][0]['error'],r
-assert len((i/'dependency-checks.jsonl').read_text().splitlines())==1
+# Real supported installations may precede py.exe. Inspect discovery and invoke
+# its exact owned-process version-selector probe without hiding those installs.
+r,c,i=run('py-launcher-discovery',mode='discovery-probe',python=PROBE_BIN/'py.exe',extra_env={'PATH':str(PROBE_BIN)})
+assert r['outcomes'][0]['ok'] and not c and r['outcomes'][0]['selectedPython']==sys.executable,r
 assert '-3.12' in (PROBE_BIN/'probe-calls.txt').read_text()
 record('py-launcher-version-selector-discovery-with-quoted-stdlib-probe')
 

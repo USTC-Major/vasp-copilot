@@ -3,6 +3,7 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Collections.Generic;
+using System.Reflection;
 using System.Web.Script.Serialization;
 using VaspCopilot.Launcher;
 
@@ -21,6 +22,23 @@ class EnvironmentHarness
         var outcomes = new List<object>();
         using (var controller = new LauncherController(args[2]))
         {
+            if (mode == "discovery-probe")
+            {
+                // Other supported Pythons may legitimately precede py.exe on this
+                // machine. Exercise the private discovery/probe contract directly.
+                string request = Path.Combine(evidence, "probe-request"); Directory.CreateDirectory(request);
+                var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+                var launchers = (IEnumerable<string>)typeof(LauncherController).GetMethod("PythonLaunchers", flags).Invoke(controller, null);
+                bool found = false;
+                foreach (string launcher in launchers) if (String.Equals(launcher, Path.GetFullPath(args[1]), StringComparison.OrdinalIgnoreCase)) found = true;
+                string python = (string)typeof(LauncherController).GetMethod("ProbeBasePython", flags).Invoke(controller, new object[] { args[1], "-3.12 ", request });
+                var outcome = new { ok = found && !String.IsNullOrEmpty(python), error = "", selectedPython = python,
+                    environmentFailureLogPath = (string)null, running = false, snapshot = controller.GetSnapshot() };
+                File.WriteAllText(Path.Combine(evidence, "result.json"), json.Serialize(new { outcomes = new [] { outcome }, stages,
+                    running = false, defaultsOff = !new LauncherOptions().AutoPrepareEnvironment,
+                    parentSecretUnchanged = Environment.GetEnvironmentVariable("OPENAI_API_KEY") == "synthetic-controller-secret" }));
+                return 0;
+            }
             int rounds = mode == "retry" || mode == "cancel-retry" || mode == "pre-cancel" ? 2 : 1;
             if (mode == "pre-cancel") controller.CancelStartup();
             for (int round = 0; round < rounds; round++)

@@ -58,7 +58,7 @@ def start(name, root, mode='full', runtime=RUNTIME):
     directory.mkdir()
     # Build an allowlisted environment: no real model/SSH/MP keys are inherited.
     env = {k: v for k, v in os.environ.items() if k.upper() in {
-        'SYSTEMROOT', 'WINDIR', 'PATH', 'PATHEXT', 'TEMP', 'TMP', 'COMSPEC',
+        'SYSTEMROOT', 'SYSTEMDRIVE', 'WINDIR', 'PATH', 'PATHEXT', 'TEMP', 'TMP', 'COMSPEC',
         'PROCESSOR_ARCHITECTURE', 'NUMBER_OF_PROCESSORS'}}
     env.update(VASP_LAUNCHER_STATE_DIR=str(directory/'state'),
                VASP_REVIEWER_SHARED_SECRET='synthetic-parent-secret-must-stay-parent',

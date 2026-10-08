@@ -218,7 +218,7 @@ def run(args):
     sys.path[:0] = [str(args.root), str(args.root / "backend")]
     if args.isolated:
         # Explicit test profile: no project .env, inherited credentials or shared keyring.
-        keep = {"SYSTEMROOT", "WINDIR", "PATH", "PATHEXT", "TEMP", "TMP", "COMSPEC",
+        keep = {"SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "PATH", "PATHEXT", "TEMP", "TMP", "COMSPEC",
                 "PROCESSOR_ARCHITECTURE", "NUMBER_OF_PROCESSORS", "PYTHONPYCACHEPREFIX"}
         for key in list(os.environ):
             if key.upper() not in keep:

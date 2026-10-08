@@ -73,7 +73,7 @@ def child_environment(state: Path):
     # No inherited proxy URLs, pip indexes/config, Python paths, API keys or
     # credentials reach pip or its logs. PIP_CONFIG_FILE disables global/site
     # config too; --isolated additionally excludes user config and pip env flags.
-    keep = {"SYSTEMROOT", "WINDIR", "PATH", "PATHEXT", "TEMP", "TMP", "COMSPEC",
+    keep = {"SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "PATH", "PATHEXT", "TEMP", "TMP", "COMSPEC",
             "PROCESSOR_ARCHITECTURE", "NUMBER_OF_PROCESSORS"}
     env = {k: v for k, v in os.environ.items() if k.upper() in keep}
     home = state / "installer-home"
