@@ -287,3 +287,26 @@ describe('ParameterConfirmForm', () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 });
+
+
+it('草稿回调读取失效后的DFT+U确认，恢复后修改仍须重新确认', async () => {
+  const onDraftChange = vi.fn();
+  const initialValues = { dftu: { enabled: true, form: 'dudarev' as const, input_mode: 'u_eff' as const,
+    entries: [{ element: 'Fe', l: 2, u_eff_ev: 4, confirmed_by_user: true }] } };
+  const props = { elements: ['Fe', 'O'], transitionMetals: ['Fe'], isGenerating: false, onSubmit: vi.fn(), onDraftChange };
+  const view = render(<ParameterConfirmForm {...props} initialValues={initialValues} />);
+  const user = userEvent.setup();
+  await user.clear(screen.getByPlaceholderText('Ueff 值'));
+  await user.type(screen.getByPlaceholderText('Ueff 值'), '5');
+  await waitFor(() => expect(onDraftChange.mock.lastCall?.[0].dftu.entries[0]).toMatchObject({ u_eff_ev: 5, confirmed_by_user: false }));
+  const saved = onDraftChange.mock.lastCall![0]; view.unmount();
+  render(<ParameterConfirmForm {...props} initialValues={saved} />);
+  expect(Number((screen.getByPlaceholderText('Ueff 值') as HTMLInputElement).value)).toBe(5);
+  expect(screen.getByRole('checkbox')).not.toBeChecked();
+  await user.click(screen.getByRole('checkbox'));
+  expect(onDraftChange.mock.lastCall?.[0].dftu.entries[0].confirmed_by_user).toBe(true);
+  await selectOption(screen.getByRole('combobox', { name: 'DFT+U 形式' }), 'Liechtenstein（U/J）');
+  expect(onDraftChange.mock.lastCall?.[0].dftu.entries[0]).toMatchObject({ confirmed_by_user: false });
+  expect(onDraftChange.mock.lastCall?.[0].dftu.entries[0].u_eff_ev).toBeUndefined();
+  expect(onDraftChange.mock.lastCall?.[0].dftu.input_mode).toBe('u_j');
+});

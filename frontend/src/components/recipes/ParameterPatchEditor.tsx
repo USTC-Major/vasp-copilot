@@ -20,9 +20,11 @@ interface ParameterPatchEditorProps {
   allowedParams: AllowedParam[];
   currentValues?: Record<string, string | number | boolean>;
   onPatchesChange: (patches: ParameterPatch[]) => void;
+  draftRows?: PatchDraftRow[];
+  onDraftRowsChange?: (rows: PatchDraftRow[]) => void;
 }
 
-interface LocalRow {
+export interface PatchDraftRow {
   key: string;
   parameter: string;
   paramType: string;
@@ -49,8 +51,10 @@ const ParameterPatchEditor: React.FC<ParameterPatchEditorProps> = ({
   allowedParams,
   currentValues,
   onPatchesChange,
+  draftRows,
+  onDraftRowsChange,
 }) => {
-  const seedRows = useMemo<LocalRow[]>(() => {
+  const seedRows = useMemo<PatchDraftRow[]>(() => {
     const existing: Record<string, ParameterPatch> = {};
     for (const p of patches) {
       if (p.operation === 'replace' && !existing[p.parameter]) existing[p.parameter] = p;
@@ -72,10 +76,10 @@ const ParameterPatchEditor: React.FC<ParameterPatchEditorProps> = ({
     });
   }, [allowedParams, patches, currentValues]);
 
-  const [localRows, setLocalRows] = useState<LocalRow[]>(seedRows);
+  const [localRows, setPatchDraftRows] = useState<PatchDraftRow[]>(draftRows ?? seedRows);
   const [showWarning, setShowWarning] = useState(false);
 
-  const buildPatches = (rows: LocalRow[]): ParameterPatch[] => {
+  const buildPatches = (rows: PatchDraftRow[]): ParameterPatch[] => {
     const result: ParameterPatch[] = [];
     rows.forEach((row, idx) => {
       if (!row.selected) return;
@@ -96,8 +100,9 @@ const ParameterPatchEditor: React.FC<ParameterPatchEditorProps> = ({
     return result;
   };
 
-  const commitRows = (next: LocalRow[]) => {
-    setLocalRows(next);
+  const commitRows = (next: PatchDraftRow[]) => {
+    setPatchDraftRows(next);
+    onDraftRowsChange?.(next);
     onPatchesChange(buildPatches(next));
   };
 
@@ -124,7 +129,7 @@ const ParameterPatchEditor: React.FC<ParameterPatchEditorProps> = ({
       title: '参数',
       dataIndex: 'parameter',
       width: 200,
-      render: (_: string, record: LocalRow) => (
+      render: (_: string, record: PatchDraftRow) => (
         <Space size={8}>
           <Text strong>{record.parameter}</Text>
           <Tag color="blue" style={{ fontSize: 10 }}>
@@ -143,7 +148,7 @@ const ParameterPatchEditor: React.FC<ParameterPatchEditorProps> = ({
       title: '选中修改',
       dataIndex: 'selected',
       width: 110,
-      render: (_: unknown, record: LocalRow) => (
+      render: (_: unknown, record: PatchDraftRow) => (
         <Switch
           size="small"
           checked={record.selected}
@@ -155,7 +160,7 @@ const ParameterPatchEditor: React.FC<ParameterPatchEditorProps> = ({
       title: '修改为',
       dataIndex: 'newValue',
       width: 180,
-      render: (_: string, record: LocalRow) =>
+      render: (_: string, record: PatchDraftRow) =>
         record.options && record.options.length > 0 ? (
           <Select
             style={{ width: '100%' }}
@@ -179,7 +184,7 @@ const ParameterPatchEditor: React.FC<ParameterPatchEditorProps> = ({
     {
       title: '原因',
       dataIndex: 'reason',
-      render: (_: string, record: LocalRow) => (
+      render: (_: string, record: PatchDraftRow) => (
         <Input
           size="small"
           disabled={!record.selected}

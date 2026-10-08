@@ -58,6 +58,7 @@ interface ParameterConfirmFormProps {
   transitionMetals: string[];
   initialValues?: Partial<ParameterConfirmFormData>;
   onSubmit: (data: ParameterConfirmFormData) => void;
+  onDraftChange?: (data: ParameterConfirmFormData) => void;
   onBack?: () => void;
   isGenerating: boolean;
   bandWorkflowStatus?: 'loading' | 'error' | 'enabled' | 'disabled';
@@ -110,12 +111,15 @@ const ParameterConfirmForm: React.FC<ParameterConfirmFormProps> = ({
   transitionMetals,
   initialValues,
   onSubmit,
+  onDraftChange,
   onBack,
   isGenerating,
   bandWorkflowStatus = 'loading',
   onRetryBandCapability,
 }) => {
   const [form] = Form.useForm<ParameterConfirmFormData>();
+  // AntD initialValues are a mount-time seed, not a stream of later draft edits.
+  const seed = useRef(initialValues).current;
 
   const dftuEnabled = Form.useWatch(['dftu', 'enabled'], form);
   const dftuForm: DftuForm | undefined = Form.useWatch(['dftu', 'form'], form) ?? initialDftuForm(initialValues);
@@ -141,10 +145,10 @@ const ParameterConfirmForm: React.FC<ParameterConfirmFormProps> = ({
 
   // Seed saved confirmations before the first user edit, including old records.
   useEffect(() => {
-    (initialValues?.dftu?.entries ?? []).forEach((entry, idx) => {
-      if (entry.confirmed_by_user) fingerprints.current.set(idx, entryFingerprint(entry, initialDftuForm(initialValues)));
+    (seed?.dftu?.entries ?? []).forEach((entry, idx) => {
+      if (entry.confirmed_by_user) fingerprints.current.set(idx, entryFingerprint(entry, initialDftuForm(seed)));
     });
-  }, [initialValues]);
+  }, [seed]);
 
   const handleValuesChange = useCallback(
     (_changed: unknown, all: ParameterConfirmFormData) => {
@@ -159,6 +163,7 @@ const ParameterConfirmForm: React.FC<ParameterConfirmFormProps> = ({
           ...entry, u_eff_ev: undefined, u_ev: undefined, j_ev: undefined,
           source_note: undefined, confirmed_by_user: false,
         }));
+        onDraftChange?.(structuredClone(form.getFieldsValue(true)));
         return;
       }
       if (entries.length !== lastEntryCount.current) {
@@ -168,6 +173,7 @@ const ParameterConfirmForm: React.FC<ParameterConfirmFormProps> = ({
         entries.forEach((entry, idx) => {
           if (entry?.confirmed_by_user) form.setFieldValue(['dftu', 'entries', idx, 'confirmed_by_user'], false);
         });
+        onDraftChange?.(structuredClone(form.getFieldsValue(true)));
         return;
       }
       entries.forEach((entry, idx) => {
@@ -189,8 +195,10 @@ const ParameterConfirmForm: React.FC<ParameterConfirmFormProps> = ({
           form.setFieldValue(['dftu', 'entries', idx, 'confirmed_by_user'], false);
         }
       });
+      // Read after programmatic confirmation invalidation; `all` still has the old flags.
+      onDraftChange?.(structuredClone(form.getFieldsValue(true)));
     },
-    [form]
+    [form, onDraftChange]
   );
 
   const handleFinish = (values: ParameterConfirmFormData) => {
@@ -350,7 +358,8 @@ const ParameterConfirmForm: React.FC<ParameterConfirmFormProps> = ({
           />
         </Form.Item>
 
-        <Form.Item label="精度档位" name="precision">
+        <Form.Item label="精度档位" name="precision"
+          extra="标准档位对静态自洽（SCF）和 DOS 使用更严格的电子收敛阈值与更密的 k 点；实际收敛仍需按体系验证。">
           <Select
             options={[
               { label: '快速 (quick)', value: 'quick' },

@@ -124,8 +124,8 @@
         "display_name": "VASP MVP Core Recipe Pack",
         "pack_id": "vasp-mvp-core",
         "schema_version": "1.0",
-        "sha256": "3f67b649afdd798a5eeb47ecbf64e3242e10a9ddc6ddf3ba200308d9b9351c01",
-        "version": "1.0.0"
+        "sha256": "4ac1fe5ce6b614c2f28663d55f8988f0decbe57d5fc651be9675f74a6599c386",
+        "version": "1.1.0"
       },
       "revision": 1,
       "selected": [
@@ -209,14 +209,14 @@
     },
     {
       "composition_id": "composition_02_static",
-      "composition_sha256": "composition-0a48ddc6cadff0293494c9f561b0be67",
+      "composition_sha256": "composition-df8a9e537338e6e3b7ce70c64f21f13a",
       "patch_ids": [],
       "recipe_pack": {
         "display_name": "VASP MVP Core Recipe Pack",
         "pack_id": "vasp-mvp-core",
         "schema_version": "1.0",
-        "sha256": "3f67b649afdd798a5eeb47ecbf64e3242e10a9ddc6ddf3ba200308d9b9351c01",
-        "version": "1.0.0"
+        "sha256": "4ac1fe5ce6b614c2f28663d55f8988f0decbe57d5fc651be9675f74a6599c386",
+        "version": "1.1.0"
       },
       "revision": 1,
       "selected": [
@@ -287,12 +287,13 @@
         {
           "layer": "precision",
           "matched_context": {
-            "precision": "standard"
+            "precision": "standard",
+            "task": "static"
           },
           "order": 50,
-          "recipe_id": "precision.standard",
-          "selection_reason": "用户选择精度档位 standard",
-          "sha256": "eeab880b47f786bfb833fda65ebb0232e4150980779b16223eeb288899a64010",
+          "recipe_id": "precision.standard.scf",
+          "selection_reason": "用户选择精度档位 standard；按 static 任务选择静态/态密度电子收敛配方",
+          "sha256": "36c9984f3641fe3aa233fc9272e73361969af10036a03a4c54a623a803327591",
           "version": "1.0.0"
         }
       ],
@@ -300,14 +301,14 @@
     },
     {
       "composition_id": "composition_03_dos",
-      "composition_sha256": "composition-190d49d9c5ccb52bbad6265aeb847430",
+      "composition_sha256": "composition-837be93211463123755c8a1a4151aa3a",
       "patch_ids": [],
       "recipe_pack": {
         "display_name": "VASP MVP Core Recipe Pack",
         "pack_id": "vasp-mvp-core",
         "schema_version": "1.0",
-        "sha256": "3f67b649afdd798a5eeb47ecbf64e3242e10a9ddc6ddf3ba200308d9b9351c01",
-        "version": "1.0.0"
+        "sha256": "4ac1fe5ce6b614c2f28663d55f8988f0decbe57d5fc651be9675f74a6599c386",
+        "version": "1.1.0"
       },
       "revision": 1,
       "selected": [
@@ -367,12 +368,13 @@
         {
           "layer": "precision",
           "matched_context": {
-            "precision": "standard"
+            "precision": "standard",
+            "task": "dos"
           },
           "order": 50,
-          "recipe_id": "precision.standard",
-          "selection_reason": "用户选择精度档位 standard",
-          "sha256": "eeab880b47f786bfb833fda65ebb0232e4150980779b16223eeb288899a64010",
+          "recipe_id": "precision.standard.scf",
+          "selection_reason": "用户选择精度档位 standard；按 dos 任务选择静态/态密度电子收敛配方",
+          "sha256": "36c9984f3641fe3aa233fc9272e73361969af10036a03a4c54a623a803327591",
           "version": "1.0.0"
         }
       ],
@@ -467,7 +469,7 @@
       "directory": "02_static",
       "label": "static step",
       "parameters": {
-        "EDIFF": 1e-05,
+        "EDIFF": 1e-06,
         "ENCUT": 520.0,
         "IBRION": -1,
         "ISIF": 2,
@@ -529,7 +531,7 @@
       "directory": "03_dos",
       "label": "dos step",
       "parameters": {
-        "EDIFF": 1e-05,
+        "EDIFF": 1e-06,
         "EMAX": 10,
         "EMIN": -10,
         "ENCUT": 520.0,
@@ -598,7 +600,7 @@
   },
   "template_versions": {
     "generator": "0.1.0",
-    "recipe_pack": "1.0.0"
+    "recipe_pack": "1.1.0"
   },
   "warnings": [
     {
@@ -620,11 +622,6 @@
       "code": "MAGMOM_INITIAL_GUESS",
       "message": "初始磁矩仅为起点，请确认元素级初值；不保证是基态磁结构。",
       "severity": "medium"
-    },
-    {
-      "code": "STATIC_TIGHTER_EDIFF_HINT",
-      "message": "static 建议比 relax 更严的 EDIFF；如需 1E-6 请选择 high 精度档或提交 EDIFF patch。",
-      "severity": "info"
     },
     {
       "code": "CHGCAR_DEPENDENCY",

@@ -42,6 +42,10 @@ const composition = (changes: Partial<RecipeComposition> = {}): RecipeCompositio
 });
 
 const steps = [{ step_id: 'static', label: '静态计算' }];
+const initialRecommendationWarning = {
+  code: 'INITIAL_RECOMMENDATION_ONLY',
+  message: '这是初始推荐，不是唯一正确设置。',
+};
 const renderPreview = (compositions: RecipeComposition[]) => render(
   <ConfigProvider theme={{ token: { motion: false } }}>
     <RecipeCompositionPreview compositions={compositions} workflowSteps={steps} />
@@ -205,6 +209,40 @@ describe('RecipeCompositionPreview', () => {
     expect(screen.getByText('警告原始数据')).toBeVisible();
     expect(screen.getByRole('heading', { name: '警告原始数据' }).nextElementSibling).toHaveTextContent('DFTU_USER_VALUE_REQUIRED');
     expect(screen.getAllByRole('alert')).toHaveLength(3);
+  });
+
+  it('多个步骤的初始推荐说明只显示一次，计数仅包含其他警告且不丢冲突或补丁警告', async () => {
+    renderPreview([
+      composition({
+        warnings: [initialRecommendationWarning, { code: 'DFTU_USER_VALUE_REQUIRED', message: 'U/J/L 来自用户输入' }],
+        conflicts: [{ parameter: 'ENCUT', values: { 'precision.high': 600, 'precision.standard': 520 } }],
+        patches: [{ ...patch, validation: { ...patch.validation, warnings: ['补丁警告样例'] } }],
+      }),
+      composition({
+        composition_id: 'composition-dos', step_id: 'dos',
+        warnings: [initialRecommendationWarning],
+      }),
+    ]);
+
+    expect(screen.getAllByText('这是初始推荐，不是唯一正确设置。')).toHaveLength(1);
+    expect(screen.getByText('配方警告（1）')).toBeInTheDocument();
+    expect(screen.getByText('U/J/L 来自用户输入')).toBeInTheDocument();
+    expect(screen.getByText('配方冲突（1）')).toBeInTheDocument();
+    expect(screen.getByText('补丁验证警告（1）')).toBeInTheDocument();
+    expect(screen.getAllByRole('alert')).toHaveLength(4);
+
+    await userEvent.setup().click(screen.getAllByRole('button', { name: /组合与覆盖详情/ })[0]);
+    expect(screen.getByRole('heading', { name: '警告原始数据' }).nextElementSibling).toHaveTextContent('INITIAL_RECOMMENDATION_ONLY');
+  });
+
+  it('只剩初始推荐说明时不显示空的步骤警告框，且没有该警告码时不显示说明', () => {
+    const { rerender } = renderPreview([composition({ warnings: [initialRecommendationWarning] })]);
+    expect(screen.getAllByRole('alert')).toHaveLength(1);
+    expect(screen.queryByText(/配方警告/)).not.toBeInTheDocument();
+
+    rerender(<ConfigProvider theme={{ token: { motion: false } }}><RecipeCompositionPreview compositions={[composition({ warnings: [] })]} workflowSteps={steps} /></ConfigProvider>);
+    expect(screen.queryByText('这是初始推荐，不是唯一正确设置。')).not.toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
   it('来源修订为 null、确认和数组值如实展示，补充字段保留在原始数据中', async () => {

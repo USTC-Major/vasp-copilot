@@ -1,0 +1,28 @@
+schema_version: "1.0"
+recipe_id: precision.standard.scf
+version: 1.0.0
+kind: precision
+recipe_status: published
+display_name: 静态/态密度电子收敛精度
+description: 常规 static / DOS 的电子收敛起点；保留 standard 的 NELM 与 ENCUT，不自动启用 ADDGRID，仍需针对体系检查收敛。
+scope:
+  tasks: [static, dos]
+  electronic_types: [metal, semiconductor, unknown]
+  vasp_versions: ["5.x", "6.x"]
+parameters:
+  EDIFF: 0.000001
+  NELM: 100
+derived_parameters: []
+requires: []
+conflicts: []
+confirmations: []
+warnings: []
+allowed_overrides:
+  EDIFF: {type: number, exclusive_minimum: 0}
+provenance:
+  source_type: project_curated
+  source_note: VASP Wiki EDIFF 推荐 1E-6 作为充分收敛计算的起点；本项目将其用于 standard static / DOS，用户覆盖优先。
+tests:
+  test_status: passed
+  case_count: 12
+  last_tested_at: "2026-10-09"

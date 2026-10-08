@@ -38,8 +38,9 @@ ENCUT_BY_PRECISION: Dict[str, float] = {
 # relax/static/dos 行为 KPPA 语义：N_total ≈ kppa / atom_count，各方向 n_i ∝ |b_i|。
 KPPA_TABLE: Dict[str, Dict[str, float]] = {
     "relax": {"quick": 500.0, "standard": 1000.0, "high": 1500.0},
-    "static": {"quick": 500.0, "standard": 1000.0, "high": 1500.0},
-    "dos": {"quick": 800.0, "standard": 1500.0, "high": 2000.0},
+    # Project starting densities, not a substitute for material-specific convergence tests.
+    "static": {"quick": 500.0, "standard": 1500.0, "high": 1500.0},
+    "dos": {"quick": 800.0, "standard": 2000.0, "high": 2000.0},
 }
 
 # VASP line-mode 第二行：每条线段的点数，与均匀网格 KPPA 无关。
