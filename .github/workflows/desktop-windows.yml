@@ -49,11 +49,11 @@ jobs:
           $prepareState = "$env:RUNNER_TEMP/中文 自动依赖"
           $firstResult = "$env:RUNNER_TEMP/desktop-results/prepare-first.json"
           $secondResult = "$env:RUNNER_TEMP/desktop-results/prepare-second.json"
-          python -I launcher/environment.py --root "$PWD" --state "$prepareState" --result-file "$firstResult" --progress-file "$env:RUNNER_TEMP/desktop-results/prepare-progress.json"
+          python -I -X utf8 launcher/environment.py --root "$PWD" --state "$prepareState" --result-file "$firstResult" --progress-file "$env:RUNNER_TEMP/desktop-results/prepare-progress.json"
           if ($LASTEXITCODE -ne 0) { throw 'Fresh dependency preparation failed' }
           $first = Get-Content -LiteralPath $firstResult -Raw | ConvertFrom-Json
           if (!$first.ok -or !(Test-Path -LiteralPath $first.python)) { throw 'Prepared Python missing' }
-          python -I launcher/environment.py --root "$PWD" --state "$prepareState" --result-file "$secondResult" --progress-file "$env:RUNNER_TEMP/desktop-results/prepare-progress.json"
+          python -I -X utf8 launcher/environment.py --root "$PWD" --state "$prepareState" --result-file "$secondResult" --progress-file "$env:RUNNER_TEMP/desktop-results/prepare-progress.json"
           if ($LASTEXITCODE -ne 0) { throw 'Prepared dependency reuse failed' }
           $second = Get-Content -LiteralPath $secondResult -Raw | ConvertFrom-Json
           if (!$second.ok -or $second.python -ne $first.python -or $second.environment_id -ne $first.environment_id) { throw 'Runtime environment was not reused' }
@@ -76,4 +76,5 @@ jobs:
             desktop/dist/build-manifest.json
             ${{ runner.temp }}/desktop-results/environment.json
             ${{ runner.temp }}/desktop-results/prepare-*.json
+            ${{ runner.temp }}/中文 自动依赖/logs/*.local.log
             ${{ runner.temp }}/desktop-results/controller/**/results.json

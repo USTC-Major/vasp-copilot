@@ -38,7 +38,8 @@ class EnvironmentTests(unittest.TestCase):
         patch.object(installer, 'platform_spec', return_value='cp312').start()
         patch.dict(os.environ, {}, clear=True).start()
         self.command_patch = patch.object(installer, 'command', side_effect=self.fake_command).start()
-        self.probe_patch = patch.object(installer, 'probe', return_value=True).start()
+        self.probe_patcher = patch.object(installer, 'probe', return_value=True)
+        self.probe_patch = self.probe_patcher.start()
 
     def fake_command(self, arguments, log, env):
         self.commands.append(arguments)
@@ -61,6 +62,16 @@ class EnvironmentTests(unittest.TestCase):
         self.assertEqual(install[install.index('--cache-dir')+1], str(self.state/'pip-cache'))
         self.assertEqual(Path(result['python']).parent.parent.parent, self.state/'environments')
         self.assertEqual(self.stages, ['create', 'install', 'verify'])
+        for command in self.commands:
+            self.assertEqual(command[1:4], ['-I', '-X', 'utf8'])
+
+    def test_dependency_probe_explicitly_uses_utf8_with_isolation(self):
+        python = self.base/'python.exe'
+        python.touch()
+        # Exercise the real probe argument construction, rather than its prepare stub.
+        self.probe_patcher.stop()
+        self.assertTrue(installer.probe(python, {'demo':'1.0'}, self.log, {}))
+        self.assertEqual(self.commands[-1][1:4], ['-I', '-X', 'utf8'])
 
     def test_success_reuses_without_pip_or_creation(self):
         result = self.prepare()
@@ -211,6 +222,31 @@ class EnvironmentTests(unittest.TestCase):
 
 
 class PureTests(unittest.TestCase):
+    @unittest.skipUnless(sys.platform == 'win32' and sys.version_info[:2] in {(3, 11), (3, 12)},
+                         'Supported Windows Python default stream encoding')
+    def test_isolated_child_needs_explicit_utf8_for_chinese_log_output(self):
+        # Model a redirected Western-locale stream without changing the machine's
+        # code page. The actual interpreter UTF-8 flag chooses the output encoding.
+        code = ("import io,sys;"
+                "print('utf8_mode='+str(sys.flags.utf8_mode),file=sys.stderr);"
+                "sys.stdout=io.TextIOWrapper(sys.stdout.buffer,"
+                "encoding=('utf-8' if sys.flags.utf8_mode else 'ascii'),errors='strict');"
+                "print(sys.argv[1])")
+        env = {k:v for k,v in os.environ.items() if k.upper() in
+               {'SYSTEMROOT','SYSTEMDRIVE','WINDIR','PATH','PATHEXT','TEMP','TMP','COMSPEC'}}
+        env['PYTHONUTF8'] = '1'
+        path = 'C:\\中文 环境\\Lib\\site-packages\\pip'
+        baseline = subprocess.run([sys.executable, '-I', '-c', code, path], env=env,
+                                  capture_output=True)
+        self.assertNotEqual(baseline.returncode, 0)
+        self.assertIn(b'utf8_mode=0', baseline.stderr)
+        self.assertIn(b'UnicodeEncodeError', baseline.stderr)
+        explicit = subprocess.run([sys.executable, '-I', '-X', 'utf8', '-c', code, path],
+                                  env=env, capture_output=True)
+        self.assertEqual(explicit.returncode, 0, explicit.stderr)
+        self.assertIn(b'utf8_mode=1', explicit.stderr)
+        self.assertEqual(explicit.stdout.decode('utf-8').strip(), path)
+
     def test_unsupported_python_is_explicit(self):
         with patch.object(installer.sys, 'platform', 'not-windows'):
             with self.assertRaises(installer.PreparationError) as failure:

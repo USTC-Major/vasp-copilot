@@ -131,7 +131,7 @@ def probe(python: Path, expected, log, env):
         "for name in " + repr(MODULES) + ":importlib.import_module(name)\n"
     )
     try:
-        return command([str(python), "-I", "-c", code], log, env) == 0
+        return command([str(python), "-I", "-X", "utf8", "-c", code], log, env) == 0
     except OSError:
         return False
 
@@ -193,15 +193,17 @@ def prepare(args, progress, log):
         except ImportError:
             raise PreparationError("VENV_UNAVAILABLE", "所选 Python 缺少 venv，请选择完整的 CPython 安装。") from None
         try:
-            created = command([sys.executable, "-I", "-m", "venv", "--clear", str(destination)], log, env)
+            # -I ignores PYTHONUTF8. Explicit UTF-8 also covers redirected logs
+            # containing Chinese paths on Windows installations with a Western locale.
+            created = command([sys.executable, "-I", "-X", "utf8", "-m", "venv", "--clear", str(destination)], log, env)
         except OSError:
             created = 1
         if created != 0 or not python.is_file():
             raise PreparationError("VENV_UNAVAILABLE", "无法创建独立环境，请检查 Python 的 venv/ensurepip、磁盘空间和目录权限。")
         progress("install", "正在从官方 PyPI 安装已锁定依赖；首次准备可能需要数分钟…")
-        if command([str(python), "-I", "-m", "pip", "--version"], log, env) != 0:
+        if command([str(python), "-I", "-X", "utf8", "-m", "pip", "--version"], log, env) != 0:
             raise PreparationError("PIP_UNAVAILABLE", "独立环境缺少 pip，请检查所选 Python 的 ensurepip。")
-        installed = command([str(python), "-I", "-m", "pip", "--isolated", "--disable-pip-version-check",
+        installed = command([str(python), "-I", "-X", "utf8", "-m", "pip", "--isolated", "--disable-pip-version-check",
             "install", "--no-input", "--no-user", "--index-url", INDEX, "--require-hashes",
             "--only-binary=:all:", "--cache-dir", str(args.state / "pip-cache"), "-r", str(lock)], log, env)
         if installed != 0:
