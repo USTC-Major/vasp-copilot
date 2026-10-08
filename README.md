@@ -1,6 +1,6 @@
 # VASP-Copilot 0.4.0
 
-**当前为0.4.0 rc.3自动依赖准备发布候选，尚未正式发布。** 本版聚焦科研工具界面、桌面启动和本地POTCAR工作流；[最新已发布版本仍为v0.3.0](https://github.com/USTC-Major/vasp-copilot/releases/tag/v0.3.0)。候选验收通过并经负责人批准后才发布。
+**v0.4.0 · 2026-10-09。** 本版聚焦科研工具界面、Windows桌面启动与自动依赖准备、本地POTCAR管理和工作流改进。见[正式发布与下载](https://github.com/USTC-Major/vasp-copilot/releases/tag/v0.4.0)、[发布公告](docs/release/v0.4.0/发布公告.md)。
 
 VASP-Copilot 帮助用户从已有结构准备VASP输入、核对并提交计算、监控和获取必要结果。Toolbox独立承担执行与确定性检查；AI为可选辅助，关闭AI不影响基础工具。当前仍面向单用户、本机或可信网络。
 
@@ -14,16 +14,16 @@ VASP-Copilot 帮助用户从已有结构准备VASP输入、核对并提交计算
 
 ## 安装与入口
 
-完整功能候选沿用本机 Python 3.11/3.12 x64，首次联网自动安装应用专用运行依赖；后续复用。复测请双击包根目录 `启动完整功能.cmd`，按[完整功能复测说明](0.4.0完整功能复测.md)配置真实服务；此前的隔离test-profile专用于离线验收。
+完整功能入口沿用本机 Python 3.11/3.12 x64，首次联网自动安装应用专用运行依赖；后续复用。请双击包根目录 `启动完整功能.cmd`，按[完整功能复测说明](0.4.0完整功能复测.md)配置真实服务；此前的隔离test-profile专用于离线验收。
 
-请先读[安装与基础使用](Windows源码安装与基础使用.md)及[0.4.0本地验收步骤](0.4.0本地验收步骤.md)。
+桌面用户先读[快速开始与升级](0.4.0快速开始.md)。源码用户请读[安装与基础使用](Windows源码安装与基础使用.md)及[0.4.0本地验收步骤](0.4.0本地验收步骤.md)。
 
 | 交付形式 | 包含与前提 |
 |---|---|
-| 源码包 | 固定候选源码；需要Python后端依赖和Node/npm构建前端，桌面编译见desktop说明 |
-| Windows x64桌面配套包 | 同一源码＋生产前端＋桌面EXE/WebView2 DLL及许可证；仍需已有Python后端依赖、.NET Framework 4.8和WebView2 Runtime；不是免安装完整环境 |
+| 源码包 | 固定发布源码；需要Python后端依赖和Node/npm构建前端，桌面编译见desktop说明 |
+| Windows x64桌面配套包 | 同一源码＋生产前端＋桌面EXE/WebView2 DLL及许可证；需已有Python 3.11/3.12 x64、.NET Framework 4.8和WebView2 Runtime；完整功能入口自动安装项目依赖，不捆绑解释器 |
 
-不要仅复制EXE。保留包内 `desktop/dist`、`launcher`、`backend`、`frontend/dist` 的相对结构。首次选择解压后的安装目录，之后由桌面程序管理端口。桌面配套包运行时无需Node，但源码构建需要。运行环境不随本包自动下载安装。
+不要仅复制EXE。保留包内 `desktop/dist`、`launcher`、`backend`、`frontend/dist` 的相对结构。首次选择解压后的安装目录，之后由桌面程序管理端口。桌面配套包运行时无需Node，但源码构建需要。Python、.NET Framework和WebView2 Runtime需预先安装；项目运行依赖由完整功能入口首次联网自动准备。
 
 | 入口 | 用途 |
 |---|---|
@@ -45,4 +45,4 @@ VASP-Copilot 帮助用户从已有结构准备VASP输入、核对并提交计算
 
 [CHANGELOG](CHANGELOG.md)列出本版变化；[发布范围与验收记录](docs/release/v0.4.0/发布范围与验收说明.md)列出证据边界。升级采用新目录解压、保留旧程序和数据备份；不要覆盖正在运行的目录或让两个实例写同一数据目录。
 
-每个正式候选ZIP内的 `SHA256SUMS.txt` 覆盖除清单自身外全部文件。可用 `python backend/scripts/release_checksums.py --archive <ZIP路径>` 核对归档原始字节；外部 `SHA256SUMS.txt` 用于核对两个ZIP整包哈希。源码包不包含依赖缓存、运行数据、个人配置、密钥或真实赝势。
+每个发布ZIP内的 `SHA256SUMS.txt` 覆盖除清单自身外全部文件。可用 `python backend/scripts/release_checksums.py --archive <ZIP路径>` 核对归档原始字节；外部 `SHA256SUMS.txt` 用于核对两个ZIP整包哈希。源码包不包含依赖缓存、运行数据、个人配置、密钥或真实赝势。
