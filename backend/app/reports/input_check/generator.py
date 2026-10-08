@@ -86,6 +86,7 @@ class InputCheckReportGenerator:
         compositions: Dict[str, RecipeComposition],
         dftu: Optional[DftuSettings] = None,
         potcar_prepared: bool = False,
+        potcar_state: Optional[dict] = None,
     ) -> Tuple[str, InputCheckReportMetadata]:
         warnings: List[Dict[str, Any]] = []
         pending_confirmations: List[Dict[str, Any]] = []
@@ -109,7 +110,7 @@ class InputCheckReportGenerator:
         self._section_arrays(lines, structure, compositions, dftu)
         self._section_steps(lines, steps, compositions)
         self._section_inheritance(lines, plan)
-        self._section_potcar(lines, structure, potcar_prepared)
+        self._section_potcar(lines, structure, potcar_prepared, potcar_state)
         self._section_provenance(lines, compositions)
         self._section_conclusion(lines, steps, warnings, pending_confirmations)
         markdown = "\n".join(lines).rstrip("\n") + "\n"
@@ -268,10 +269,18 @@ class InputCheckReportGenerator:
 
     @staticmethod
     def _section_potcar(
-        lines: List[str], structure: StructureContext, potcar_prepared: bool
+        lines: List[str], structure: StructureContext, potcar_prepared: bool, potcar_state: Optional[dict] = None
     ) -> None:
         lines.append("## 5. POTCAR 准备")
         lines.append("")
+        if potcar_state is not None:
+            lines.append('- 本地赝势产物按最终 POSCAR 顺序核验；格式与字节核验不代表科学适用性或收敛。')
+            lines.append('| 步骤 | 状态 | SHA-256 | 字节数 |')
+            lines.append('|---|---|---|---|')
+            for row in potcar_state['steps']:
+                lines.append(f"| {row['step_id']} | {row['status']} | {row.get('sha256') or '-'} | {row.get('size_bytes') or '-'} |")
+            lines.append('')
+            return
         lines.append(
             "- 系统不内置、不下载、不分发 POTCAR（VASP 许可证限制，"
             "`ENABLE_POTCAR_ASSEMBLY=false`）。"
@@ -350,7 +359,8 @@ class InputCheckReportGenerator:
             lines.append(f"- 当前不可提交步骤：{', '.join('`' + s + '`' for s in not_runnable)}")
         else:
             lines.append("- 当前所有步骤可提交。")
-        lines.append("- 待补文件：POTCAR；上游运行时产物（CONTCAR/CHGCAR）需实际计算后产生。")
+        missing_potcar = any('POTCAR_NOT_PREPARED' in step.blocked_by for step in steps)
+        lines.append('- 待补文件：' + ('POTCAR；' if missing_potcar else '') + '上游运行时产物（CONTCAR/CHGCAR）需实际计算后产生。')
         if pending_confirmations:
             lines.append("- 待确认字段：")
             for confirmation in pending_confirmations:

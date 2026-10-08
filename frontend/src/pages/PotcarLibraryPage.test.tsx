@@ -57,7 +57,37 @@ it('登记先识别父目录并明确选择具体集合，仅初次登记发送�
   await user.click(within(dialog()).getByRole('button', { name: /^登\s*记$/ }));
   await waitFor(() => expect(writes).toHaveLength(1));
   expect(writes[0]).toEqual({ display_name: '中文 PBE 库', root_path: 'D:\\合成库\\paw_pbe', version_note: null, source_ack: { confirmed: true }, expected_registry_revision: 1 });
-  expect(await screen.findByText('已登记，请点击“扫描库”建立索引。')).toBeInTheDocument();
+  expect(await screen.findByText('已登记，请点击“刷新赝势库”建立索引。')).toBeInTheDocument();
+});
+
+it('区分手动扫描与读取库列表，未扫描时显示明确状态', async () => {
+  const startScan = vi.spyOn(potcarApi, 'startScan');
+  const user = userEvent.setup(); mount();
+  await screen.findByText('嵌套目录/a/POTCAR.Z');
+  expect(screen.getByRole('button', { name: '刷新赝势库' })).toBeEnabled();
+  expect(screen.getByText('重新扫描本地文件并更新索引，不会下载或修改赝势。')).toBeInTheDocument();
+  expect(screen.getByText('尚未扫描')).toBeInTheDocument();
+  expect(screen.getByText('完成索引版本').nextElementSibling).toHaveTextContent('1');
+  await user.click(screen.getByRole('button', { name: '重新读取库列表' }));
+  expect(startScan).not.toHaveBeenCalled();
+});
+
+it('成功扫描显示完成时间和当前索引版本', async () => {
+  const createdAt = '2026-10-07T00:00:00Z';
+  const finishedAt = '2026-10-08T02:30:00Z';
+  records[0] = { ...records[0], index_revision: 2, scan: { ...scan('succeeded'), created_at: createdAt, finished_at: finishedAt } };
+  const expectedTime = new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(finishedAt));
+  mount();
+  await screen.findByText('嵌套目录/a/POTCAR.Z');
+  expect(screen.getByText(`扫描完成 · ${expectedTime}`)).toBeInTheDocument();
+  expect(screen.getByText('完成索引版本').nextElementSibling).toHaveTextContent('2');
+});
+
+it('成功扫描没有有效完成时间时显示未知，不把创建时间当成索引更新时间', async () => {
+  records[0] = { ...records[0], scan: { ...scan('succeeded'), created_at: timestamp, finished_at: 'invalid-time' } };
+  mount();
+  await screen.findByText('嵌套目录/a/POTCAR.Z');
+  expect(screen.getByText('扫描完成 · 未知')).toBeInTheDocument();
 });
 
 it('编辑revision冲突保留草稿，明确刷新后使用最新revision重试，不重复来源确认', async () => {
@@ -120,10 +150,10 @@ it('扫描与设默认不重复确认来源，取消以服务端终态为准并�
   const user = userEvent.setup(); mount();
   await user.click(await screen.findByRole('button', { name: '设为默认库' }));
   await screen.findByRole('button', { name: '清空默认库' });
-  await user.click(screen.getByRole('button', { name: '扫描库' }));
+  await user.click(screen.getByRole('button', { name: '刷新赝势库' }));
   await screen.findByText('正在扫描');
   expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
-  expect(screen.getByRole('button', { name: '扫描库' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: '刷新赝势库' })).toBeDisabled();
   await user.click(screen.getByRole('button', { name: '取消扫描' }));
   await screen.findByText('扫描已取消');
   expect(cancels).toBe(1);
@@ -184,12 +214,16 @@ it.each(['failed', 'cancelled'] as const)('刷新发现外部%s终态时覆盖�
   server.use(http.get(`${base}/scans/:id`, () => HttpResponse.json({ mode: 'toolbox', scan: scan('running') })));
   const user = userEvent.setup(); mount();
   await screen.findByText('正在扫描');
-  expect(screen.getByRole('button', { name: '扫描库' })).toBeDisabled();
-  records[0] = { ...records[0], scan: scan(terminal) };
-  await user.click(screen.getByRole('button', { name: '刷新库列表' }));
+  expect(screen.getByRole('button', { name: '刷新赝势库' })).toBeDisabled();
+  const createdAt = '2026-10-07T00:00:00Z';
+  records[0] = { ...records[0], scan: { ...scan(terminal), created_at: createdAt, finished_at: null } };
+  await user.click(screen.getByRole('button', { name: '重新读取库列表' }));
   await screen.findByText(terminal === 'failed' ? '扫描失败' : '扫描已取消');
+  const expectedTime = new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(createdAt));
+  expect(screen.getByText(`${terminal === 'failed' ? '扫描失败' : '扫描已取消'} · ${expectedTime}`)).toBeInTheDocument();
+  expect(screen.getByText('完成索引版本').nextElementSibling).toHaveTextContent('1');
   expect(screen.queryByText('正在扫描')).not.toBeInTheDocument();
-  expect(screen.getByRole('button', { name: '扫描库' })).toBeEnabled();
+  expect(screen.getByRole('button', { name: '刷新赝势库' })).toBeEnabled();
   expect(screen.getByRole('button', { name: '编辑信息' })).toBeEnabled();
 });
 

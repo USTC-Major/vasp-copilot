@@ -239,3 +239,4 @@ class WorkflowPlanFile(_StrictModel):
     confirmations: List[ConfirmationEntry] = Field(default_factory=list)
     warnings: List[WarningEntry] = Field(default_factory=list)
     template_versions: Dict[str, str] = Field(default_factory=dict)
+    potcar: Dict[str, Any] = Field(default_factory=dict)

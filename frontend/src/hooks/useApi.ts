@@ -69,8 +69,8 @@ export function useWorkflowPlan() {
 
 export function useWorkflowGenerate() {
   return useMutation({
-    mutationFn: ({ workflowId, patches }: { workflowId: string; patches?: import('../types/generated-api').ParameterPatch[] }) =>
-      workflowsApi.generate(workflowId, patches),
+    mutationFn: ({ workflowId, patches, potcar }: { workflowId: string; patches?: import('../types/generated-api').ParameterPatch[]; potcar?: import('../types/potcar').WorkflowPotcarChoice }) =>
+      workflowsApi.generate(workflowId, patches, potcar),
   });
 }
 

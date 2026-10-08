@@ -4,6 +4,7 @@ import type { PotcarArtifactRequest, PotcarArtifactResponse, PotcarPreview, Potc
 const BASE = '/toolbox/potcar';
 const libraryPath = (id: string) => `/libraries/${encodeURIComponent(id)}`;
 export const potcarApi = {
+  workflowPreview: (workflowId: string, body: { revision: number; library_id: string; index_revision: number; dataset_ids?: (string | null)[] }, signal?: AbortSignal) => request<PotcarPreview>(`/workflows/${encodeURIComponent(workflowId)}/potcar/preview`, { method: 'POST', body, signal }),
   preview: (body: PotcarPreviewRequest, signal?: AbortSignal) => request<PotcarPreview>(`${BASE}/previews`, { method: 'POST', body, signal }),
   assemble: (body: PotcarArtifactRequest, signal?: AbortSignal) => request<PotcarArtifactResponse>(`${BASE}/artifacts`, { method: 'POST', body, signal }),
   artifact: (id: string, signal?: AbortSignal) => request<PotcarArtifactResponse>(`${BASE}/artifacts/${encodeURIComponent(id)}`, { signal }),

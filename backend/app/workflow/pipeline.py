@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Optional
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
-from backend.input_validation import InputValidationError
+from backend.input_validation import InputValidationError, validate_potcar
 from backend.app.schemas.structure import validated_structure_context
 from backend.app.generators.archive import FIXED_TIMESTAMP, BundleBuilder
 from backend.app.generators.incar import IncarGenerator
@@ -96,7 +96,7 @@ class WorkflowGenerationPipeline:
         self._composer = RecipeComposer(registry, pack)
         self._planner = WorkflowPlanner()
         self._gating = StepGatingEvaluator(potcar_prepared=potcar_prepared)
-        self._potcar_prepared = potcar_prepared
+        # Legacy capability argument never serves as proof that a file exists.
         self._incar = IncarGenerator()
         self._kpoints = KpointsGenerator()
         self._poscar = PoscarGenerator()
@@ -112,7 +112,12 @@ class WorkflowGenerationPipeline:
 
     # ------------------------------------------------------------------
 
-    def generate(self, request: WorkflowGenerateRequest) -> WorkflowGenerationResult:
+    def final_poscar(self, request: WorkflowGenerateRequest) -> str:
+        self._validate_structure(request)
+        return self._poscar.generate(request.structure, sample_name=request.sample_name)
+
+    def generate(self, request: WorkflowGenerateRequest, *, potcar_files: Optional[Dict[str, bytes]] = None,
+                 potcar_metadata: Optional[dict] = None, revision: int = 1) -> WorkflowGenerationResult:
         self._validate_request(request)
         planned = self._planner.plan(
             request.workflow_id,
@@ -121,6 +126,27 @@ class WorkflowGenerationPipeline:
         )
         steps: List[WorkflowStep] = planned["steps"]
         inheritance = planned["file_inheritance_plan"]
+        potcar_files = potcar_files or {}
+        if request.potcar.mode == 'include':
+            if set(potcar_files) != {s.step_id for s in steps} or any(type(raw) is not bytes or not raw for raw in potcar_files.values()):
+                raise BeAError('选择包含 POTCAR 后必须提供所有步骤的已确认产物', code='POTCAR_CONFIRMATION_REQUIRED')
+            for raw in potcar_files.values():
+                validate_potcar(raw, tuple(request.structure.elements))
+            if len(set(potcar_files.values())) != 1:
+                raise BeAError('同一工作流必须使用相同 POTCAR 字节', code='POTCAR_BINDING_MISMATCH')
+        elif potcar_files:
+            raise BeAError('未包含模式不接受 POTCAR 产物', code='POTCAR_BINDING_MISMATCH')
+        potcar_state = {'mode': request.potcar.mode, 'status': 'generated' if potcar_files else 'omitted',
+                        'artifact_id': request.potcar.artifact_id, 'steps': []}
+        import hashlib
+        for step in steps:
+            raw = potcar_files.get(step.step_id)
+            potcar_state['steps'].append({'step_id': step.step_id, 'status': 'generated' if raw else 'omitted',
+                                         'artifact_id': request.potcar.artifact_id if raw else None,
+                                         'sha256': hashlib.sha256(raw).hexdigest() if raw else None,
+                                         'size_bytes': len(raw) if raw else None})
+        if potcar_metadata:
+            potcar_state['artifact'] = potcar_metadata
 
         compositions: Dict[str, RecipeComposition] = {}
         kpoints_specs: Dict[str, KpointsSpec] = {}
@@ -161,13 +187,14 @@ class WorkflowGenerationPipeline:
         self._validate_dftu_compositions(request, compositions)
         self._validate_band_compositions(request, compositions)
 
-        self._gating.evaluate(steps, inheritance)
+        self._gating.evaluate(steps, inheritance, prepared_steps=set(potcar_files))
 
-        files: Dict[str, str] = {}
+        files: Dict[str, str | bytes] = {}
         for step in steps:
             composition = compositions[step.step_id]
-            files[f"{step.directory}/POSCAR"] = self._poscar.generate(
-                request.structure, sample_name=request.sample_name)
+            files[f"{step.directory}/POSCAR"] = self.final_poscar(request)
+            if step.step_id in potcar_files:
+                files[f"{step.directory}/POTCAR"] = potcar_files[step.step_id]
             files[f"{step.directory}/INCAR"] = self._incar.generate(
                 composition.resolved_parameters, request.structure, request.dftu,
                 step_id=step.step_id, task=step.task,
@@ -182,24 +209,28 @@ class WorkflowGenerationPipeline:
         warnings = self._collect_warnings(compositions)
         warnings.extend(self._band_warnings(request))
         plan_file = self._build_plan_file(request, steps, inheritance, compositions, warnings)
+        plan_file.revision = revision
+        plan_file.potcar = potcar_state
         files["workflow_plan.json"] = self._dump_plan_file(plan_file)
-        files["README_run_order.md"] = self._render_readme(request, steps, inheritance, warnings)
-        if not self._potcar_prepared:
+        files["README_run_order.md"] = self._render_readme(request, steps, inheritance, warnings,
+                                                          revision=revision, potcar_required=not bool(potcar_files))
+        if not potcar_files:
             files["POTCAR_REQUIRED.md"] = self._render_potcar_required(request)
         report_markdown, _report_metadata = self._report.generate(
             workflow_id=request.workflow_id,
-            revision=1,
+            revision=revision,
             structure=request.structure,
             steps=steps,
             plan=inheritance,
             compositions=compositions,
             dftu=request.dftu,
-            potcar_prepared=self._potcar_prepared,
+            potcar_prepared=bool(potcar_files),
+            potcar_state=potcar_state,
         )
         files["INPUT_CHECK_REPORT.md"] = report_markdown
 
         bundle = self._builder.build(
-            request.workflow_id, files, revision=1, pack=self._pack
+            request.workflow_id, files, revision=revision, pack=self._pack, potcar=potcar_state
         )
         # 内嵌 manifest 与最终 manifest 自洽：先对不含自身的文件集构建，
         # 再把真实 JSON 放回 files 后重新构建，保证 zip 内容与 manifest 逐文件对得上。
@@ -212,7 +243,7 @@ class WorkflowGenerationPipeline:
         )
         files["workflow_manifest.json"] = manifest_text
         bundle = self._builder.build(
-            request.workflow_id, files, revision=1, pack=self._pack
+            request.workflow_id, files, revision=revision, pack=self._pack, potcar=potcar_state
         )
 
         file_tree = self._build_file_tree(request.workflow_id, bundle.files)
@@ -224,7 +255,7 @@ class WorkflowGenerationPipeline:
         )
         return WorkflowGenerationResult(
             workflow_id=request.workflow_id,
-            revision=1,
+            revision=revision,
             workflow_status="generated",
             plan_file=plan_file,
             steps=steps,
@@ -234,6 +265,7 @@ class WorkflowGenerationPipeline:
             validation=validation,
             bundle=bundle,
             pack=self._pack,
+            potcar=potcar_state,
         )
 
     # --- Plan preview (IR-01) ---
@@ -485,6 +517,11 @@ class WorkflowGenerationPipeline:
         if TaskType.BAND not in request.requested_tasks:
             return []
         divisions = BAND_LINE_DIVISIONS[request.precision.value]
+        potcar_notice = (
+            '本次包含的本地产物在生成时核验 static 与 band 的数据集、物种顺序和逐字节一致性；仍需验证科学适用性。'
+            if request.potcar.mode == 'include' else
+            'static 与 band 须由用户核验使用逐字一致的 PBE POTCAR（同版本、同元素变体及顺序）；软件不提供也不校验外部 POTCAR。'
+        )
         return [{
             "code": "BAND_PATH_INPUT_CELL",
             "severity": "high",
@@ -492,8 +529,7 @@ class WorkflowGenerationPipeline:
                 f"能带路径按当前 POSCAR 原胞与 Setyawan-Curtarolo 约定生成；"
                 f"对称识别容差 0.01 Å，每段 {divisions} 点。先完成 static 并继承其 CHGCAR；"
                 "若实际晶胞改变，须用最终 CONTCAR 重新生成并确认 static→band。"
-                "static 与 band 须由用户核验使用逐字一致的 PBE POTCAR（同版本、同元素变体及顺序）；"
-                "软件不提供也不校验外部 POTCAR。"
+                + potcar_notice
             ),
         }]
 
@@ -686,11 +722,12 @@ class WorkflowGenerationPipeline:
         steps: List[WorkflowStep],
         inheritance,
         warnings: List[Dict[str, Any]],
+        *, revision: int = 1, potcar_required: bool = True,
     ) -> str:
         template = self._templates.get_template("README_run_order.md.j2")
         rendered = template.render(
             workflow_id=request.workflow_id,
-            revision=1,
+            revision=revision,
             formula=request.structure.formula,
             elements=request.structure.elements,
             atom_count=request.structure.atom_count,
@@ -707,7 +744,7 @@ class WorkflowGenerationPipeline:
                 for step in steps
             ],
             dependencies=[dep.model_dump(mode="json") for dep in inheritance.dependencies],
-            potcar_required=not self._potcar_prepared,
+            potcar_required=potcar_required,
             warnings=warnings,
         )
         return rendered.rstrip("\n") + "\n"

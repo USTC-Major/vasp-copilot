@@ -45,6 +45,7 @@ class BundleBuilder:
         files: Dict[str, Union[str, bytes]],
         revision: int = 1,
         pack: Optional[RecipePackManifest] = None,
+        potcar: Optional[dict] = None,
     ) -> BundleResult:
         normalized: Dict[str, bytes] = {}
         for relative_path, content in files.items():
@@ -71,6 +72,7 @@ class BundleBuilder:
             recipe_pack_sha256=pack.sha256 if pack else None,
             files=file_entries,
             created_at=FIXED_TIMESTAMP,
+            potcar=potcar or {},
         )
         return BundleResult(manifest=manifest, zip_bytes=zip_bytes, files=normalized)
 

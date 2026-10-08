@@ -55,7 +55,7 @@ it('只在同面板确认后生成，精确绑定预览及digest，保留重复/
   expect(screen.getAllByText(/来源相对路径：合成/)).toHaveLength(3);
   expect(screen.queryByText('UNIQUE_COMPATIBLE')).not.toBeInTheDocument();
   await generate();
-  expect(previews[0]).toEqual({ library_id: 'lib-1', index_revision: 1, poscar_text: poscar });
+  expect(previews[0]).toEqual({ library_id: 'lib-1', index_revision: 1, poscar_text: poscar, context: { purpose: 'regular', functional: 'PBE' } });
   expect(writes[0]).toEqual({ preview_id: 'preview-1', selection_digest: 'digest-preview-1', confirmed_order_and_variants: true, idempotency_key: expect.any(String) });
   expect(screen.getByText('synthetic-artifact-hash')).toBeInTheDocument();
   fireEvent.change(screen.getByLabelText('POSCAR 文本'), { target: { value: `${poscar}\n` } });
@@ -115,6 +115,25 @@ it('旧预览响应在结构编辑后不能恢复选择或确认，卸载取消�
   expect(screen.getByLabelText('POSCAR 文本')).toHaveValue('新结构草稿');
   fireEvent.click(screen.getByRole('button', { name: '读取 / 刷新预览' })); view.unmount();
   expect(signal?.aborted).toBe(true);
+});
+
+it('用途在当前面板可见且变化撤销确认；刷新不把自动推荐冒充手动选择', async () => {
+  const recommended = preview(); recommended.rows.forEach(row => { row.reason = { code: 'RULE_RECOMMENDED', message: '合成规则推荐' }; row.advice = [{ code: 'RELEASE_UNKNOWN', message: '合成版本未知提醒', rule_ids: ['synthetic-rule'], source_ids: ['S4'], target_variants: [] }]; });
+  server.use(http.post(`${base}/previews`, async ({ request }) => { previews.push(await request.json() as PotcarPreviewRequest); return HttpResponse.json(recommended); }));
+  const user = userEvent.setup(); mount(); await readPreview();
+  expect(screen.getByRole('combobox', { name: '计算用途' })).toBeInTheDocument();
+  expect(screen.getAllByText('规则推荐')).toHaveLength(3);
+  expect(screen.getAllByText('合成版本未知提醒')).toHaveLength(3);
+  fireEvent.click(screen.getByRole('checkbox'));
+  await user.click(screen.getByRole('combobox', { name: '计算用途' }));
+  await user.click(screen.getByText('特殊用途（需人工核对）'));
+  expect(screen.getByRole('checkbox')).not.toBeChecked();
+  expect(screen.getByRole('button', { name: '生成 POTCAR' })).toBeDisabled();
+  fireEvent.click(screen.getByRole('button', { name: '读取 / 刷新预览' }));
+  await waitFor(() => expect(previews).toHaveLength(2));
+  expect(previews[1].context).toEqual({ purpose: 'special', functional: 'PBE' });
+  expect(previews[1].dataset_ids).toEqual([null, null, null]);
+  expect(previews[1].context?.high_pressure).toBeUndefined();
 });
 
 it('生成网络失败保留确认与幂等key，双击只发一次，输入在生成中禁用', async () => {

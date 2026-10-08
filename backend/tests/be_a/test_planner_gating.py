@@ -105,9 +105,17 @@ class TestGating:
     def test_potcar_prepared_keeps_upstream_gates(self):
         planned = WorkflowPlanner().plan("wf_01", [TaskType.RELAX, TaskType.STATIC])
         StepGatingEvaluator(potcar_prepared=True).evaluate(
-            planned["steps"], planned["file_inheritance_plan"]
+            planned["steps"], planned["file_inheritance_plan"], prepared_steps={'01_relax', '02_static'}
         )
         relax, static = planned["steps"]
         assert relax.runnable is True
         assert static.runnable is False
         assert POTCAR_NOT_PREPARED not in static.blocked_by
+
+    def test_only_steps_with_actual_artifacts_clear_potcar_gate(self):
+        planned = WorkflowPlanner().plan('wf_01', [TaskType.RELAX, TaskType.STATIC])
+        StepGatingEvaluator(potcar_prepared=True).evaluate(
+            planned['steps'], planned['file_inheritance_plan'], prepared_steps={'01_relax'})
+        relax, static = planned['steps']
+        assert relax.runnable and POTCAR_NOT_PREPARED in static.blocked_by
+        assert UPSTREAM_OUTPUT_MISSING in static.blocked_by

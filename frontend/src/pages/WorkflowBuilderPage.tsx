@@ -5,6 +5,9 @@
 import React, { useState, useCallback, useMemo, useRef } from 'react';
 import { Steps, Button, Space, Card, Result, Typography, Input, Alert } from 'antd';
 import { ReloadOutlined, DownloadOutlined, ArrowRightOutlined, ArrowLeftOutlined, RobotOutlined, GlobalOutlined } from '@ant-design/icons';
+import WorkflowPotcarPanel from '../components/potcar/WorkflowPotcarPanel';
+import { workflowsApi } from '../api/client';
+import type { WorkflowPotcarChoice, WorkflowPotcarState } from '../types/potcar';
 import StructureUploadPanel from '../components/upload/StructureUploadPanel';
 import MaterialsProjectPanel from '../components/upload/MaterialsProjectPanel';
 import ParameterConfirmForm, { type ParameterConfirmFormData } from '../components/workflow/ParameterConfirmForm';
@@ -198,6 +201,10 @@ const WorkflowBuilderPage: React.FC = () => {
   const [workflowPlan, setWorkflowPlan] = useState<WorkflowPlan | null>(null);
   const [workflowId, setWorkflowId] = useState<string | null>(null);
   const [fileTree, setFileTree] = useState<FileTreeNode | null>(null);
+  const [potcarChoice, setPotcarChoice] = useState<WorkflowPotcarChoice>({ mode: 'omit' });
+  const [potcarResult, setPotcarResult] = useState<WorkflowPotcarState | undefined>();
+  const draftEpoch = useRef(0);
+  const generateLock = useRef(false);
   const [patches, setPatches] = useState<ParameterPatch[]>([]);
   const [, setWorkflowStatus] = useState<WorkflowStatus>('draft');
   const [showAiPanel, setShowAiPanel] = useState(false);
@@ -220,6 +227,7 @@ const WorkflowBuilderPage: React.FC = () => {
         : 'disabled';
 
   const handleStructureAnalyzed = useCallback((structId: string, structSummary: StructureSummary) => {
+    ++draftEpoch.current; setPotcarChoice({ mode: 'omit' }); setPotcarResult(undefined);
     setStructureId(structId);
     setSummary(structSummary);
     setSampleName(defaultSampleName(structSummary));
@@ -230,6 +238,7 @@ const WorkflowBuilderPage: React.FC = () => {
   }, []);
 
   const handleSampleNameChange = useCallback((value: string) => {
+    ++draftEpoch.current; setPotcarChoice({ mode: 'omit' }); setPotcarResult(undefined);
     setSampleName(value);
     setConfirmSnapshot(null);
     setWorkflowPlan(null);
@@ -239,6 +248,7 @@ const WorkflowBuilderPage: React.FC = () => {
   }, []);
 
   const handleAiAccepted = useCallback((result: AiPlanAssistantResult) => {
+    ++draftEpoch.current; setPotcarChoice({ mode: 'omit' }); setPotcarResult(undefined); setPatches([]);
     setWorkflowPlan(result as unknown as WorkflowPlan);
     setWorkflowId(result.workflow_id);
     setWorkflowStatus('planned');
@@ -273,6 +283,7 @@ const WorkflowBuilderPage: React.FC = () => {
       const plan = await planMutation.mutateAsync(buildPlanBody(structureId, confirmSnapshot));
       // 成功：关闭并清空快照，进入计划步骤。
       setConfirmSnapshot(null);
+      ++draftEpoch.current; setPotcarChoice({ mode: 'omit' }); setPotcarResult(plan.potcar); setPatches([]);
       setWorkflowPlan(plan);
       setWorkflowId(plan.workflow_id);
       setWorkflowStatus(plan.workflow_id ? 'planned' : 'draft');
@@ -290,17 +301,41 @@ const WorkflowBuilderPage: React.FC = () => {
     setConfirmSnapshot(null);
   }, []);
 
+  const handlePotcarChoice = useCallback((value: WorkflowPotcarChoice) => {
+    ++draftEpoch.current; setPotcarChoice(value); setPotcarResult(undefined); setFileTree(null);
+    setCurrentStep(current => current === 'generate' || current === 'download' ? 'edit' : current);
+  }, []);
+  const handlePatchesChange = useCallback((value: ParameterPatch[]) => {
+    ++draftEpoch.current; setPatches(value); setPotcarChoice(current => ({ mode: current.mode })); setPotcarResult(undefined); setFileTree(null);
+  }, []);
+  const preparePotcarPlan = useCallback(async () => {
+    if (!workflowId) throw new Error('当前计划不存在，请重新创建工作流。');
+    return workflowsApi.replan(workflowId, patches, { mode: 'include' });
+  }, [workflowId, patches]);
   const handleGenerate = useCallback(async () => {
-    if (!workflowId) return;
+    if (!workflowId || generateLock.current || (potcarChoice.mode === 'include' && !potcarChoice.artifact_id)) return;
+    generateLock.current = true;
+    const token = draftEpoch.current;
+    if (potcarChoice.mode === 'include') setPotcarResult({ ...potcarChoice, status: 'generating', steps: workflowPlan?.steps.map(step => ({ step_id: step.step_id, status: 'generating' })) ?? [] });
     try {
-      const result = await generateMutation.mutateAsync({ workflowId, patches });
+      const result = await generateMutation.mutateAsync({ workflowId, patches, ...(potcarChoice.mode === 'include' || workflowPlan?.potcar?.mode === 'include' ? { potcar: potcarChoice } : {}) });
+      if (token !== draftEpoch.current) return;
+      setPotcarResult(result.potcar);
       setWorkflowStatus('generated');
       setFileTree(result.file_tree);
       setCurrentStep('generate');
     } catch {
-      // handled by error display
-    }
-  }, [workflowId, patches, generateMutation]);
+      if (token !== draftEpoch.current) return;
+      setFileTree(null);
+      if (potcarChoice.mode === 'include') {
+        // Retrieve the canonical failure and per-step state from the same server record.
+        try {
+          const failed = await workflowsApi.get(workflowId);
+          if (token === draftEpoch.current) setPotcarResult(failed.potcar ?? { ...potcarChoice, status: 'failed', steps: [] });
+        } catch { if (token === draftEpoch.current) setPotcarResult({ ...potcarChoice, status: 'failed', steps: [] }); }
+      }
+    } finally { generateLock.current = false; }
+  }, [workflowId, patches, potcarChoice, workflowPlan, generateMutation]);
 
   const handleDownload = useCallback(async () => {
     if (!workflowId) return;
@@ -466,9 +501,15 @@ const WorkflowBuilderPage: React.FC = () => {
           patches={patches}
           currentValues={currentValues}
           allowedParams={ALLOWED_PARAMS}
-          onPatchesChange={setPatches}
+          onPatchesChange={handlePatchesChange}
         />
       )}
+
+      {workflowPlan && ['plan', 'edit', 'generate', 'download'].includes(currentStep) && <WorkflowPotcarPanel
+        plan={workflowPlan} draftKey={JSON.stringify(patches)} choice={potcarChoice} onChoice={handlePotcarChoice}
+        preparePlan={preparePotcarPlan} onPlanPrepared={setWorkflowPlan} generation={potcarResult}
+        disabled={generateMutation.isPending || currentStep === 'download'}
+      />}
 
       {/* Step 5: 生成文件 */}
       {currentStep === 'generate' && fileTree && (
@@ -488,6 +529,7 @@ const WorkflowBuilderPage: React.FC = () => {
               <Button
                 icon={<ReloadOutlined />}
                 onClick={() => {
+                  ++draftEpoch.current; setPotcarChoice(current => ({ mode: current.mode })); setPotcarResult(undefined);
                   setCurrentStep('edit');
                   setFileTree(null);
                 }}
@@ -517,6 +559,7 @@ const WorkflowBuilderPage: React.FC = () => {
             <Button
               key="new"
               onClick={() => {
+                ++draftEpoch.current; setPotcarChoice({ mode: 'omit' }); setPotcarResult(undefined); setPatches([]);
                 setCurrentStep('upload');
                 setStructureId(null);
                 setSummary(null);
@@ -549,7 +592,9 @@ const WorkflowBuilderPage: React.FC = () => {
         <div style={{ marginTop: 24, display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', rowGap: 8 }}>
           <Button
             icon={<ArrowLeftOutlined />}
+            disabled={generateMutation.isPending}
             onClick={() => {
+              ++draftEpoch.current; setPotcarChoice(current => ({ mode: current.mode })); setPotcarResult(undefined); setFileTree(null);
               const idx = steps.findIndex((s) => s.key === currentStep);
               if (idx > 0) setCurrentStep(steps[idx - 1].key);
             }}
@@ -560,6 +605,7 @@ const WorkflowBuilderPage: React.FC = () => {
             {currentStep === 'plan' && (
               <Button
                 onClick={() => setCurrentStep('edit')}
+                disabled={generateMutation.isPending}
               >
                 编辑参数 (可选)
               </Button>
@@ -569,6 +615,7 @@ const WorkflowBuilderPage: React.FC = () => {
                 type="primary"
                 icon={<ArrowRightOutlined />}
                 onClick={handleGenerate}
+                disabled={potcarChoice.mode === 'include' && !potcarChoice.artifact_id}
                 loading={generateMutation.isPending}
               >
                 下一步：生成文件
@@ -579,6 +626,7 @@ const WorkflowBuilderPage: React.FC = () => {
                 type="primary"
                 icon={<ArrowRightOutlined />}
                 onClick={handleGenerate}
+                disabled={potcarChoice.mode === 'include' && !potcarChoice.artifact_id}
                 loading={generateMutation.isPending}
               >
                 下一步：生成文件

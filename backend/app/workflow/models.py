@@ -42,6 +42,7 @@ class WorkflowGenerationResult:
     validation: ValidationResult
     bundle: BundleResult
     pack: RecipePackManifest | None = None
+    potcar: Dict[str, Any] = field(default_factory=dict)
 
     def to_response_body(self) -> Dict[str, Any]:
         """对齐 6.5 节 response 的库级 JSON（不含 request_id/download_url）。"""
@@ -58,4 +59,5 @@ class WorkflowGenerationResult:
                 "warnings": self.validation.warnings,
             },
             "manifest": self.bundle.manifest.model_dump(mode="json"),
+            "potcar": self.potcar,
         }

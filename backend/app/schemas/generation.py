@@ -293,6 +293,18 @@ class WorkflowBundleManifest(_StrictModel):
     files: List[Dict[str, Any]] = Field(default_factory=list)
     created_at: Optional[str] = None
     generator_version: str = "0.1.0"
+    potcar: Dict[str, Any] = Field(default_factory=dict)
+
+
+class PotcarConfig(_StrictModel):
+    mode: Literal['omit', 'include'] = 'omit'
+    artifact_id: Optional[str] = Field(default=None, pattern=r'^[0-9a-f]{32}$')
+
+    @model_validator(mode='after')
+    def _no_omitted_artifact(self):
+        if self.mode == 'omit' and self.artifact_id is not None:
+            raise ValueError('omit must not carry an artifact')
+        return self
 
 
 class WorkflowGenerateRequest(_StrictModel):
@@ -311,6 +323,7 @@ class WorkflowGenerateRequest(_StrictModel):
     element_initial_moments: Dict[str, float] = Field(default_factory=dict)
     enable_band_workflow: bool = False
     confirm: bool = True
+    potcar: PotcarConfig = Field(default_factory=PotcarConfig)
 
     @model_validator(mode="after")
     def _valid_sample_name(self) -> "WorkflowGenerateRequest":

@@ -78,6 +78,7 @@ export interface WorkflowPlanRequestBody {
     dftu: DftuSettingsRequest;
     scheduler: SchedulerRequest;
     confirm: boolean;
+    potcar?: import('./potcar').WorkflowPotcarChoice;
   };
 }
 

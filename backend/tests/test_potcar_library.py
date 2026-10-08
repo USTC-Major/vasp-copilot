@@ -331,7 +331,7 @@ def test_scan_conflict_cancel_preserves_index_and_retry(tmp_path, library_servic
 
 
 @pytest.mark.parametrize('kind', ['candidate', 'depth', 'entries', 'deadline'])
-def test_incomplete_scan_preserves_completed_index(tmp_path, library_service, kind):
+def test_incomplete_scan_preserves_completed_index(tmp_path, library_service, kind, monkeypatch):
     svc = library_service
     root = tmp_path / 'source'
     put(root)
@@ -343,6 +343,12 @@ def test_incomplete_scan_preserves_completed_index(tmp_path, library_service, ki
                   'depth': replace(svc.limits, max_depth=1),
                   'entries': replace(svc.limits, max_entries=1),
                   'deadline': replace(svc.limits, scan_timeout=1e-12)}[kind]
+    if kind == 'deadline':
+        # Inject an already expired start clock; tiny real-time deltas can be
+        # rounded differently by Windows timers during a fast synthetic scan.
+        from types import SimpleNamespace
+        from backend.toolbox.potcar import service as module
+        monkeypatch.setattr(module, 'time', SimpleNamespace(monotonic=lambda: time.monotonic() - 1))
     result = scan(svc, lid)
     assert result['status'] == 'failed'
     assert result['error']['code'] == 'POTCAR_SCAN_LIMIT'

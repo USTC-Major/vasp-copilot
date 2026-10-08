@@ -6,6 +6,7 @@ No FileStore, workflow, AI, shell, or scientific recommendation dependency.
 from __future__ import annotations
 
 import copy
+from contextlib import nullcontext
 import json
 import math
 import os
@@ -23,6 +24,7 @@ from ..storage import atomic_json, read_object
 from .filesystem import checked_path, fail, read_source
 from .metadata import dataset, decode, digest, metadata
 from .service import exact, revision
+from . import recommendations
 
 _ID = re.compile(r'[0-9a-f]{32}\Z')
 _HASH = re.compile(r'[0-9a-f]{64}\Z')
@@ -30,6 +32,20 @@ _META = ('element', 'variant', 'family', 'lexch', 'zval', 'enmax_ev', 'dataset_d
 _ROW = ('position', 'element', 'atom_count', 'dataset_id', 'variant', 'title', 'decoded_sha256', 'source_sha256')
 _ARTIFACT = {'artifact_id', 'preview_id', 'selection_digest', 'structure_sha256', 'library_id', 'index_revision',
              'status', 'size_bytes', 'sha256', 'created_at', 'expires_at', 'rows'}
+_RULE_FIELDS = {'rule_version', 'context', 'context_source', 'workflow_binding'}
+
+
+def binding(value):
+    if value is None:
+        return None
+    if (not isinstance(value, dict) or set(value) != {'workflow_id', 'revision', 'request_sha256', 'step_ids'} or
+            not isinstance(value['workflow_id'], str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', value['workflow_id']) or
+            type(value['revision']) is not int or value['revision'] < 1 or
+            not isinstance(value['request_sha256'], str) or not _HASH.fullmatch(value['request_sha256']) or
+            not isinstance(value['step_ids'], list) or not value['step_ids'] or len(value['step_ids']) > 100 or
+            any(not isinstance(s, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', s) for s in value['step_ids'])):
+        raise ValueError('Invalid workflow binding')
+    return copy.deepcopy(value)
 
 
 def timestamp(epoch):
@@ -98,6 +114,20 @@ class PotcarAssemblyService:
         self.root.mkdir(exist_ok=True)
         checked_path(str(self.root), directory=True)
         self.previews = {}
+        # Optional app-owned pure validator; Toolbox never imports app modules.
+        self.workflow_binding_validator = None
+        self.workflow_publication_guard = None
+
+    def _validate_workflow_binding(self, value):
+        if value is None:
+            return
+        validator = self.workflow_binding_validator
+        try:
+            valid = validator(copy.deepcopy(value)) if callable(validator) else False
+        except Exception:
+            valid = False
+        if valid is not True:
+            fail('WORKFLOW_BINDING_STALE', '工作流计划或服务已变化；请重新规划并预览确认', 409, True)
 
     def _snapshot(self, library_id, index_revision=None):
         svc = self.libraries
@@ -111,9 +141,12 @@ class PotcarAssemblyService:
             fail('INDEX_REVISION_CONFLICT', '索引不存在或已更新；请重新扫描并刷新选择', 409, True)
         return library, index
 
-    def preview(self, payload):
-        exact(payload, {'library_id', 'index_revision', 'poscar_text', 'dataset_ids', 'legacy_species'},
+    def preview(self, payload, *, workflow_binding=None):
+        exact(payload, {'library_id', 'index_revision', 'poscar_text', 'dataset_ids', 'legacy_species', 'context'},
               {'library_id', 'index_revision', 'poscar_text'})
+        ctx = recommendations.context(payload.get('context'))
+        workflow_binding = binding(workflow_binding)
+        context_source = 'workflow' if workflow_binding else ('user' if payload.get('context') is not None else 'unknown')
         revision(payload['index_revision'])
         if not isinstance(payload['poscar_text'], str):
             fail('INVALID_REQUEST', '请提供 POSCAR 文本')
@@ -153,25 +186,20 @@ class PotcarAssemblyService:
                     fail('ASSEMBLY_LIMIT', '候选列表超过预览上限；请使用更小的具体集合')
                 if chosen is not None and chosen not in {row['dataset_id'] for row in candidates}:
                     fail('DATASET_SELECTION_INVALID', '选中数据集不属于本库的兼容候选；请刷新并重新选择', 409, True)
-                if chosen is not None:
-                    code, message = 'USER_SELECTED', '用户明确选择；请核对本次顺序与变体'
-                elif len(candidates) == 1:
-                    chosen = candidates[0]['dataset_id']
-                    code, message = 'UNIQUE_COMPATIBLE', '仅有一个格式兼容候选；唯一可用不代表科学最优，请核对变体'
-                elif candidates:
-                    code, message = 'SELECTION_REQUIRED', '有多个兼容候选；请明确选择变体或来源项'
-                else:
-                    code, message = 'NO_COMPATIBLE_DATASET', '本库没有此元素的受支持单数据集候选；请更换库或补充来源后扫描'
+                chosen, code, message, advice = recommendations.choose(element, candidates, chosen, ctx)
                 if chosen is None:
                     blockers.append({'code': 'POTCAR_' + code, 'message': message, 'position': pos})
                 else:
                     bindings.append(next(copy.deepcopy(row) for row in candidates if row['dataset_id'] == chosen))
                 rows.append({'position': pos, 'element': element, 'atom_count': count, 'dataset_id': chosen,
-                             'candidates': candidates, 'reason': {'code': code, 'message': message}})
+                             'candidates': candidates, 'reason': {'code': code, 'message': message},
+                             'selection_reason': {'code': code, 'message': message}, 'advice': advice})
             structure_sha256 = digest(payload['poscar_text'].encode('utf-8'))
             pin = {'structure_sha256': structure_sha256, 'species': list(species), 'counts': list(info.counts),
                    'source_token': library['source_token'], 'library_id': library['library_id'],
-                   'index_revision': index['index_revision'], 'datasets': bindings, 'selected': [r['dataset_id'] for r in rows]}
+                   'index_revision': index['index_revision'], 'datasets': bindings, 'selected': [r['dataset_id'] for r in rows],
+                   'rule_version': recommendations.RULE_VERSION, 'context': ctx, 'context_source': context_source,
+                   'workflow_binding': workflow_binding}
             selection_digest = digest(json.dumps(pin, sort_keys=True, ensure_ascii=False, separators=(',', ':')).encode())
             epoch = time.time()
             self.previews = {key: value for key, value in self.previews.items() if value['expiry'] > epoch}
@@ -182,6 +210,8 @@ class PotcarAssemblyService:
                         'library': {key: library[key] for key in ('library_id', 'display_name', 'version_note')},
                         'rows': rows, 'blockers': blockers, 'expires_at': timestamp(epoch + self.limits.preview_ttl)}
             response['library']['index_revision'] = index['index_revision']
+            response.update({k: copy.deepcopy(pin[k]) for k in _RULE_FIELDS})
+            response['rule_sources'] = copy.deepcopy(list(recommendations.SOURCES))
             self.previews[preview_id] = {'response': response, 'pin': pin, 'expiry': epoch + self.limits.preview_ttl}
             return copy.deepcopy(response)
 
@@ -202,8 +232,14 @@ class PotcarAssemblyService:
             if set(stored) != {'schema_version', 'artifact', 'request_digest', 'key_sha256'} or stored['schema_version'] != 1:
                 raise ValueError('Manifest schema')
             value = stored['artifact']
-            if not isinstance(value, dict) or set(value) != _ARTIFACT or value['artifact_id'] != artifact_id or value['status'] != 'ready':
+            if not isinstance(value, dict) or set(value) not in (_ARTIFACT, _ARTIFACT | _RULE_FIELDS) or value['artifact_id'] != artifact_id or value['status'] != 'ready':
                 raise ValueError('Artifact schema')
+            if _RULE_FIELDS <= set(value):
+                if (not isinstance(value['rule_version'], str) or not re.fullmatch(r'paw-pbe-selection-r[0-9]+', value['rule_version']) or
+                        value['context_source'] not in {'user', 'unknown', 'workflow'} or
+                        recommendations.context(value['context']) != value['context']):
+                    raise ValueError('Artifact rule metadata')
+                binding(value['workflow_binding'])
             for field in ('artifact_id', 'preview_id', 'library_id'):
                 identifier(value[field])
             for field in ('selection_digest', 'structure_sha256', 'sha256'):
@@ -290,6 +326,9 @@ class PotcarAssemblyService:
             if preview['expiry'] <= time.time():
                 fail('PREVIEW_EXPIRED', '预览已过期；请重新预览后确认', 410, True)
             response, pin = preview['response'], preview['pin']
+            if pin['rule_version'] != recommendations.RULE_VERSION:
+                fail('RULE_VERSION_CHANGED', '推荐规则已更新；请重新预览并核对', 409, True)
+            self._validate_workflow_binding(pin['workflow_binding'])
             if payload['selection_digest'] != response['selection_digest']:
                 fail('SELECTION_DIGEST_MISMATCH', '预览选择已不匹配；请刷新后重新确认', 409, True)
             if response['blockers']:
@@ -326,6 +365,7 @@ class PotcarAssemblyService:
                         'structure_sha256': pin['structure_sha256'], 'library_id': pin['library_id'], 'index_revision': pin['index_revision'],
                         'status': 'ready', 'size_bytes': len(combined), 'sha256': digest(combined),
                         'created_at': timestamp(epoch), 'expires_at': timestamp(epoch + self.limits.artifact_ttl), 'rows': source_rows}
+            artifact.update({k: copy.deepcopy(pin[k]) for k in _RULE_FIELDS})
             temporary = Path(tempfile.mkdtemp(prefix='.assembly-', dir=self.root))
             try:
                 with (temporary / 'POTCAR').open('xb') as handle:
@@ -334,7 +374,14 @@ class PotcarAssemblyService:
                     os.fsync(handle.fileno())
                 atomic_json(temporary / 'manifest.json', {'schema_version': 1, 'artifact': artifact,
                             'request_digest': request_digest, 'key_sha256': key_hash})
-                os.rename(temporary, target)
+                workflow = pin['workflow_binding']
+                if workflow is not None and not callable(self.workflow_publication_guard):
+                    fail('WORKFLOW_BINDING_STALE', '工作流确认服务不可用；请重新规划并预览', 409, True)
+                guard = self.workflow_publication_guard(copy.deepcopy(workflow)) if workflow is not None else nullcontext(True)
+                with guard as current:
+                    if current is not True:
+                        fail('WORKFLOW_BINDING_STALE', '工作流计划已变化；请重新规划并预览确认', 409, True)
+                    os.rename(temporary, target)
             finally:
                 # Only this newly created app-owned staging directory is removed.
                 if temporary.exists():

@@ -3,7 +3,7 @@
 // 通过 MSW setupServer 捕获真实请求体，验证展示与发送同源。
 // ============================================================
 
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { act, render, screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ConfigProvider } from 'antd';
@@ -20,6 +20,8 @@ import formSource from '../components/workflow/ParameterConfirmForm.tsx?raw';
 import modalSource from '../components/workflow/WorkflowConfirmSummaryModal.tsx?raw';
 import contractSource from '../types/workflow-contract.ts?raw';
 import generatedApiSource from '../types/generated-api.ts?raw';
+import { potcarApi } from '../api/potcar';
+import type { PotcarArtifact, PotcarLibrary, PotcarPreview, WorkflowPotcarState } from '../types/potcar';
 import useApiSource from '../hooks/useApi.ts?raw';
 import clientSource from '../api/client.ts?raw';
 
@@ -113,6 +115,60 @@ beforeEach(() => {
 });
 
 describe('WorkflowBuilderPage', () => {
+  it('本地库include一次确认绑定新计划，真实生成请求带artifact；omit重放清除旧引用', async () => {
+    useFastMocks();
+    const generationBodies: Record<string, unknown>[] = [];
+    const replayBodies: Record<string, unknown>[] = [];
+    let releaseGeneration!: () => void;
+    const generationPending = new Promise<void>(resolve => { releaseGeneration = resolve; });
+    const future = new Date(Date.now() + 60 * 60_000).toISOString();
+    const library: PotcarLibrary = { library_id: 'synthetic-lib', display_name: '合成库', root_path: 'synthetic-only', version_note: null, revision: 1, index_revision: 1, source_ack: { confirmed: true, confirmed_at: future }, source_fingerprint: null, created_at: future, updated_at: future, is_default: true, reachable: true, scan: null, summary: null };
+    const binding = { workflow_id: workflowPlanFixture.workflow_id, revision: 2, request_sha256: 'synthetic-request', step_ids: workflowPlanFixture.steps.map(step => step.step_id) };
+    const preview: PotcarPreview = { mode: 'toolbox', preview_id: 'synthetic-preview', selection_digest: 'synthetic-digest', structure_sha256: 'synthetic-structure', library: { library_id: 'synthetic-lib', display_name: '合成库', version_note: null, index_revision: 1 }, rows: [], blockers: [], expires_at: future, workflow_binding: binding };
+    const artifact: PotcarArtifact = { artifact_id: 'synthetic-artifact', preview_id: preview.preview_id, selection_digest: preview.selection_digest, structure_sha256: preview.structure_sha256, library_id: 'synthetic-lib', index_revision: 1, status: 'ready', size_bytes: 4, sha256: 'synthetic-sha', created_at: future, expires_at: future, rows: [], workflow_binding: binding };
+    vi.spyOn(potcarApi, 'libraries').mockResolvedValue({ mode: 'toolbox', libraries: [library], default_library_id: library.library_id, revision: 1 });
+    vi.spyOn(potcarApi, 'workflowPreview').mockResolvedValue(preview);
+    vi.spyOn(potcarApi, 'assemble').mockResolvedValue({ mode: 'toolbox', artifact });
+    const generated: WorkflowPotcarState = { mode: 'include', artifact_id: artifact.artifact_id, status: 'generated', steps: binding.step_ids.map(step_id => ({ step_id, status: 'generated', artifact_id: artifact.artifact_id, sha256: artifact.sha256, size_bytes: 4 })) };
+    server.use(
+      http.post(`${API}/workflows/plan`, async ({ request }) => {
+        const body = await request.json() as Record<string, unknown>;
+        if (body.workflow_id) { replayBodies.push(body); return HttpResponse.json({ ...workflowPlanFixture, revision: 2, potcar: { mode: 'include', status: 'pending_confirmation', steps: [] } }); }
+        planBodies.push(body as unknown as WorkflowPlanRequestBody); return HttpResponse.json(workflowPlanFixture);
+      }),
+      http.post(`${API}/workflows/generate`, async ({ request }) => { const body = await request.json() as Record<string, unknown>; generationBodies.push(body); if (generationBodies.length === 1) await generationPending; return HttpResponse.json({ workflow_id: workflowPlanFixture.workflow_id, workflow_status: 'generated', revision: 2, potcar: body.potcar && (body.potcar as { mode: string }).mode === 'include' ? generated : { mode: 'omit', status: 'omitted', steps: [] }, file_tree: fileTreeFixture }); }),
+    );
+    try {
+      const user = userEvent.setup(); renderPage(); await uploadAndEnterConfirm(user); await openSummaryModal(user); await confirmAndWaitPlan(user);
+      await user.click(screen.getByRole('radio', { name: '从本地库包含 POTCAR' }));
+      expect(screen.getByRole('button', { name: /下一步：生成文件/ })).toBeDisabled();
+      await waitFor(() => expect(screen.getByRole('button', { name: '读取 / 刷新工作流 POTCAR 预览' })).toBeEnabled());
+      await user.click(screen.getByRole('button', { name: '读取 / 刷新工作流 POTCAR 预览' }));
+      await waitFor(() => expect(screen.getByRole('checkbox')).toBeEnabled());
+      expect(replayBodies[0]).toEqual({ workflow_id: workflowPlanFixture.workflow_id, patches: [], potcar: { mode: 'include' } });
+      await user.click(screen.getByRole('checkbox')); await user.click(screen.getByRole('button', { name: '确认并准备工作流 POTCAR' }));
+      await waitFor(() => expect(screen.getByRole('button', { name: /下一步：生成文件/ })).toBeEnabled());
+      await user.click(screen.getByRole('button', { name: /下一步：生成文件/ }));
+      await waitFor(() => expect(generationBodies).toHaveLength(1));
+      expect(screen.getByRole('button', { name: '编辑参数 (可选)' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: /上一步/ })).toBeDisabled();
+      expect(screen.getByText('POTCAR 已核验，正在加入工作流文件')).toBeInTheDocument();
+      await act(async () => releaseGeneration());
+      await screen.findByRole('button', { name: /下载工作流/ });
+      expect(screen.getByText('POTCAR 已加入工作流文件')).toBeInTheDocument();
+      expect(screen.queryByText('POTCAR 已核验，等待加入工作流文件')).not.toBeInTheDocument();
+      expect(generationBodies[0]).toMatchObject({ potcar: { mode: 'include', artifact_id: artifact.artifact_id } });
+      expect(screen.getByText(/文件准备不会启动计算/)).toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: /修改参数后重新生成/ }));
+      expect(screen.getByRole('button', { name: /下一步：生成文件/ })).toBeDisabled();
+      await user.click(screen.getByRole('radio', { name: '不包含，后续自行补齐' }));
+      await user.click(screen.getByRole('button', { name: /下一步：生成文件/ }));
+      await screen.findByRole('button', { name: /下载工作流/ });
+      expect(generationBodies[1]).toMatchObject({ potcar: { mode: 'omit' } });
+      expect((generationBodies[1].potcar as Record<string, unknown>).artifact_id).toBeUndefined();
+    } finally { vi.restoreAllMocks(); }
+  });
+
   it('保留计划、可选编辑、生成、重新生成、下载与新工作流重置的真实请求路径', async () => {
     useFastMocks();
     const generationBodies: unknown[] = [];
