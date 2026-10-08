@@ -122,6 +122,13 @@ if '--environment-smoke' in sys.argv:
     print('Evidence: '+str(OUT),flush=True)
     sys.exit(0)
 
+r,c,i=run('metadata-sharing',mode='metadata-sharing')
+assert r['outcomes'][0]['ok'] and all(r['metadataChecks'].values()) and not c,r
+record('metadata-readers-share-writes-and-atomic-replacement-with-live-writer-progress-and-log')
+if '--metadata-sharing-only' in sys.argv:
+    print('Evidence: '+str(OUT),flush=True)
+    sys.exit(0)
+
 
 r,c,i=run('successful-full-three-services')
 assert r['outcomes'][0]['ok'] and len(c)==1,r

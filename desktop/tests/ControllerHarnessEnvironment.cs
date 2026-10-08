@@ -22,6 +22,50 @@ class EnvironmentHarness
         var outcomes = new List<object>();
         using (var controller = new LauncherController(args[2]))
         {
+            if (mode == "metadata-sharing")
+            {
+                var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+                string metadata = Path.Combine(evidence, "shared-progress.json");
+                string replacement = metadata + ".tmp";
+                File.WriteAllText(metadata, "before");
+                bool legacyWriteBlocked = false, legacyReplaceBlocked = false;
+                // Reproduce the old File.ReadAllText sharing mode without timing races.
+                using (var reader = new StreamReader(new FileStream(metadata, FileMode.Open, FileAccess.Read, FileShare.Read)))
+                {
+                    try { File.WriteAllText(metadata, "write"); } catch (IOException) { legacyWriteBlocked = true; }
+                    File.WriteAllText(replacement, "replacement");
+                    try { File.Replace(replacement, metadata, null); } catch (IOException) { legacyReplaceBlocked = true; }
+                }
+                bool writerAllowed = false, replacementAllowed = false, oldSnapshotReadable = false;
+                var openReader = typeof(LauncherController).GetMethod("OpenPreparationReader", BindingFlags.Static | BindingFlags.NonPublic);
+                using (var reader = (StreamReader)openReader.Invoke(null, new object[] { metadata }))
+                {
+                    File.WriteAllText(metadata, "snapshot"); writerAllowed = true;
+                    File.WriteAllText(replacement, "replacement");
+                    File.Replace(replacement, metadata, null); replacementAllowed = true;
+                    oldSnapshotReadable = reader.ReadToEnd() == "snapshot";
+                }
+                File.WriteAllText(metadata, json.Serialize(new { stage = "install", message = "synthetic shared progress" }));
+                // Exercise the actual poll consumer with a writer still owning its handle.
+                using (var writer = new FileStream(metadata, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite | FileShare.Delete))
+                    typeof(LauncherController).GetMethod("ReadPreparationProgress", flags).Invoke(controller, new object[] { metadata, "" });
+                bool progressRead = controller.GetSnapshot().StartupStage == "environment_install";
+                string state = Path.Combine(evidence, "metadata-state"), log = Path.Combine(state, "logs", "owned.local.log");
+                Directory.CreateDirectory(Path.GetDirectoryName(log)); File.WriteAllText(log, "synthetic");
+                File.WriteAllText(metadata, json.Serialize(new { log_path = log }));
+                object[] logArgs = { metadata, state, Path.Combine(state, "logs") };
+                using (var writer = new FileStream(metadata, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite | FileShare.Delete))
+                    typeof(LauncherController).GetMethod("ReadPreparationLog", flags).Invoke(controller, logArgs);
+                bool logRead = String.Equals((string)logArgs[2], log, StringComparison.Ordinal);
+                bool passed = legacyWriteBlocked && legacyReplaceBlocked && writerAllowed && replacementAllowed && oldSnapshotReadable && progressRead && logRead;
+                File.WriteAllText(Path.Combine(evidence, "result.json"), json.Serialize(new {
+                    outcomes = new [] { new { ok = passed, error = passed ? "" : "metadata sharing regression", selectedPython = (string)null,
+                        environmentFailureLogPath = (string)null, running = false, snapshot = controller.GetSnapshot() } },
+                    metadataChecks = new { legacyWriteBlocked, legacyReplaceBlocked, writerAllowed, replacementAllowed, oldSnapshotReadable, progressRead, logRead },
+                    stages, running = false, defaultsOff = !new LauncherOptions().AutoPrepareEnvironment,
+                    parentSecretUnchanged = Environment.GetEnvironmentVariable("OPENAI_API_KEY") == "synthetic-controller-secret" }));
+                return passed ? 0 : 1;
+            }
             if (mode == "discovery-probe")
             {
                 // Other supported Pythons may legitimately precede py.exe on this

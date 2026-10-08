@@ -332,12 +332,22 @@ namespace VaspCopilot.Launcher
             catch (LauncherException) { EnvironmentFailureLogPath = File.Exists(preparationLog) ? preparationLog : null; throw; }
             catch { EnvironmentFailureLogPath = File.Exists(preparationLog) ? preparationLog : null; throw new LauncherException("独立环境准备失败；已清理所属安装进程，可重试。日志目录：" + Path.Combine(state, "logs")); }
         }
+        private static StreamReader OpenPreparationReader(string file)
+        {
+            // Helpers update metadata while we poll. Windows readers must allow both
+            // writes and atomic replacement; File.ReadAllText's FileShare.Read can
+            // otherwise make the helper fail with a sharing violation.
+            return new StreamReader(new FileStream(file, FileMode.Open, FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete), Encoding.UTF8, true);
+        }
         private void ReadPreparationLog(string file, string state, ref string previous)
         {
             try
             {
                 if (!File.Exists(file)) return;
-                var data = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(File.ReadAllText(file));
+                string text;
+                using (var reader = OpenPreparationReader(file)) text = reader.ReadToEnd();
+                var data = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(text);
                 if (!data.ContainsKey("log_path")) return;
                 string log = Convert.ToString(data["log_path"]);
                 if (!Path.IsPathRooted(log)) return;
@@ -353,7 +363,8 @@ namespace VaspCopilot.Launcher
             try
             {
                 if (!File.Exists(file)) return;
-                string current = File.ReadAllText(file);
+                string current;
+                using (var reader = OpenPreparationReader(file)) current = reader.ReadToEnd();
                 if (current == previous) return;
                 var data = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(current);
                 string stage = Convert.ToString(data["stage"]), detail = Convert.ToString(data["message"]);
