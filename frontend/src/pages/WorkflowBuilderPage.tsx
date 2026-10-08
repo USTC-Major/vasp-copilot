@@ -2,12 +2,12 @@
 // WorkflowBuilderPage — 串联上传→解析→计划→生成→下载完整流程
 // ============================================================
 
-import React, { useState, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { Steps, Button, Space, Card, Result, Typography, Input, Alert } from 'antd';
 import { ReloadOutlined, DownloadOutlined, ArrowRightOutlined, ArrowLeftOutlined, RobotOutlined, GlobalOutlined } from '@ant-design/icons';
 import WorkflowPotcarPanel from '../components/potcar/WorkflowPotcarPanel';
 import { workflowsApi } from '../api/client';
-import type { WorkflowPotcarChoice, WorkflowPotcarState } from '../types/potcar';
+import type { WorkflowPotcarChoice } from '../types/potcar';
 import StructureUploadPanel from '../components/upload/StructureUploadPanel';
 import MaterialsProjectPanel from '../components/upload/MaterialsProjectPanel';
 import ParameterConfirmForm, { type ParameterConfirmFormData } from '../components/workflow/ParameterConfirmForm';
@@ -20,8 +20,8 @@ import CrystalViewer from '../components/structure/CrystalViewer';
 import ErrorAlert from '../components/common/ErrorAlert';
 import AiPlanAssistant, { type AiPlanAssistantResult } from '../components/workflow/AiPlanAssistant';
 import { useWorkflowPlan, useWorkflowGenerate, useWorkflowDownload, useFeatureFlags } from '../hooks/useApi';
-import type { StructureSummary, WorkflowPlan, FileTreeNode, ParameterPatch } from '../types/generated-api';
-import type { WorkflowStatus } from '../types/enums';
+import type { StructureSummary, WorkflowPlan, ParameterPatch } from '../types/generated-api';
+import { useWorkflowDraft, setWorkflowDraftField, resetWorkflowDraft, getWorkflowDraft, type WorkflowStep } from '../stores/workflowDraft';
 import { formatMaterialId } from '../utils/materialId';
 import type {
   DftuSettingsRequest,
@@ -41,7 +41,26 @@ const ALLOWED_PARAMS: { parameter: string; type: string; minimum?: number; maxim
   { parameter: 'SIGMA', type: 'number' },
 ];
 
-type StepKey = 'upload' | 'confirm' | 'plan' | 'edit' | 'generate' | 'download';
+type StepKey = WorkflowStep;
+
+const draftSetters = {
+  setCurrentStep: (value: Parameters<typeof setWorkflowDraftField<'currentStep'>>[1]) => setWorkflowDraftField('currentStep', value),
+  setStructureId: (value: Parameters<typeof setWorkflowDraftField<'structureId'>>[1]) => setWorkflowDraftField('structureId', value),
+  setSummary: (value: Parameters<typeof setWorkflowDraftField<'summary'>>[1]) => setWorkflowDraftField('summary', value),
+  setSampleName: (value: Parameters<typeof setWorkflowDraftField<'sampleName'>>[1]) => setWorkflowDraftField('sampleName', value),
+  setWorkflowPlan: (value: Parameters<typeof setWorkflowDraftField<'workflowPlan'>>[1]) => setWorkflowDraftField('workflowPlan', value),
+  setWorkflowId: (value: Parameters<typeof setWorkflowDraftField<'workflowId'>>[1]) => setWorkflowDraftField('workflowId', value),
+  setFileTree: (value: Parameters<typeof setWorkflowDraftField<'fileTree'>>[1]) => setWorkflowDraftField('fileTree', value),
+  setPotcarChoice: (value: Parameters<typeof setWorkflowDraftField<'potcarChoice'>>[1]) => setWorkflowDraftField('potcarChoice', value),
+  setPotcarResult: (value: Parameters<typeof setWorkflowDraftField<'potcarResult'>>[1]) => setWorkflowDraftField('potcarResult', value),
+  setPatches: (value: Parameters<typeof setWorkflowDraftField<'patches'>>[1]) => setWorkflowDraftField('patches', value),
+  setPatchRows: (value: Parameters<typeof setWorkflowDraftField<'patchRows'>>[1]) => setWorkflowDraftField('patchRows', value),
+  setFormValues: (value: Parameters<typeof setWorkflowDraftField<'formValues'>>[1]) => setWorkflowDraftField('formValues', value),
+  setGenerationNeedsCheck: (value: Parameters<typeof setWorkflowDraftField<'generationNeedsCheck'>>[1]) => setWorkflowDraftField('generationNeedsCheck', value),
+};
+
+const { setCurrentStep, setStructureId, setSummary, setSampleName, setWorkflowPlan, setWorkflowId,
+    setFileTree, setPotcarChoice, setPotcarResult, setPatches, setPatchRows, setFormValues, setGenerationNeedsCheck } = draftSetters;
 
 const defaultSampleName = (summary: StructureSummary): string => {
   const divisor = summary.counts.reduce((a, b) => {
@@ -193,20 +212,24 @@ const buildPlanBody = (structureId: string, snapshot: WorkflowConfirmSnapshot): 
   },
 });
 
+const invalidateGeneration = () => {
+  setWorkflowDraftField('generationNeedsCheck', false);
+  setWorkflowDraftField('generationRequest', null);
+  setWorkflowDraftField('lastGenerationKey', null);
+};
+
 const WorkflowBuilderPage: React.FC = () => {
-  const [currentStep, setCurrentStep] = useState<StepKey>('upload');
-  const [structureId, setStructureId] = useState<string | null>(null);
-  const [summary, setSummary] = useState<StructureSummary | null>(null);
-  const [sampleName, setSampleName] = useState('');
-  const [workflowPlan, setWorkflowPlan] = useState<WorkflowPlan | null>(null);
-  const [workflowId, setWorkflowId] = useState<string | null>(null);
-  const [fileTree, setFileTree] = useState<FileTreeNode | null>(null);
-  const [potcarChoice, setPotcarChoice] = useState<WorkflowPotcarChoice>({ mode: 'omit' });
-  const [potcarResult, setPotcarResult] = useState<WorkflowPotcarState | undefined>();
+  const { currentStep, structureId, summary, sampleName, workflowPlan, workflowId, fileTree,
+    potcarChoice, potcarResult, patches, patchRows, formValues, generationNeedsCheck } = useWorkflowDraft();
   const draftEpoch = useRef(0);
+  const mounted = useRef(true);
+  const inputVersion = useRef(0);
+  const [inputEpoch, setInputEpoch] = useState(0);
+  const [uploadKey, setUploadKey] = useState(0);
+  const invalidateStructureInputs = useCallback(() => setInputEpoch(++inputVersion.current), []);
   const generateLock = useRef(false);
-  const [patches, setPatches] = useState<ParameterPatch[]>([]);
-  const [, setWorkflowStatus] = useState<WorkflowStatus>('draft');
+  const [checkingGeneration, setCheckingGeneration] = useState(false);
+  const [checkMessage, setCheckMessage] = useState('');
   const [showAiPanel, setShowAiPanel] = useState(false);
   const [showMpPanel, setShowMpPanel] = useState(false);
   const [confirmSnapshot, setConfirmSnapshot] = useState<WorkflowConfirmSnapshot | null>(null);
@@ -226,32 +249,84 @@ const WorkflowBuilderPage: React.FC = () => {
         ? 'enabled'
         : 'disabled';
 
-  const handleStructureAnalyzed = useCallback((structId: string, structSummary: StructureSummary) => {
+  const retirePage = useCallback(() => {
+    mounted.current = false;
+    ++draftEpoch.current;
+    const current = getWorkflowDraft();
+    // An unfinished transport is not evidence that generation completed.
+    if (generateLock.current) setGenerationNeedsCheck(true);
+    setPotcarChoice({ mode: current.potcarChoice.mode });
+    if (!current.fileTree) setPotcarResult(undefined);
+  }, []);
+  useEffect(() => {
+    mounted.current = true;
+    return retirePage;
+  }, [retirePage]);
+
+  const handleNewWorkflow = useCallback(() => {
+    ++draftEpoch.current;
+    resetWorkflowDraft();
+    invalidateStructureInputs(); setUploadKey(key => key + 1);
+    setConfirmSnapshot(null); setShowAiPanel(false); setShowMpPanel(false);
+    setCheckMessage(''); planMutation.reset(); generateMutation.reset(); downloadMutation.reset();
+  }, [planMutation, generateMutation, downloadMutation, invalidateStructureInputs]);
+
+  const handleCheckGeneration = useCallback(async () => {
+    if (!workflowId || checkingGeneration) return;
+    const token = draftEpoch.current;
+    setCheckingGeneration(true);
+    try {
+      const current = await workflowsApi.get(workflowId);
+      if (!mounted.current || token !== draftEpoch.current) return;
+      const expected = getWorkflowDraft().generationRequest;
+      if (expected?.canRecoverArtifact && current.workflow_id === expected.workflowId &&
+          current.revision === expected.revision && current.file_tree &&
+          ['generated', 'ready_to_download'].includes(current.workflow_status)) {
+        setPotcarResult(current.potcar); setFileTree(current.file_tree);
+        setGenerationNeedsCheck(false); setCurrentStep('generate'); setCheckMessage('');
+      } else {
+        setCheckMessage('尚未核实本次计划的生成结果；已有旧产物不能证明本次生成完成。请稍后检查，或保留参数重新确认新计划。');
+      }
+    } catch {
+      if (mounted.current && token === draftEpoch.current) setCheckMessage('无法确认服务端结果，请恢复连接后再检查；草稿仍保留。');
+    } finally { if (mounted.current) setCheckingGeneration(false); }
+  }, [workflowId, checkingGeneration]);
+
+  const aiEpoch = draftEpoch.current;
+
+  const handleStructureAnalyzed = useCallback((structId: string, structSummary: StructureSummary, source: 'upload' | 'mp') => {
+    if (!mounted.current || inputEpoch !== inputVersion.current) return;
+    invalidateStructureInputs();
+    setShowMpPanel(false);
+    if (source === 'mp') setUploadKey(key => key + 1);
     ++draftEpoch.current; setPotcarChoice({ mode: 'omit' }); setPotcarResult(undefined);
+    setFormValues(undefined); setConfirmSnapshot(null); invalidateGeneration();
     setStructureId(structId);
     setSummary(structSummary);
     setSampleName(defaultSampleName(structSummary));
     setWorkflowPlan(null);
     setWorkflowId(null);
     setFileTree(null);
-    setPatches([]);
-  }, []);
+    setPatches([]); setPatchRows(undefined);
+  }, [inputEpoch, invalidateStructureInputs]);
 
   const handleSampleNameChange = useCallback((value: string) => {
     ++draftEpoch.current; setPotcarChoice({ mode: 'omit' }); setPotcarResult(undefined);
+    invalidateGeneration();
     setSampleName(value);
     setConfirmSnapshot(null);
     setWorkflowPlan(null);
     setWorkflowId(null);
     setFileTree(null);
-    setPatches([]);
+    setPatches([]); setPatchRows(undefined);
   }, []);
 
   const handleAiAccepted = useCallback((result: AiPlanAssistantResult) => {
-    ++draftEpoch.current; setPotcarChoice({ mode: 'omit' }); setPotcarResult(undefined); setPatches([]);
+    if (!mounted.current) return;
+    ++draftEpoch.current; setPotcarChoice({ mode: 'omit' }); setPotcarResult(undefined); setPatches([]); setPatchRows(undefined);
+    invalidateGeneration();
     setWorkflowPlan(result as unknown as WorkflowPlan);
     setWorkflowId(result.workflow_id);
-    setWorkflowStatus('planned');
     setCurrentStep('plan');
     setShowAiPanel(false);
   }, []);
@@ -279,14 +354,16 @@ const WorkflowBuilderPage: React.FC = () => {
       return;
     }
     submitLock.current = true;
+    const token = draftEpoch.current;
     try {
       const plan = await planMutation.mutateAsync(buildPlanBody(structureId, confirmSnapshot));
+      if (!mounted.current || token !== draftEpoch.current) return;
       // 成功：关闭并清空快照，进入计划步骤。
       setConfirmSnapshot(null);
-      ++draftEpoch.current; setPotcarChoice({ mode: 'omit' }); setPotcarResult(plan.potcar); setPatches([]);
+      ++draftEpoch.current; setPotcarChoice({ mode: 'omit' }); setPotcarResult(plan.potcar); setPatches([]); setPatchRows(undefined);
+      invalidateGeneration();
       setWorkflowPlan(plan);
       setWorkflowId(plan.workflow_id);
-      setWorkflowStatus(plan.workflow_id ? 'planned' : 'draft');
       setCurrentStep('plan');
     } catch {
       // 失败：保留不可变快照，允许用户安全重试（错误由 ErrorAlert 展示）。
@@ -313,34 +390,44 @@ const WorkflowBuilderPage: React.FC = () => {
     return workflowsApi.replan(workflowId, patches, { mode: 'include' });
   }, [workflowId, patches]);
   const handleGenerate = useCallback(async () => {
-    if (!workflowId || generateLock.current || (potcarChoice.mode === 'include' && !potcarChoice.artifact_id)) return;
+    if (!workflowId || !workflowPlan || generationNeedsCheck || generateLock.current || (potcarChoice.mode === 'include' && !potcarChoice.artifact_id)) return;
     generateLock.current = true;
     const token = draftEpoch.current;
+    const attemptKey = `${workflowId}:${workflowPlan.revision}`;
+    setWorkflowDraftField('generationRequest', {
+      workflowId, revision: workflowPlan.revision,
+      // Any retry at the same revision may expose the previous bundle before the
+      // new request reaches the server, including include. GET cannot prove which attempt won.
+      canRecoverArtifact: getWorkflowDraft().lastGenerationKey !== attemptKey,
+    });
+    setWorkflowDraftField('lastGenerationKey', attemptKey);
     if (potcarChoice.mode === 'include') setPotcarResult({ ...potcarChoice, status: 'generating', steps: workflowPlan?.steps.map(step => ({ step_id: step.step_id, status: 'generating' })) ?? [] });
     try {
-      const result = await generateMutation.mutateAsync({ workflowId, patches, ...(potcarChoice.mode === 'include' || workflowPlan?.potcar?.mode === 'include' ? { potcar: potcarChoice } : {}) });
-      if (token !== draftEpoch.current) return;
+      // Explicit omit also overrides a replan that finished server-side after navigation.
+      const result = await generateMutation.mutateAsync({ workflowId, patches, potcar: potcarChoice });
+      if (!mounted.current || token !== draftEpoch.current) return;
       setPotcarResult(result.potcar);
-      setWorkflowStatus('generated');
       setFileTree(result.file_tree);
       setCurrentStep('generate');
     } catch {
-      if (token !== draftEpoch.current) return;
+      if (!mounted.current || token !== draftEpoch.current) return;
       setFileTree(null);
       if (potcarChoice.mode === 'include') {
         // Retrieve the canonical failure and per-step state from the same server record.
         try {
           const failed = await workflowsApi.get(workflowId);
-          if (token === draftEpoch.current) setPotcarResult(failed.potcar ?? { ...potcarChoice, status: 'failed', steps: [] });
-        } catch { if (token === draftEpoch.current) setPotcarResult({ ...potcarChoice, status: 'failed', steps: [] }); }
+          if (mounted.current && token === draftEpoch.current) setPotcarResult(failed.potcar ?? { ...potcarChoice, status: 'failed', steps: [] });
+        } catch { if (mounted.current && token === draftEpoch.current) setPotcarResult({ ...potcarChoice, status: 'failed', steps: [] }); }
       }
     } finally { generateLock.current = false; }
-  }, [workflowId, patches, potcarChoice, workflowPlan, generateMutation]);
+  }, [workflowId, patches, potcarChoice, workflowPlan, generateMutation, generationNeedsCheck]);
 
   const handleDownload = useCallback(async () => {
     if (!workflowId) return;
+    const token = draftEpoch.current;
     try {
       const blob = await downloadMutation.mutateAsync(workflowId);
+      if (!mounted.current || token !== draftEpoch.current) return;
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -384,7 +471,7 @@ const WorkflowBuilderPage: React.FC = () => {
     <div className="wf-page">
       <div className="wf-page-heading">
         <div><Title level={3}>生成工作流</Title><p>上传结构，确认计算设置，检查计划与输入文件。</p></div>
-        <span className="wf-phase"><strong>{String(currentStepIndex + 1).padStart(2, '0')} / 06</strong>{steps[currentStepIndex].title}</span>
+        <Space>{structureId && <Button onClick={handleNewWorkflow} disabled={planMutation.isPending || generateMutation.isPending}>新建工作流</Button>}<span className="wf-phase"><strong>{String(currentStepIndex + 1).padStart(2, '0')} / 06</strong>{steps[currentStepIndex].title}</span></Space>
       </div>
       <div className="wf-stage-rail">
       <Steps
@@ -398,14 +485,14 @@ const WorkflowBuilderPage: React.FC = () => {
       {/* Step 1: 上传 */}
       {currentStep === 'upload' && (
         <>
-          <StructureUploadPanel onStructureAnalyzed={handleStructureAnalyzed} />
+          <StructureUploadPanel key={uploadKey} onStructureAnalyzed={(id, value) => handleStructureAnalyzed(id, value, 'upload')} />
           <Card style={{ marginTop: 16 }}>
             <Space wrap>
               <Button
                 size="large"
                 type={showMpPanel ? 'default' : 'dashed'}
                 icon={<GlobalOutlined />}
-                onClick={() => { setShowMpPanel((v) => !v); setShowAiPanel(false); }}
+                onClick={() => { invalidateStructureInputs(); setUploadKey(key => key + 1); setShowMpPanel((v) => !v); setShowAiPanel(false); }}
               >
                 {showMpPanel ? '收起 Materials Project 导入' : '从 Materials Project 导入（可选）'}
               </Button>
@@ -413,18 +500,19 @@ const WorkflowBuilderPage: React.FC = () => {
           </Card>
           {showMpPanel && (
             <div style={{ marginTop: 16 }}>
-              <MaterialsProjectPanel onStructureImported={handleStructureAnalyzed} />
+              <MaterialsProjectPanel key={uploadKey} onStructureImported={(id, value) => handleStructureAnalyzed(id, value, 'mp')} />
             </div>
           )}
           {summary && (
             <Card style={{ marginTop: 16 }}>
+              <Typography.Paragraph>当前草稿结构：{summary.formula} · {summary.atom_count} 原子</Typography.Paragraph>
               <SampleNameEditor summary={summary} value={sampleName} onChange={handleSampleNameChange} />
               <Space wrap>
                 <Button
                   type="primary"
                   size="large"
                   icon={<ArrowRightOutlined />}
-                  onClick={() => setCurrentStep('confirm')}
+                  onClick={() => { invalidateStructureInputs(); setCurrentStep('confirm'); }}
                   disabled={!sampleNameValid(sampleName)}
                 >
                   下一步：确认参数
@@ -449,7 +537,7 @@ const WorkflowBuilderPage: React.FC = () => {
                 sampleName={effectiveSampleName(summary, sampleName)}
                 formula={summary.formula}
                 elements={summary.elements}
-                onAccepted={handleAiAccepted}
+                onAccepted={result => { if (aiEpoch === draftEpoch.current) handleAiAccepted(result); }}
               />
             </div>
           )}
@@ -461,6 +549,8 @@ const WorkflowBuilderPage: React.FC = () => {
         <>
         <SampleNameEditor summary={summary} value={sampleName} onChange={handleSampleNameChange} />
         <ParameterConfirmForm
+          initialValues={formValues}
+          onDraftChange={setFormValues}
           elements={summary.elements}
           transitionMetals={summary.transition_metals}
           bandWorkflowStatus={bandWorkflowStatus}
@@ -499,17 +589,36 @@ const WorkflowBuilderPage: React.FC = () => {
       {currentStep === 'edit' && workflowPlan && (
         <ParameterPatchEditor
           patches={patches}
+          draftRows={patchRows}
+          onDraftRowsChange={setPatchRows}
           currentValues={currentValues}
           allowedParams={ALLOWED_PARAMS}
           onPatchesChange={handlePatchesChange}
         />
       )}
 
-      {workflowPlan && ['plan', 'edit', 'generate', 'download'].includes(currentStep) && <WorkflowPotcarPanel
+      {workflowPlan && ['plan', 'edit'].includes(currentStep) && <WorkflowPotcarPanel
         plan={workflowPlan} draftKey={JSON.stringify(patches)} choice={potcarChoice} onChoice={handlePotcarChoice}
         preparePlan={preparePotcarPlan} onPlanPrepared={setWorkflowPlan} generation={potcarResult}
         disabled={generateMutation.isPending || currentStep === 'download'}
       />}
+
+      {fileTree && (currentStep === 'generate' || currentStep === 'download') && (
+        <Alert type="info" showIcon style={{ marginTop: 16 }} message={potcarResult?.mode === 'include' ? 'POTCAR 已加入工作流文件' : '已生成的工作流不包含 POTCAR，运行前需自行补齐。'}
+        description={potcarResult?.mode === 'include' ? '修改参数或重新生成时须重新预览确认。文件准备不会启动计算。' : '文件准备不会启动计算。'} />
+      )}
+      {generationNeedsCheck && <Alert type="warning" showIcon style={{ marginTop: 16 }}
+        message="离开页面时生成结果尚未确认，未自动重新生成。"
+        description={<Space direction="vertical">
+          <span>{checkMessage || '请先检查服务端结果；未完成时可稍后再次检查。'}</span>
+          <Button loading={checkingGeneration} onClick={() => void handleCheckGeneration()}>检查服务端生成结果</Button>
+          <span>重新规划会清除手工参数补丁和赝势确认，需重新核对。</span>
+          <Button disabled={checkingGeneration} onClick={() => {
+            ++draftEpoch.current; invalidateGeneration(); setWorkflowPlan(null); setWorkflowId(null);
+            setFileTree(null); setPotcarChoice({ mode: 'omit' }); setPotcarResult(undefined);
+            setPatches([]); setPatchRows(undefined); setCurrentStep('confirm');
+          }}>{patches.length || patchRows?.some(row => row.selected) ? '保留表单，清除手工补丁并重新规划' : '保留表单，重新规划'}</Button>
+        </Space>} />}
 
       {/* Step 5: 生成文件 */}
       {currentStep === 'generate' && fileTree && (
@@ -558,15 +667,7 @@ const WorkflowBuilderPage: React.FC = () => {
             </Button>,
             <Button
               key="new"
-              onClick={() => {
-                ++draftEpoch.current; setPotcarChoice({ mode: 'omit' }); setPotcarResult(undefined); setPatches([]);
-                setCurrentStep('upload');
-                setStructureId(null);
-                setSummary(null);
-                setWorkflowPlan(null);
-                setWorkflowId(null);
-                setFileTree(null);
-              }}
+              onClick={handleNewWorkflow}
             >
               开始新的工作流
             </Button>,
@@ -615,7 +716,7 @@ const WorkflowBuilderPage: React.FC = () => {
                 type="primary"
                 icon={<ArrowRightOutlined />}
                 onClick={handleGenerate}
-                disabled={potcarChoice.mode === 'include' && !potcarChoice.artifact_id}
+                disabled={generationNeedsCheck || (potcarChoice.mode === 'include' && !potcarChoice.artifact_id)}
                 loading={generateMutation.isPending}
               >
                 下一步：生成文件
@@ -626,7 +727,7 @@ const WorkflowBuilderPage: React.FC = () => {
                 type="primary"
                 icon={<ArrowRightOutlined />}
                 onClick={handleGenerate}
-                disabled={potcarChoice.mode === 'include' && !potcarChoice.artifact_id}
+                disabled={generationNeedsCheck || (potcarChoice.mode === 'include' && !potcarChoice.artifact_id)}
                 loading={generateMutation.isPending}
               >
                 下一步：生成文件

@@ -84,7 +84,7 @@
 
 | parameter | value | 标识 | source ID | version |
 |---|---|---|---|---|
-| EDIFF | `1e-05` | Recipe 初始推荐 | precision.standard | 1.0.0 |
+| EDIFF | `1e-06` | Recipe 初始推荐 | precision.standard.scf | 1.0.0 |
 | ENCUT | `520` | 确定性派生/规则修复 | derive_encut_from_precision | - |
 | IBRION | `-1` | Recipe 初始推荐 | task.static.standard | 1.0.0 |
 | ISIF | `2` | Recipe 初始推荐 | task.static.standard | 1.0.0 |
@@ -100,7 +100,7 @@
 | LREAL | `Auto` | Recipe 初始推荐 | base.vasp | 1.0.0 |
 | LWAVE | `.TRUE.` | Recipe 初始推荐 | task.static.standard | 1.0.0 |
 | MAGMOM | `5 5 0.6 0.6 0.6` | 确定性派生/规则修复 | generate_magmom_from_structure | - |
-| NELM | `100` | Recipe 初始推荐 | precision.standard | 1.0.0 |
+| NELM | `100` | Recipe 初始推荐 | precision.standard.scf | 1.0.0 |
 | NSW | `0` | Recipe 初始推荐 | task.static.standard | 1.0.0 |
 | PREC | `Accurate` | Recipe 初始推荐 | base.vasp | 1.0.0 |
 | SIGMA | `0.2` | Recipe 初始推荐 | electronic.metal | 1.0.0 |
@@ -110,7 +110,7 @@
 
 | parameter | value | 标识 | source ID | version |
 |---|---|---|---|---|
-| EDIFF | `1e-05` | Recipe 初始推荐 | precision.standard | 1.0.0 |
+| EDIFF | `1e-06` | Recipe 初始推荐 | precision.standard.scf | 1.0.0 |
 | EMAX | `10` | Recipe 初始推荐 | task.dos.standard | 1.0.0 |
 | EMIN | `-10` | Recipe 初始推荐 | task.dos.standard | 1.0.0 |
 | ENCUT | `520` | 确定性派生/规则修复 | derive_encut_from_precision | - |
@@ -130,7 +130,7 @@
 | LWAVE | `.FALSE.` | Recipe 初始推荐 | base.vasp | 1.0.0 |
 | MAGMOM | `5 5 0.6 0.6 0.6` | 确定性派生/规则修复 | generate_magmom_from_structure | - |
 | NEDOS | `2000` | Recipe 初始推荐 | task.dos.standard | 1.0.0 |
-| NELM | `100` | Recipe 初始推荐 | precision.standard | 1.0.0 |
+| NELM | `100` | Recipe 初始推荐 | precision.standard.scf | 1.0.0 |
 | NSW | `0` | Recipe 初始推荐 | task.dos.standard | 1.0.0 |
 | PREC | `Accurate` | Recipe 初始推荐 | base.vasp | 1.0.0 |
 | SYSTEM | `Fe2O3_dos` | 确定性派生/规则修复 | derive_system_label | - |
@@ -139,7 +139,7 @@
 
 ## 7. warning 与门控结论
 
-- warning 统计：high 4 / medium 11 / info 1
+- warning 统计：high 4 / medium 11 / info 0
 - 当前不可提交步骤：`01_relax`, `02_static`, `03_dos`
 - 待补文件：POTCAR；上游运行时产物（CONTCAR/CHGCAR）需实际计算后产生。
 - 待确认字段：无。
@@ -151,7 +151,6 @@
   - [medium] MAGMOM_INITIAL_GUESS：初始磁矩仅为起点，请确认元素级初值；不保证是基态磁结构。
   - [medium] INITIAL_RECOMMENDATION_ONLY：这是初始推荐，不是唯一正确设置。
   - [medium] INITIAL_RECOMMENDATION_ONLY：这是初始推荐，不是唯一正确设置。
-  - [info] STATIC_TIGHTER_EDIFF_HINT：static 建议比 relax 更严的 EDIFF；如需 1E-6 请选择 high 精度档或提交 EDIFF patch。
   - [medium] METAL_SMEARING_REQUIRES_CONFIRMATION：金属展宽设置需用户确认，初始值仅为起点。
   - [high] DFTU_USER_VALUE_REQUIRED：U/J/L 来自用户输入，不代表系统断言其可靠；请记录来源。
   - [medium] MAGMOM_INITIAL_GUESS：初始磁矩仅为起点，请确认元素级初值；不保证是基态磁结构。

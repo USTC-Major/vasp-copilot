@@ -1,5 +1,5 @@
 {
-  "bundle_sha256": "e6795dc9057f8b46aea7d7537e242f4467eb7015a7d8aff50930a753feb09cbb",
+  "bundle_sha256": "541607a0ec98435d73b36a06a6ec377ebdbf73dddb57eabd2dbdab2c57471309",
   "created_at": "2026-08-10T00:00:00Z",
   "files": [
     {
@@ -44,8 +44,8 @@
     },
     {
       "path": "INPUT_CHECK_REPORT.md",
-      "sha256": "b526deafb27617a093c67978c170efe33b9d4035a821837ad0f790fc0ab18116",
-      "size_bytes": 4554
+      "sha256": "5c39a559037592e88e9b6752c49ab81cc9564c9572f0cefaa2337da8d0e0821b",
+      "size_bytes": 4615
     },
     {
       "path": "POTCAR_REQUIRED.md",
@@ -54,13 +54,13 @@
     },
     {
       "path": "README_run_order.md",
-      "sha256": "f1cfc2c1ea588885c0a987b963137aea8baebb0543bd817dbddc181cd7b8caa5",
-      "size_bytes": 1533
+      "sha256": "fcbf02baddff759da4a561a33f05922e1a2d1f1c496b4996b85157ba67225242",
+      "size_bytes": 1594
     },
     {
       "path": "workflow_plan.json",
-      "sha256": "d1a29585a3110d922de073ad1d12e814e18f1e69ac409babb811007d47d966ae",
-      "size_bytes": 9001
+      "sha256": "f900e84eb8b5eebf2930184a63e10f0616d8ebde0e136226e775b50b83ff19de",
+      "size_bytes": 9062
     }
   ],
   "generator_version": "0.1.0",
@@ -85,8 +85,8 @@
       }
     ]
   },
-  "recipe_pack_sha256": "3f67b649afdd798a5eeb47ecbf64e3242e10a9ddc6ddf3ba200308d9b9351c01",
-  "recipe_pack_version": "1.0.0",
+  "recipe_pack_sha256": "4ac1fe5ce6b614c2f28663d55f8988f0decbe57d5fc651be9675f74a6599c386",
+  "recipe_pack_version": "1.1.0",
   "revision": 1,
   "workflow_id": "wf_nacl"
 }

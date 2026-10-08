@@ -82,8 +82,8 @@
         "display_name": "VASP MVP Core Recipe Pack",
         "pack_id": "vasp-mvp-core",
         "schema_version": "1.0",
-        "sha256": "3f67b649afdd798a5eeb47ecbf64e3242e10a9ddc6ddf3ba200308d9b9351c01",
-        "version": "1.0.0"
+        "sha256": "4ac1fe5ce6b614c2f28663d55f8988f0decbe57d5fc651be9675f74a6599c386",
+        "version": "1.1.0"
       },
       "revision": 1,
       "selected": [
@@ -143,8 +143,8 @@
         "display_name": "VASP MVP Core Recipe Pack",
         "pack_id": "vasp-mvp-core",
         "schema_version": "1.0",
-        "sha256": "3f67b649afdd798a5eeb47ecbf64e3242e10a9ddc6ddf3ba200308d9b9351c01",
-        "version": "1.0.0"
+        "sha256": "4ac1fe5ce6b614c2f28663d55f8988f0decbe57d5fc651be9675f74a6599c386",
+        "version": "1.1.0"
       },
       "revision": 1,
       "selected": [
@@ -307,7 +307,7 @@
   },
   "template_versions": {
     "generator": "0.1.0",
-    "recipe_pack": "1.0.0"
+    "recipe_pack": "1.1.0"
   },
   "warnings": [
     {
@@ -322,7 +322,7 @@
     },
     {
       "code": "STATIC_TIGHTER_EDIFF_HINT",
-      "message": "static 建议比 relax 更严的 EDIFF；如需 1E-6 请选择 high 精度档或提交 EDIFF patch。",
+      "message": "当前 static EDIFF=0.0001；建议电子收敛阈值 EDIFF ≤ 1E-6。当前设置已保留，可提交 EDIFF patch 调整，并针对体系检查电子收敛。",
       "severity": "info"
     }
   ],

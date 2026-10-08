@@ -219,6 +219,26 @@ class RecipeComposer:
                     )
                 applied_patches.append(patch.model_dump(mode="json"))
 
+        # Advice follows the final value, including user patches, rather than the
+        # original recipe default. A satisfied SCF threshold needs no reminder.
+        ediff = merged.get("EDIFF")
+        scf_ediff_satisfied = (
+            isinstance(ediff, (int, float)) and not isinstance(ediff, bool)
+            and 0 < ediff <= 1e-6
+        )
+        for warning in warnings:
+            if warning["code"] == "STATIC_TIGHTER_EDIFF_HINT":
+                warning["message"] = self._scf_ediff_message("static", ediff)
+        if scf_ediff_satisfied:
+            warnings = [w for w in warnings if w["code"] != "STATIC_TIGHTER_EDIFF_HINT"]
+        elif request.context.task.value == "dos":
+            warnings.append({
+                "code": "DOS_TIGHTER_EDIFF_HINT",
+                "message": self._scf_ediff_message("DOS", ediff),
+                "severity": "info",
+                "recipe_id": next((m.recipe_id for m in ordered if m.kind.value == "task"), ""),
+            })
+
         selected_entries: List[SelectedRecipeEntry] = []
         order_counters: Dict[int, int] = {}
         for manifest in ordered:
@@ -269,6 +289,12 @@ class RecipeComposer:
         return composition
 
     # --- 校验 ---
+
+    @staticmethod
+    def _scf_ediff_message(task: str, ediff: Any) -> str:
+        current = f"{ediff:.6g}" if isinstance(ediff, (int, float)) else "未设置"
+        return (f"当前 {task} EDIFF={current}；建议电子收敛阈值 EDIFF ≤ 1E-6。"
+                "当前设置已保留，可提交 EDIFF patch 调整，并针对体系检查电子收敛。")
 
     def _check_scope(self, manifest: RecipeManifest, context: SelectionContext) -> None:
         scope = manifest.scope

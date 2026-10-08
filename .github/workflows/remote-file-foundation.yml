@@ -165,6 +165,7 @@ jobs:
             backend/tests/test_agent.py \
             backend/tests/be_a/test_kpoints.py \
             backend/tests/be_a/test_dftu_forms.py \
+            backend/tests/be_a/test_standard_scf_precision.py \
             backend/tests/be_a/test_pipeline_contract.py \
             backend/tests/be_a/test_generated_file_identity.py \
             backend/tests/be_a/test_golden.py \
@@ -201,6 +202,7 @@ jobs:
               "backend.tests.test_cif_to_poscar",
               "backend.tests.test_mp_credentials_integration",
               "backend.tests.be_a.test_dftu_forms",
+              "backend.tests.be_a.test_standard_scf_precision",
               "backend.tests.test_u3_input_descriptions",
               "backend.tests.test_u6_fix_delivery",
               "backend.tests.test_u4_scf",

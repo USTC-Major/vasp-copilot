@@ -7,10 +7,11 @@ POST /materials/import  - fetch the selected material, build a POSCAR, store
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
+from starlette.concurrency import run_in_threadpool
 
 from backend.materials_criteria import MaterialCriteria, formula_elements
 from backend.input_validation import InputValidationError, validate_poscar
@@ -80,7 +81,7 @@ def _compact_summary(summary) -> Dict[str, Any]:
 
 
 @router.post("/materials/search", response_model=ApiEnvelope)
-async def search_materials(
+def search_materials(
     req: SearchRequest,
     request: Request,
     x_request_id: str = Depends(get_request_id),
@@ -136,6 +137,32 @@ async def import_material(
                               "缺少 material_id")
     if not valid_material_id(material_id):
         raise ValidationError("MP_INVALID_MATERIAL_ID", "Materials Project 材料编号格式无效")
+    poscar_text, summary = await run_in_threadpool(
+        _fetch_and_prepare_material, request, material_id,
+    )
+
+    # FileStore persistence stays on the ASGI loop; its shared in-memory index
+    # and temporary-file path are not safe for concurrent worker-thread writes.
+    stored = file_store.store_file("POSCAR", "poscar",
+                                   poscar_text.encode("utf-8"))
+    struct_rec = file_store.store_structure(
+        file_id=stored.file_id, summary=summary,
+        normalized_poscar_file_id=stored.file_id,
+    )
+    summary.structure_id = struct_rec.structure_id
+
+    return ApiEnvelope(request_id=x_request_id, data={
+        "structure_id": struct_rec.structure_id,
+        "summary": _compact_summary(summary),
+        "normalized_poscar_file_id": stored.file_id,
+        "file_id": stored.file_id,
+        "material_id": material_id,
+        "display_material_id": display_material_id(material_id),
+    })
+
+
+def _fetch_and_prepare_material(request: Request, material_id: str) -> Tuple[str, Any]:
+    """Fetch MP data and perform structure preparation off the ASGI loop."""
     mp_api_key = _runtime_mp_api_key(request)
 
     from ...services.materials_project import MaterialsProjectClient
@@ -169,22 +196,7 @@ async def import_material(
         )
     except InputValidationError as exc:
         raise ValidationError(exc.code, str(exc)) from exc
-    stored = file_store.store_file("POSCAR", "poscar",
-                                   poscar_text.encode("utf-8"))
-    struct_rec = file_store.store_structure(
-        file_id=stored.file_id, summary=summary,
-        normalized_poscar_file_id=stored.file_id,
-    )
-    summary.structure_id = struct_rec.structure_id
-
-    return ApiEnvelope(request_id=x_request_id, data={
-        "structure_id": struct_rec.structure_id,
-        "summary": _compact_summary(summary),
-        "normalized_poscar_file_id": stored.file_id,
-        "file_id": stored.file_id,
-        "material_id": material_id,
-        "display_material_id": display_material_id(material_id),
-    })
+    return poscar_text, summary
 
 
 def _structure_to_poscar(doc: Dict[str, Any], material_id: str) -> str:

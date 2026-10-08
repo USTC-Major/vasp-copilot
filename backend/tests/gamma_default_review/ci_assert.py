@@ -15,7 +15,7 @@ CRITICAL_CASES = {
     ("backend.tests.be_a.test_kpoints.TestGridFormula",
      "test_automatic_grid_defaults_gamma_without_changing_subdivisions[729.0-1-grid2]"),
     ("backend.tests.be_a.test_pipeline_contract",
-     "test_si2_static_default_generates_gamma_8_with_unchanged_other_inputs"),
+     "test_si2_static_standard_scf_generates_gamma_9_with_same_structure_and_scheduler"),
     ("backend.tests.be_a.test_kpoints.TestUniformRendering", "test_monkhorst_text"),
     ("backend.tests.be_a.test_pipeline_contract.TestRequestValidation",
      "test_band_kpoints_line_mode_end_to_end"),

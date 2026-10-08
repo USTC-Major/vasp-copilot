@@ -23,6 +23,8 @@ namespace VaspCopilot.Launcher
         public int AiPort { get; set; }
         public int WebPort { get; set; }
         public bool EnableAi { get; set; }
+        public bool FullFeatures { get; set; }
+        public bool AutoPrepareEnvironment { get; set; }
         public bool IsolatedProfile { get; set; }
         public LauncherOptions() { ToolboxPort = 8000; AiPort = 8500; WebPort = 5173; RootDirectory = ""; PythonExecutable = ""; VaspAiHome = ""; DataDirectory = ""; }
     }
@@ -43,6 +45,7 @@ namespace VaspCopilot.Launcher
         // D1 candidate only: allow the desktop harness to isolate its preferences/logs.
         internal static readonly string DirectoryPath = Environment.GetEnvironmentVariable("VASP_LAUNCHER_STATE_DIR")
             ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "VASP-Copilot", "launcher");
+        public static string StateDirectory { get { return DirectoryPath; } }
         public static LauncherOptions Load()
         {
             try { var options = new JavaScriptSerializer().Deserialize<LauncherOptions>(File.ReadAllText(Path.Combine(DirectoryPath, "preferences.json"), Encoding.UTF8)) ?? new LauncherOptions(); options.ToolboxPort = 8000; options.WebPort = 5173; options.AiPort = 8500; return options; }
@@ -64,6 +67,7 @@ namespace VaspCopilot.Launcher
         {
             public string Key, Label, State = "stopped", Detail = "未启动", StopFile, ErrorFile, Token;
             public int Port, RuntimePid; public OwnedProcess Process;
+            public int HealthFailures; public DateTime FirstHealthFailure;
         }
         private readonly object sync = new object();
         private readonly List<Service> services = new List<Service>();
@@ -75,13 +79,22 @@ namespace VaspCopilot.Launcher
         private int polling;
         private int closing;
         private int cancellationRequested;
-        public void CancelStartup() { Interlocked.Exchange(ref cancellationRequested, 1); }
-        private sealed class StartupCancelledException : LauncherException { public StartupCancelledException() : base("启动已取消，正在退出并清理所属服务。") {} }
+        public void CancelStartup() { lock (sync) Interlocked.Exchange(ref cancellationRequested, 1); }
+        private void FinishStartup()
+        {
+            // Consume cancellation only after the operation observes it. A cancellation
+            // before Start remains effective, while a subsequent explicit retry is fresh.
+            // Dispose sets closing before acquiring this same lock to request cancellation.
+            lock (sync) if (closing == 0) Interlocked.Exchange(ref cancellationRequested, 0);
+            Interlocked.Exchange(ref busy, 0);
+        }
+        private sealed class StartupCancelledException : LauncherException { public StartupCancelledException(string detail = null) : base(detail ?? "启动已取消，正在退出并清理所属服务。") {} }
         private void ThrowIfCancelled() { if (cancellationRequested != 0) throw new StartupCancelledException(); }
         public string LogDirectory { get; private set; }
         public bool IsRunning { get { lock (sync) return services.Any(s => s.Process != null); } }
         private readonly string runtimeScript;
         public string SelectedPython { get; private set; }
+        public string EnvironmentFailureLogPath { get; private set; }
         public int StartupAttempts { get; private set; }
         public LauncherController(string runtimeScriptPath = null)
         {
@@ -106,7 +119,6 @@ namespace VaspCopilot.Launcher
                 foreach (Service service in owned)
                 {
                     OwnedProcess process = service.Process;
-                    bool healthy = IsHealthy(service);
                     if (process != null && (process.HasExited || process.RuntimeExited))
                     {
                         try
@@ -118,10 +130,26 @@ namespace VaspCopilot.Launcher
                     }
                     else
                     {
+                        HealthResult health = CheckHealth(service);
                         lock (sync)
                         {
-                            service.State = healthy ? "ready" : "error";
-                            service.Detail = healthy ? "HTTP 健康及进程归属已确认" : "进程仍在，但 HTTP 健康或归属检查未通过；可停止或重启。";
+                            if (health == HealthResult.Healthy)
+                            {
+                                service.HealthFailures = 0; service.FirstHealthFailure = DateTime.MinValue;
+                                service.State = "ready"; service.Detail = "HTTP 健康及进程归属已确认";
+                            }
+                            else if (health == HealthResult.Unavailable)
+                            {
+                                if (service.HealthFailures++ == 0) service.FirstHealthFailure = DateTime.UtcNow;
+                                bool persistent = service.HealthFailures >= 3 && DateTime.UtcNow - service.FirstHealthFailure >= TimeSpan.FromSeconds(8);
+                                service.State = persistent ? "error" : "degraded";
+                                service.Detail = persistent ? "所属进程仍在，但服务持续未响应；恢复后将自动显示原页面，也可重试启动。" : "所属进程仍在，服务响应暂缓，正在复核；当前页面保留。";
+                            }
+                            else
+                            {
+                                service.State = "error";
+                                service.Detail = health == HealthResult.Exited ? "所属服务已退出；不会自动重启。" : "服务进程归属或身份校验失败；未将此响应视为就绪，可停止或重启。";
+                            }
                         }
                     }
                 }
@@ -141,7 +169,7 @@ namespace VaspCopilot.Launcher
             options = CloneOptions(options);
             Begin();
             try { StartInternal(options); }
-            finally { Interlocked.Exchange(ref busy, 0); }
+            finally { FinishStartup(); }
         }
         public void Stop()
         {
@@ -154,7 +182,7 @@ namespace VaspCopilot.Launcher
             options = CloneOptions(options);
             Begin();
             try { SetStage("environment", "正在停止旧服务并重新检查运行环境…"); StopInternal(); StartInternal(options); }
-            finally { Interlocked.Exchange(ref busy, 0); }
+            finally { FinishStartup(); }
         }
         private static LauncherOptions CloneOptions(LauncherOptions options)
         {
@@ -176,11 +204,179 @@ namespace VaspCopilot.Launcher
             {
                 try { candidates.Add(Path.Combine(path.Trim('"'), "python.exe")); } catch { }
             }
-            foreach (string candidate in candidates.Where(File.Exists).Select(Path.GetFullPath).Distinct(StringComparer.OrdinalIgnoreCase).Take(12)) yield return candidate;
+            if (options.FullFeatures && options.AutoPrepareEnvironment)
+            {
+                foreach (string parent in new [] { Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Python"), Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), @"C:\" })
+                    foreach (string name in new [] { "Python312", "Python311" }) candidates.Add(Path.Combine(parent, name, "python.exe"));
+                foreach (string name in new [] { "anaconda3", "miniconda3" })
+                    candidates.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), name, "python.exe"));
+            }
+            foreach (string candidate in candidates.Where(File.Exists).Select(Path.GetFullPath).Distinct(StringComparer.OrdinalIgnoreCase).Take(options.FullFeatures && options.AutoPrepareEnvironment ? 40 : 12)) yield return candidate;
+        }
+        private static IDictionary<string, string> PreparationEnvironment()
+        {
+            // Pass only OS plumbing. Preparation must never inherit model, SSH,
+            // materials, reviewer, .env, Python path or pip configuration secrets.
+            var allowed = new HashSet<string>(new [] { "SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "PATH", "PATHEXT", "TEMP", "TMP", "COMSPEC", "PROCESSOR_ARCHITECTURE", "NUMBER_OF_PROCESSORS" }, StringComparer.OrdinalIgnoreCase);
+            var overrides = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (System.Collections.DictionaryEntry entry in Environment.GetEnvironmentVariables())
+                if (!allowed.Contains((string)entry.Key)) overrides[(string)entry.Key] = null;
+            overrides["PYTHONUTF8"] = "1";
+            return overrides;
+        }
+        private string ProbeBasePython(string executable, string prefix, string state)
+        {
+            // The request directory is already unique; probes run sequentially.
+            // Avoid adding another GUID to .NET Framework's legacy path budget.
+            string result = Path.Combine(state, "probe.json");
+            string code = "import json,sys,struct,platform;json.dump(dict(python=sys.executable,major=sys.version_info[0],minor=sys.version_info[1],bits=struct.calcsize('P')*8,machine=platform.machine().lower(),implementation=platform.python_implementation(),platform=sys.platform),open(sys.argv[1],'w',encoding='utf-8'))";
+            try
+            {
+                using (var check = OwnedProcess.Start(executable, prefix + "-I -X utf8 -c " + OwnedProcess.Quote(code) + " " + OwnedProcess.Quote(result), state, PreparationEnvironment()))
+                {
+                    DateTime deadline = DateTime.UtcNow.AddSeconds(10);
+                    while (!check.Wait(100)) { ThrowIfCancelled(); if (DateTime.UtcNow >= deadline) return null; }
+                    ThrowIfCancelled();
+                }
+                if (!File.Exists(result)) return null;
+                var data = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(File.ReadAllText(result));
+                string python = Convert.ToString(data["python"]);
+                int minor = Convert.ToInt32(data["minor"]);
+                return Convert.ToInt32(data["major"]) == 3 && (minor == 11 || minor == 12)
+                    && Convert.ToInt32(data["bits"]) == 64 && Convert.ToString(data["implementation"]) == "CPython"
+                    && new [] { "amd64", "x86_64" }.Contains(Convert.ToString(data["machine"]))
+                    && Convert.ToString(data["platform"]) == "win32" && Path.IsPathRooted(python) && File.Exists(python) ? Path.GetFullPath(python) : null;
+            }
+            catch (StartupCancelledException) { throw; }
+            catch { return null; }
+            finally { try { File.Delete(result); } catch { } }
+        }
+        private IEnumerable<string> PythonLaunchers()
+        {
+            var candidates = new List<string> { Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "py.exe"), Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Python", "Launcher", "py.exe") };
+            foreach (string directory in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(';'))
+                try { candidates.Add(Path.Combine(directory.Trim('"'), "py.exe")); } catch { }
+            return candidates.Where(File.Exists).Select(Path.GetFullPath).Distinct(StringComparer.OrdinalIgnoreCase).Take(8);
+        }
+        private string PrepareEnvironment(LauncherOptions options)
+        {
+            EnvironmentFailureLogPath = null;
+            string state = Path.GetFullPath(Path.Combine(LauncherPreferences.StateDirectory, "runtime", "full"));
+            string request = Path.Combine(state, "requests", Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(request);
+            string result = Path.Combine(request, "result.json"), progress = Path.Combine(request, "progress.json");
+            SetStage("environment_validate", "正在寻找 Windows x64 CPython 3.11 / 3.12；环境准备日志目录：" + Path.Combine(state, "logs"));
+            string python = null;
+            foreach (string candidate in PythonCandidates(options))
+            {
+                ThrowIfCancelled();
+                python = ProbeBasePython(candidate, "", request);
+                if (python != null) break;
+            }
+            if (python == null && String.IsNullOrWhiteSpace(options.PythonExecutable))
+                foreach (string launcher in PythonLaunchers())
+                {
+                    foreach (string selector in new [] { "-3.12 ", "-3.11 " })
+                    {
+                        ThrowIfCancelled(); python = ProbeBasePython(launcher, selector, request); if (python != null) break;
+                    }
+                    if (python != null) break;
+                }
+            if (python == null) throw new LauncherException("未找到可启动的 Windows x64 CPython 3.11 / 3.12。请安装受支持的 Python，或在启动设置选择 python.exe；未下载任何依赖。");
+            string helper = Path.Combine(options.RootDirectory, "launcher", "environment.py");
+            if (!File.Exists(helper)) throw new LauncherException("安装目录缺少 launcher/environment.py，请恢复完整桌面目录。");
+            // Proxy URLs may contain passwords: convey only their presence. The helper
+            // can reuse an offline ready environment, or explicitly reject installation.
+            var preparationEnvironment = PreparationEnvironment();
+            if (new [] { "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY" }.Any(name => !String.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(name))))
+                preparationEnvironment["VASP_INSTALLER_PROXY_CONFIGURED"] = "1";
+            SetStage("environment_create", "正在准备独立运行环境；日志目录：" + Path.Combine(state, "logs"));
+            string preparationLog = Path.Combine(state, "logs");
+            try
+            {
+                using (var preparation = OwnedProcess.Start(python, "-I -X utf8 " + OwnedProcess.Quote(helper) + " --root " + OwnedProcess.Quote(options.RootDirectory) + " --state " + OwnedProcess.Quote(state) + " --result-file " + OwnedProcess.Quote(result) + " --progress-file " + OwnedProcess.Quote(progress), request, preparationEnvironment))
+                {
+                    DateTime deadline = DateTime.UtcNow.AddMinutes(20);
+                    string previous = "";
+                    while (!preparation.Wait(150))
+                    {
+                        ThrowIfCancelled();
+                        ReadPreparationLog(result, state, ref preparationLog);
+                        ReadPreparationLog(progress, state, ref preparationLog);
+                        ReadPreparationProgress(progress, ref previous);
+                        if (DateTime.UtcNow >= deadline) throw new LauncherException("独立环境准备超过 20 分钟，已停止安装进程；可重试。日志目录：" + Path.Combine(state, "logs"));
+                    }
+                    ThrowIfCancelled(); ReadPreparationLog(result, state, ref preparationLog); ReadPreparationLog(progress, state, ref preparationLog); ReadPreparationProgress(progress, ref previous);
+                }
+                if (!File.Exists(result)) throw new LauncherException("独立环境准备未返回结果；可重试。日志目录：" + Path.Combine(state, "logs"));
+                var data = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(File.ReadAllText(result));
+                if (!data.ContainsKey("ok") || !Convert.ToBoolean(data["ok"]))
+                {
+                    string failure = data.ContainsKey("message") ? Convert.ToString(data["message"]) : "准备失败";
+                    string code = data.ContainsKey("code") ? Convert.ToString(data["code"]) : "PREPARE_FAILED";
+                    throw new LauncherException("独立环境准备失败（" + code + "）：" + failure + " 可重试。日志：" + preparationLog);
+                }
+                string prepared = data.ContainsKey("python") ? Convert.ToString(data["python"]) : "";
+                string environments = Path.Combine(state, "environments") + Path.DirectorySeparatorChar;
+                if (!Path.IsPathRooted(prepared) || !Path.GetFullPath(prepared).StartsWith(environments, StringComparison.OrdinalIgnoreCase) || !File.Exists(prepared))
+                    throw new LauncherException("环境准备返回了无效的独立 Python 路径；未启动服务。日志目录：" + Path.Combine(state, "logs"));
+                return Path.GetFullPath(prepared);
+            }
+            catch (StartupCancelledException)
+            {
+                ReadPreparationLog(result, state, ref preparationLog);
+                EnvironmentFailureLogPath = File.Exists(preparationLog) ? preparationLog : null;
+                SetMessage("启动已取消，已清理所属环境准备及安装进程。日志：" + preparationLog);
+                throw new StartupCancelledException(message);
+            }
+            catch (LauncherException) { EnvironmentFailureLogPath = File.Exists(preparationLog) ? preparationLog : null; throw; }
+            catch { EnvironmentFailureLogPath = File.Exists(preparationLog) ? preparationLog : null; throw new LauncherException("独立环境准备失败；已清理所属安装进程，可重试。日志目录：" + Path.Combine(state, "logs")); }
+        }
+        private static StreamReader OpenPreparationReader(string file)
+        {
+            // Helpers update metadata while we poll. Windows readers must allow both
+            // writes and atomic replacement; File.ReadAllText's FileShare.Read can
+            // otherwise make the helper fail with a sharing violation.
+            return new StreamReader(new FileStream(file, FileMode.Open, FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete), Encoding.UTF8, true);
+        }
+        private void ReadPreparationLog(string file, string state, ref string previous)
+        {
+            try
+            {
+                if (!File.Exists(file)) return;
+                string text;
+                using (var reader = OpenPreparationReader(file)) text = reader.ReadToEnd();
+                var data = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(text);
+                if (!data.ContainsKey("log_path")) return;
+                string log = Convert.ToString(data["log_path"]);
+                if (!Path.IsPathRooted(log)) return;
+                log = Path.GetFullPath(log);
+                if (log != previous && log.StartsWith(Path.Combine(state, "logs") + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+                    && File.Exists(log) && (File.GetAttributes(log) & FileAttributes.ReparsePoint) == 0)
+                { previous = log; SetMessage("独立环境准备日志：" + log); }
+            }
+            catch { /* A partial metadata read must not interrupt preparation. */ }
+        }
+        private void ReadPreparationProgress(string file, ref string previous)
+        {
+            try
+            {
+                if (!File.Exists(file)) return;
+                string current;
+                using (var reader = OpenPreparationReader(file)) current = reader.ReadToEnd();
+                if (current == previous) return;
+                var data = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(current);
+                string stage = Convert.ToString(data["stage"]), detail = Convert.ToString(data["message"]);
+                if (!new [] { "validate", "create", "install", "verify", "ready" }.Contains(stage)) return;
+                previous = current; SetStage("environment_" + stage, detail);
+            }
+            catch { /* Atomic helper writes are expected; tolerate transient file access. */ }
         }
         private static void Validate(LauncherOptions options)
         {
             if (options == null || String.IsNullOrWhiteSpace(options.RootDirectory)) throw new LauncherException("请先选择 VASP-Copilot 安装目录。");
+            if (options.FullFeatures && options.IsolatedProfile) throw new LauncherException("完整功能与隔离测试模式不能同时启用。");
             options.RootDirectory = Path.GetFullPath(options.RootDirectory);
             foreach (string file in new [] { "backend/app/main.py", "backend/ai_mode/server.py", "frontend/dist/index.html" })
                 if (!File.Exists(Path.Combine(options.RootDirectory, file.Replace('/', Path.DirectorySeparatorChar))))
@@ -221,14 +417,23 @@ namespace VaspCopilot.Launcher
             if (!File.Exists(runtime)) throw new LauncherException("桌面程序缺少 launcher/runtime.py，请恢复完整桌面目录。");
             string python = null, lastFailure = "未找到已有 Python 3.10+ 环境。";
             int count = 0;
-            foreach (string candidate in PythonCandidates(options))
+            if (options.FullFeatures && options.AutoPrepareEnvironment)
             {
-                ThrowIfCancelled();
-                count++;
-                SetMessage("正在检查已有 Python 环境（候选 " + count + "）…");
-                try { CheckDependencies(candidate, runtime, options); python = candidate; break; }
-                catch (StartupCancelledException) { throw; }
-                catch (LauncherException e) { lastFailure = e.Message; }
+                python = PrepareEnvironment(options);
+                SetStage("environment_verify", "独立环境已准备，正在核验业务依赖…");
+                CheckDependencies(python, runtime, options);
+            }
+            else
+            {
+                foreach (string candidate in PythonCandidates(options))
+                {
+                    ThrowIfCancelled();
+                    count++;
+                    SetMessage("正在检查已有 Python 环境（候选 " + count + "）…");
+                    try { CheckDependencies(candidate, runtime, options); python = candidate; break; }
+                    catch (StartupCancelledException) { throw; }
+                    catch (LauncherException e) { lastFailure = e.Message; }
+                }
             }
             if (python == null) throw new LauncherException("已检查 " + count + " 个 Python 候选，均未就绪。" + lastFailure + " 请通过“启动设置”选择已有环境。");
             SelectedPython = python;
@@ -267,13 +472,14 @@ namespace VaspCopilot.Launcher
         {
             lock (sync)
             {
-                root = options.RootDirectory; fingerprint = Fingerprint(root); version = "0.3.0 / 安装指纹 " + fingerprint;
+                root = options.RootDirectory; fingerprint = Fingerprint(root); version = "0.4.0 / 安装指纹 " + fingerprint;
                 webUrl = "http://127.0.0.1:" + options.WebPort;
                 foreach (Service s in services)
                 {
                     if (s.Process != null) { s.Process.Dispose(); s.Process = null; }
                     s.Port = s.Key == "toolbox" ? options.ToolboxPort : s.Key == "ai" ? options.AiPort : options.WebPort;
                     s.State = s.Key == "ai" && !options.EnableAi ? "disabled" : "stopped";
+                    s.HealthFailures = 0; s.FirstHealthFailure = DateTime.MinValue;
                     s.Detail = s.State == "disabled" ? "未选择启动" : "未启动";
                 }
             }
@@ -289,6 +495,15 @@ namespace VaspCopilot.Launcher
                 }
             }
             LauncherPreferences.Save(options);
+            // A new secret belongs only to this start attempt and its two service children.
+            string reviewerSecret = null;
+            if (options.FullFeatures && options.EnableAi)
+            {
+                byte[] bytes = new byte[32];
+                using (var random = RandomNumberGenerator.Create()) random.GetBytes(bytes);
+                reviewerSecret = Convert.ToBase64String(bytes);
+                Array.Clear(bytes, 0, bytes.Length);
+            }
             try
             {
                 foreach (Service s in services.Where(s => s.State != "disabled"))
@@ -301,11 +516,16 @@ namespace VaspCopilot.Launcher
                         + " --port " + s.Port + " --toolbox-port " + options.ToolboxPort + " --ai-port " + options.AiPort
                         + " --token " + s.Token + " --stop-file " + OwnedProcess.Quote(s.StopFile) + " --result-file " + OwnedProcess.Quote(s.ErrorFile)
                         + (options.EnableAi ? " --enable-ai" : "")
+                        + (options.FullFeatures ? " --full-features" : "")
                         + (String.IsNullOrWhiteSpace(options.VaspAiHome) ? "" : " --ai-home " + OwnedProcess.Quote(options.VaspAiHome))
                         + (String.IsNullOrWhiteSpace(options.DataDirectory) ? "" : " --data-dir " + OwnedProcess.Quote(options.DataDirectory));
                     if (options.IsolatedProfile) arguments += " --isolated";
                     SetState(s, "starting", "正在启动并核对 HTTP 健康、安装指纹和进程归属…");
-                    lock (sync) s.Process = OwnedProcess.Start(python, arguments, Path.Combine(root, "backend"));
+                    var environment = new Dictionary<string, string> {
+                        { "VASP_REVIEWER_SHARED_SECRET", s.Key != "web" ? reviewerSecret : null },
+                        { "VASP_REVIEWER_ENABLED", "false" }, { "VASP_REVIEWER_URL", null }
+                    };
+                    lock (sync) s.Process = OwnedProcess.Start(python, arguments, Path.Combine(root, "backend"), environment);
                     DateTime deadline = DateTime.UtcNow.AddSeconds(45);
                     while (DateTime.UtcNow < deadline)
                     {
@@ -349,16 +569,20 @@ namespace VaspCopilot.Launcher
                 throw new LauncherException(message);
             }
         }
-        private bool IsHealthy(Service s)
+        private enum HealthResult { Healthy, Unavailable, IdentityFailure, Exited }
+        private bool IsHealthy(Service s) { return CheckHealth(s) == HealthResult.Healthy; }
+        private HealthResult CheckHealth(Service s)
         {
             OwnedProcess owned = s.Process;
-            if (owned == null || owned.HasExited) return false;
+            if (owned == null || owned.HasExited || owned.RuntimeExited) return HealthResult.Exited;
+            bool verifyingIdentity = true;
             try
             {
                 int listenerPid = Native.ListenerPid(s.Port);
-                if (!owned.ContainsPid(listenerPid)) return false;
+                if (listenerPid == 0) return HealthResult.Unavailable;
+                if (!owned.ContainsPid(listenerPid)) return HealthResult.IdentityFailure;
                 var request = (HttpWebRequest)WebRequest.Create("http://127.0.0.1:" + s.Port + "/__launcher__/health");
-                request.Proxy = null; request.Timeout = 650; request.ReadWriteTimeout = 650;
+                request.Proxy = null; request.Timeout = 650; request.ReadWriteTimeout = 650; request.AllowAutoRedirect = false;
                 request.Headers["X-Launcher-Token"] = s.Token;
                 using (var response = request.GetResponse())
                 using (var reader = new StreamReader(response.GetResponseStream()))
@@ -366,20 +590,36 @@ namespace VaspCopilot.Launcher
                     var data = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(reader.ReadToEnd());
                     if (Convert.ToString(data["token"]) != s.Token || Convert.ToString(data["kind"]) != s.Key
                         || Convert.ToInt32(data["pid"]) != listenerPid || Convert.ToString(data["fingerprint"]) != fingerprint
-                        || !String.Equals(Path.GetFullPath(Convert.ToString(data["root"])).TrimEnd('\\', '/'), root.TrimEnd('\\', '/'), StringComparison.OrdinalIgnoreCase)) return false;
+                        || !String.Equals(Path.GetFullPath(Convert.ToString(data["root"])).TrimEnd('\\', '/'), root.TrimEnd('\\', '/'), StringComparison.OrdinalIgnoreCase)) return HealthResult.IdentityFailure;
                 }
-                if (s.Key == "web") return true;
-                var health = (HttpWebRequest)WebRequest.Create("http://127.0.0.1:" + s.Port + (s.Key == "toolbox" ? "/health" : "/ai/v1/ping"));
-                health.Proxy = null; health.Timeout = 650; health.ReadWriteTimeout = 650;
-                using (var response = health.GetResponse())
-                using (var reader = new StreamReader(response.GetResponseStream()))
+                verifyingIdentity = false;
+                if (s.Key != "web")
                 {
-                    var data = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(reader.ReadToEnd());
-                    return s.Key == "toolbox" ? Convert.ToString(data["status"]) == "ok"
-                        : Convert.ToString(data["mode"]) == "ai" && Convert.ToString(data["version"]) == "0.3.0" && Convert.ToBoolean(data["enabled"]);
+                    var health = (HttpWebRequest)WebRequest.Create("http://127.0.0.1:" + s.Port + (s.Key == "toolbox" ? "/health" : "/ai/v1/ping"));
+                    health.Proxy = null; health.Timeout = 650; health.ReadWriteTimeout = 650; health.AllowAutoRedirect = false;
+                    using (var response = health.GetResponse())
+                    using (var reader = new StreamReader(response.GetResponseStream()))
+                    {
+                        var data = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(reader.ReadToEnd());
+                        bool ready = s.Key == "toolbox" ? Convert.ToString(data["status"]) == "ok"
+                            : Convert.ToString(data["mode"]) == "ai" && (Convert.ToString(data["version"]) == "0.3.0" || Convert.ToString(data["version"]) == "0.4.0") && Convert.ToBoolean(data["enabled"]);
+                        if (!ready) return HealthResult.Unavailable;
+                    }
                 }
+                // Preserve ownership even if a listener changed during the HTTP requests.
+                if (owned.HasExited || owned.RuntimeExited) return HealthResult.Exited;
+                return Native.ListenerPid(s.Port) == listenerPid && owned.ContainsPid(listenerPid) ? HealthResult.Healthy : HealthResult.IdentityFailure;
             }
-            catch { return false; }
+            catch (WebException exc)
+            {
+                using (var response = exc.Response as HttpWebResponse)
+                {
+                    if (verifyingIdentity && response != null && (response.StatusCode == HttpStatusCode.Unauthorized || response.StatusCode == HttpStatusCode.Forbidden))
+                        return HealthResult.IdentityFailure;
+                }
+                return HealthResult.Unavailable;
+            }
+            catch { return HealthResult.IdentityFailure; }
         }
         private void StopInternal(bool preserveErrors = false)
         {
@@ -437,6 +677,7 @@ namespace VaspCopilot.Launcher
         public void Dispose()
         {
             if (Interlocked.Exchange(ref closing, 1) != 0) return;
+            CancelStartup();
             // Pending operations complete before shutdown; no new operation can begin.
             while (Interlocked.CompareExchange(ref busy, 1, 0) != 0) Thread.Sleep(50);
             while (polling != 0) Thread.Sleep(10);

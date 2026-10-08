@@ -48,5 +48,4 @@
 - [medium] METAL_SMEARING_REQUIRES_CONFIRMATION: 金属展宽设置需用户确认，初始值仅为起点。
 - [high] DFTU_USER_VALUE_REQUIRED: U/J/L 来自用户输入，不代表系统断言其可靠；请记录来源。
 - [medium] MAGMOM_INITIAL_GUESS: 初始磁矩仅为起点，请确认元素级初值；不保证是基态磁结构。
-- [info] STATIC_TIGHTER_EDIFF_HINT: static 建议比 relax 更严的 EDIFF；如需 1E-6 请选择 high 精度档或提交 EDIFF patch。
 - [high] CHGCAR_DEPENDENCY: DOS 依赖 static 的 CHGCAR；文件尚未生成时 README 只写运行时复制说明，不伪造文件。

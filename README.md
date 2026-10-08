@@ -1,29 +1,48 @@
-# VASP-Copilot 0.3.0
+# VASP-Copilot 0.4.0
 
-VASP-Copilot 是面向 VASP 计算的源码应用。0.3.0 以 **Toolbox 独立基础计算**为主线：从已有结构准备输入，人工核对并交接到工作区，逐次批准远端写入和提交，查看监控与报告，并取回必要结果。AI 模式是可选客户端；不运行 AI 服务也能使用 Toolbox。解耦及 A—E 限定能力已进入当前代码，早期 D0 开发记录属于历史状态。
+**v0.4.0 · 2026-10-09。** 本版聚焦科研工具界面、Windows桌面启动与自动依赖准备、本地POTCAR管理和工作流改进。见[正式发布与下载](https://github.com/USTC-Major/vasp-copilot/releases/tag/v0.4.0)、[发布公告](docs/release/v0.4.0/发布公告.md)。
 
-本版仍是单用户、本机或可信网络使用范围。POTCAR 须由用户从合法来源自行准备并核对元素顺序，站点提交脚本与 VASP/调度环境也须由用户提供、审阅。项目不内置、下载或拼接 POTCAR，亦不通过 VASPKIT 代拼。没有新增科学模块。
+VASP-Copilot 帮助用户从已有结构准备VASP输入、核对并提交计算、监控和获取必要结果。Toolbox独立承担执行与确定性检查；AI为可选辅助，关闭AI不影响基础工具。当前仍面向单用户、本机或可信网络。
 
-## 安装与启动
+## 本版能力
 
-Windows 从**干净源码包**安装、默认只启动 Toolbox 和前端的完整 PowerShell 步骤，见 [Windows 源码安装与基础使用](./Windows源码安装与基础使用.md)。默认前端 `127.0.0.1:5173`，Toolbox `127.0.0.1:8000`；指南也给出独立数据目录及可选端口覆盖，适合与已有服务并行验收。本轮推荐与最终包验收环境一致的 Python 3.12.7、Node.js 24.19.0；首次安装须联网取得 Python 与 npm 依赖。
+- 统一科研工具界面、深浅主题、工作流步骤图和晶体结构预览；诊断、任务、设置及聊天页面的可读性和布局改进。
+- Windows桌面程序管理已有本地安装的服务，记忆安装目录、识别已有环境并管理端口；保留浏览器使用方式。
+- 本地授权PAW-PBE赝势库登记、手动刷新和元数据检索；按结构物种顺序预览、人工确认变体并拼接POTCAR，支持工作流ZIP包含或明确省略。
+- 有来源和适用条件的有限赝势推荐；未知版本、冲突或缺候选转人工。PBE+U不自动决定变体或U/J，推荐不替代科学判断与收敛测试。
+- 已合入的工作流、诊断、MP编号展示及AI设置/解释链路改进；真实模型效果受服务、模型和场景影响，不承诺所有模型均已验证。
 
-入口与分工：
+## 安装与入口
 
-| 页面或服务 | 用途 |
+完整功能入口沿用本机 Python 3.11/3.12 x64，首次联网自动安装应用专用运行依赖；后续复用。请双击包根目录 `启动完整功能.cmd`，按[完整功能复测说明](0.4.0完整功能复测.md)配置真实服务；此前的隔离test-profile专用于离线验收。
+
+桌面用户先读[快速开始与升级](0.4.0快速开始.md)。源码用户请读[安装与基础使用](Windows源码安装与基础使用.md)及[0.4.0本地验收步骤](0.4.0本地验收步骤.md)。
+
+| 交付形式 | 包含与前提 |
 |---|---|
-| `/workflow` | 从有真实晶格和完整坐标的 POSCAR/CIF 生成、下载输入 ZIP；检查输入摘要 |
-| `/toolbox/projects` | 人工建立项目和任务、登记输入、预检、逐次确认上传及提交、监控与取回结果 |
-| `/toolbox/settings` | 配置执行适配器、SSH 和调度目标；远端身份变化时重新预检 |
-| `/ai/*` 与 `8500` | 可选自然语言辅助；需显式配置和启动，真实模型闭环未验收 |
+| 源码包 | 固定发布源码；需要Python后端依赖和Node/npm构建前端，桌面编译见desktop说明 |
+| Windows x64桌面配套包 | 同一源码＋生产前端＋桌面EXE/WebView2 DLL及许可证；需已有Python 3.11/3.12 x64、.NET Framework 4.8和WebView2 Runtime；完整功能入口自动安装项目依赖，不捆绑解释器 |
 
-结构 ZIP 到 Toolbox 的手工交接、用户提供 POTCAR/脚本、作业状态与结果解释，见 [首版基础计算与结果取回](./首版基础计算与结果取回.md)。Toolbox 只提供绑定提交目录中当前存在的 OUTCAR、OSZICAR、CONTCAR 单文件下载，单文件上限 32 MiB；WAVECAR/CHGCAR 等大文件不会自动下载。传输哈希证明收到的文件一致，不证明文件必定由本次计算生成，也不证明科学收敛。运行或下载前应核对站点记录、输出时间和科学内容。
+不要仅复制EXE。保留包内 `desktop/dist`、`launcher`、`backend`、`frontend/dist` 的相对结构。首次选择解压后的安装目录，之后由桌面程序管理端口。桌面配套包运行时无需Node，但源码构建需要。Python、.NET Framework和WebView2 Runtime需预先安装；项目运行依赖由完整功能入口首次联网自动准备。
 
-旧 `start_services.ps1` 是会启动三服务的开发便利脚本，不作为基础版默认启动方式。`docker-compose.yml` 默认启用 Toolbox 和前端，可选 `ai` profile；其合成 smoke 验证不代表连接真实 HPC 的计算验收。
+| 入口 | 用途 |
+|---|---|
+| `/workflow` | 准备工作流输入，核对结构、参数与可选POTCAR，生成并下载ZIP |
+| `/toolbox/potcar`、`/toolbox/potcar/assemble` | 管理授权本地库、预览并确认独立拼接 |
+| `/diagnosis/upload` | 上传计算结果，查看确定性诊断和候选修复信息 |
+| `/toolbox/projects` | 项目和任务、登记/预检、确认上传与提交、监控及结果获取 |
+| `/ai/settings`、`/ai/*` | 可选智能服务设置与交互 |
 
-## 版本与完整性
+## 使用边界
 
-- 0.3.0 已正式发布：[v0.3.0](https://github.com/USTC-Major/vasp-copilot/releases/tag/v0.3.0)。[CHANGELOG](./CHANGELOG.md) 记录 0.3.0 说明与历史版本。[v0.2.5](https://github.com/USTC-Major/vasp-copilot/releases/tag/v0.2.5) 是此前已发布版本，其测试与校验结论不直接适用于 0.3.0。
-- 旧版的详细 API、部署与验证说明完整保留在 [v0.2.5 README 历史参考](./README-v0.2.5-历史参考.md)，其中标注的时点状态不能覆盖本次 0.3.0 说明。
-- 正式源码包中的 `SHA256SUMS.txt` 应覆盖除清单本身外的全部归档文件；对**实际收到的 ZIP**运行 `python backend/scripts/release_checksums.py --archive 'C:\path\to\vasp-copilot-0.3.0-source.zip'`，逐文件检查覆盖范围与 SHA-256。再用 PowerShell `Get-FileHash -Algorithm SHA256 'C:\path\to\vasp-copilot-0.3.0-source.zip'`，同交付时提供的**外部 ZIP 整包 SHA-256**比对。清单验证须针对归档原始字节，不能将 Windows Git 工作树可能转为 CRLF 的文件直接混比。
-- 源码包不应包含依赖目录、运行数据、凭据或 POTCAR。用户在本机配置的私钥、API key 和计算文件不属于可再分发源码。
+项目不内置或下载赝势，不分发用户POTCAR，不通过VASPKIT生成或拼接。用户须有权使用所登记数据并核对元素顺序与变体；正文只通过用户确认的专用下载或工作流ZIP交付，不进入AI上下文。库文件变化需主动刷新。
+
+文件生成不等于计算提交。工作流ZIP仍需按[基础计算与结果取回](首版基础计算与结果取回.md)交接至工作区；确认POTCAR不解除其他上游输出、诊断或提交条件。必要结果按当前任务/attempt取回，WAVECAR等大文件不自动同步到本地。
+
+本版不包含正式VASPKIT后处理/Skill、反折叠、表面/吸附、声子或完整自动连续执行。Docker合成smoke、POTCAR字节比对、软件测试和历史真实计算证据分别成立，不能互相替代或证明普适科学正确性。
+
+## 完整性与更新
+
+[CHANGELOG](CHANGELOG.md)列出本版变化；[发布范围与验收记录](docs/release/v0.4.0/发布范围与验收说明.md)列出证据边界。升级采用新目录解压、保留旧程序和数据备份；不要覆盖正在运行的目录或让两个实例写同一数据目录。
+
+每个发布ZIP内的 `SHA256SUMS.txt` 覆盖除清单自身外全部文件。可用 `python backend/scripts/release_checksums.py --archive <ZIP路径>` 核对归档原始字节；外部 `SHA256SUMS.txt` 用于核对两个ZIP整包哈希。源码包不包含依赖缓存、运行数据、个人配置、密钥或真实赝势。

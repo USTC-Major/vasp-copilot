@@ -7,6 +7,8 @@ list and a Pymatgen-style structure document.
 from __future__ import annotations
 
 import copy
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event, get_ident
 import pytest
 from fastapi.testclient import TestClient
 
@@ -128,6 +130,63 @@ def test_materials_search_with_fake(client, monkeypatch):
     assert data["materials"][0]["spacegroup"]["number"] == 225
 
 
+@pytest.mark.parametrize(
+    ("path", "payload"),
+    [
+        ("/api/v1/materials/search", {"query": "NaCl"}),
+        ("/api/v1/materials/import", {"material_id": "mp-12345"}),
+    ],
+    ids=["search", "import"],
+)
+def test_slow_mp_request_does_not_block_health(path, payload, client, monkeypatch):
+    """A synchronous MP request must leave the ASGI loop free for health checks."""
+    entered = Event()
+    release = Event()
+
+    class SlowFakeMpClient(FakeMpClient):
+        def _wait_for_release(self):
+            entered.set()
+            assert release.wait(timeout=10), "test failed to release the fake MP request"
+
+        def search(self, criteria, limit=20):
+            self._wait_for_release()
+            return super().search(criteria, limit)
+
+        def get_structure_doc(self, material_id):
+            self._wait_for_release()
+            return super().get_structure_doc(material_id)
+
+    # Keep this route-level test independent from Toolbox credentials and MP.
+    monkeypatch.setattr(mp_api, "_runtime_mp_api_key", lambda _request: "fake-key")
+    monkeypatch.setattr(mp_service, "MaterialsProjectClient", SlowFakeMpClient)
+
+    health_done = Event()
+
+    def request_health():
+        try:
+            return client.get("/health")
+        finally:
+            health_done.set()
+
+    with ThreadPoolExecutor(max_workers=2) as workers:
+        material_request = workers.submit(client.post, path, json=payload)
+        health_request = None
+        health_returned_while_mp_blocked = False
+        try:
+            assert entered.wait(timeout=5), "the fake MP request did not start"
+            health_request = workers.submit(request_health)
+            health_returned_while_mp_blocked = health_done.wait(timeout=3)
+        finally:
+            release.set()
+
+        material_response = material_request.result(timeout=10)
+        health_response = health_request.result(timeout=10) if health_request else None
+
+    assert health_returned_while_mp_blocked, "health waited for the blocked MP request to finish"
+    assert health_response is not None and health_response.status_code == 200
+    assert material_response.status_code == 200, material_response.text
+
+
 def test_materials_import_with_fake(client, monkeypatch):
     _enable_mp(monkeypatch)
     r = client.post("/api/v1/materials/import", json={"material_id": "mp-12345"})
@@ -141,6 +200,36 @@ def test_materials_import_with_fake(client, monkeypatch):
     assert data["summary"]["counts"] == [4, 4]
     assert data["summary"]["atom_count"] == 8
     assert abs(data["summary"]["lattice"]["volume"] - 133.2) < 1.0
+
+
+def test_materials_import_persists_on_asgi_loop_thread(client, monkeypatch):
+    _enable_mp(monkeypatch)
+    request_thread = []
+    persistence_threads = []
+
+    async def capture_request_thread():
+        request_thread.append(get_ident())
+        return "req_import_thread"
+
+    monkeypatch.setitem(app.dependency_overrides, mp_api.get_request_id, capture_request_thread)
+    original_store_file = mp_api.file_store.store_file
+    original_store_structure = mp_api.file_store.store_structure
+
+    def track_store_file(*args, **kwargs):
+        persistence_threads.append(get_ident())
+        return original_store_file(*args, **kwargs)
+
+    def track_store_structure(*args, **kwargs):
+        persistence_threads.append(get_ident())
+        return original_store_structure(*args, **kwargs)
+
+    monkeypatch.setattr(mp_api.file_store, "store_file", track_store_file)
+    monkeypatch.setattr(mp_api.file_store, "store_structure", track_store_structure)
+    response = client.post("/api/v1/materials/import", json={"material_id": "mp-12345"})
+
+    assert response.status_code == 200, response.text
+    assert len(request_thread) == 1
+    assert persistence_threads == [request_thread[0], request_thread[0]]
 
 
 def test_import_accepts_verified_numeric_to_alpha_alias(client, monkeypatch):

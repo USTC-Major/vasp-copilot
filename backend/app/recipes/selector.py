@@ -97,12 +97,18 @@ class RecipeSelector:
                 )
             )
         precision_id = _PRECISION_RECIPE_IDS[context.precision]
+        precision_reason = f"用户选择精度档位 {context.precision.value}"
+        precision_match = {"precision": context.precision.value}
+        if context.precision == PrecisionLevel.STANDARD and context.task in (TaskType.STATIC, TaskType.DOS):
+            precision_id = "precision.standard.scf"
+            precision_reason += f"；按 {context.task.value} 任务选择静态/态密度电子收敛配方"
+            precision_match["task"] = context.task.value
         entries.append(
             SelectionEntry(
                 RecipeRef(recipe_id=precision_id, version=DEFAULT_RECIPE_VERSION),
                 "precision",
-                f"用户选择精度档位 {context.precision.value}",
-                {"precision": context.precision.value},
+                precision_reason,
+                precision_match,
             )
         )
         return entries

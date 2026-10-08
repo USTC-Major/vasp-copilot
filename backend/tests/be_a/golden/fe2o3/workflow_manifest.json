@@ -1,5 +1,5 @@
 {
-  "bundle_sha256": "da948a4762e7cc1a6354213c8bb649969a01a37da729bba4a4f08ed38de128a8",
+  "bundle_sha256": "8f67480ebddf4051cdfcf958432db9a912595d5788a6447ae6c078e1d7b04118",
   "created_at": "2026-08-10T00:00:00Z",
   "files": [
     {
@@ -24,13 +24,13 @@
     },
     {
       "path": "02_static/INCAR",
-      "sha256": "1607a4049f67ceb3e91c70b06d8132265690a59d040e4b7663b42153a38681ba",
+      "sha256": "87e28636479dcce9e3208a79b16eb7abfae99b4990aa3199f89af6058fa830dd",
       "size_bytes": 340
     },
     {
       "path": "02_static/KPOINTS",
-      "sha256": "0d348b276d9837f23d4f08284045388beb56994f75005328d9456667453e6685",
-      "size_bytes": 80
+      "sha256": "940560b09de35bdb0c98a982fd10967b9233ee0262da82df616a7b04f75696ff",
+      "size_bytes": 82
     },
     {
       "path": "02_static/POSCAR",
@@ -44,12 +44,12 @@
     },
     {
       "path": "03_dos/INCAR",
-      "sha256": "e91cee0e84210f6ad037198d0c6ba1ed19cb5170098611325f4c6f81d85aadc2",
+      "sha256": "f9b6bc76ba37a4a1317c9c2c4395ce2d615408b393d1c997cbd9d438b4355300",
       "size_bytes": 389
     },
     {
       "path": "03_dos/KPOINTS",
-      "sha256": "33e3d62c62b522e8c5667e1237407a5a34a24e157908ce9e7c3631fa382997ae",
+      "sha256": "b65a5ea34a4e9d59a61699af69608159f33681da388da25b67c8563f0753185e",
       "size_bytes": 79
     },
     {
@@ -64,8 +64,8 @@
     },
     {
       "path": "INPUT_CHECK_REPORT.md",
-      "sha256": "3b3e7ab6463ad3f56232566c66d98e631dd83b53b3b70d9d80eb4f3529ce9210",
-      "size_bytes": 9190
+      "sha256": "e61e366c3e6af0db4d5adf2a2e686037d8b001cfecb7965d7f6d0e8a562a13c0",
+      "size_bytes": 9065
     },
     {
       "path": "POTCAR_REQUIRED.md",
@@ -74,13 +74,13 @@
     },
     {
       "path": "README_run_order.md",
-      "sha256": "75d3c3fd0f15b2dfd7addf8b7bb960a76c280a47f17d802673cc8eb5d8d7e407",
-      "size_bytes": 2267
+      "sha256": "8cdb9bdb06faecb887e2777c887bf155bb31b426d2aa7202b8b20046bc4db833",
+      "size_bytes": 2129
     },
     {
       "path": "workflow_plan.json",
-      "sha256": "ff0a1cfe1201ec3554d25ef0c8e3d7fbb8564144058f4eaea2f9ebfaff23e591",
-      "size_bytes": 17088
+      "sha256": "e01639e2852e346fcd5ad742df69edb596bb1d290038f0b51db0b7b907424e40",
+      "size_bytes": 17067
     }
   ],
   "generator_version": "0.1.0",
@@ -112,8 +112,8 @@
       }
     ]
   },
-  "recipe_pack_sha256": "3f67b649afdd798a5eeb47ecbf64e3242e10a9ddc6ddf3ba200308d9b9351c01",
-  "recipe_pack_version": "1.0.0",
+  "recipe_pack_sha256": "4ac1fe5ce6b614c2f28663d55f8988f0decbe57d5fc651be9675f74a6599c386",
+  "recipe_pack_version": "1.1.0",
   "revision": 1,
   "workflow_id": "wf_fe2o3"
 }

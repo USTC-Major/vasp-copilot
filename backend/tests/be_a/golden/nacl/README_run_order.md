@@ -38,4 +38,4 @@
 
 - [medium] INITIAL_RECOMMENDATION_ONLY: 这是初始推荐，不是唯一正确设置。
 - [medium] QUICK_PRECISION_NOT_FOR_PUBLICATION: quick 档位仅用于快速试算，不建议用于最终结果。
-- [info] STATIC_TIGHTER_EDIFF_HINT: static 建议比 relax 更严的 EDIFF；如需 1E-6 请选择 high 精度档或提交 EDIFF patch。
+- [info] STATIC_TIGHTER_EDIFF_HINT: 当前 static EDIFF=0.0001；建议电子收敛阈值 EDIFF ≤ 1E-6。当前设置已保留，可提交 EDIFF patch 调整，并针对体系检查电子收敛。

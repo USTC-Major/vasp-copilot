@@ -12,7 +12,11 @@ permissions:
 jobs:
   desktop-windows:
     runs-on: windows-2022
-    timeout-minutes: 25
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.11', '3.12']
     defaults:
       run:
         shell: pwsh
@@ -33,31 +37,44 @@ jobs:
           node-version: '24'
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
-          python-version: '3.11'
+          python-version: ${{ matrix.python }}
       - name: Build from clean checkout with locked frontend and SDK
         run: ./desktop/build.ps1
       - name: Verify exact build inputs, runtime files and production mock guard
         run: python desktop/tests/verify_build.py
-      - name: Restore existing backend test dependencies in isolated environment
+      - name: Test dependency preparation logic without external services
+        run: python -m unittest discover -s launcher/tests -p test_environment.py -v
+      - name: Prepare locked runtime from base Python and verify reuse
         run: |
-          python -m venv "$env:RUNNER_TEMP/desktop-test-venv"
-          & "$env:RUNNER_TEMP/desktop-test-venv/Scripts/python.exe" -m pip install --disable-pip-version-check -r backend/requirements.txt
-          if ($LASTEXITCODE -ne 0) { throw 'Backend validation dependency restore failed' }
-      - name: Run isolated controller tests without GUI or external services
+          $prepareState = "$env:RUNNER_TEMP/中文 自动依赖"
+          $firstResult = "$env:RUNNER_TEMP/desktop-results/prepare-first.json"
+          $secondResult = "$env:RUNNER_TEMP/desktop-results/prepare-second.json"
+          python -I -X utf8 launcher/environment.py --root "$PWD" --state "$prepareState" --result-file "$firstResult" --progress-file "$env:RUNNER_TEMP/desktop-results/prepare-progress.json"
+          if ($LASTEXITCODE -ne 0) { throw 'Fresh dependency preparation failed' }
+          $first = Get-Content -LiteralPath $firstResult -Raw | ConvertFrom-Json
+          if (!$first.ok -or !(Test-Path -LiteralPath $first.python)) { throw 'Prepared Python missing' }
+          python -I -X utf8 launcher/environment.py --root "$PWD" --state "$prepareState" --result-file "$secondResult" --progress-file "$env:RUNNER_TEMP/desktop-results/prepare-progress.json"
+          if ($LASTEXITCODE -ne 0) { throw 'Prepared dependency reuse failed' }
+          $second = Get-Content -LiteralPath $secondResult -Raw | ConvertFrom-Json
+          if (!$second.ok -or $second.python -ne $first.python -or $second.environment_id -ne $first.environment_id) { throw 'Runtime environment was not reused' }
+          "VASP_DESKTOP_PREPARED_PYTHON=$($first.python)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Run isolated controller tests with the automatically installed runtime
         env:
           PYTHONPYCACHEPREFIX: ${{ runner.temp }}/desktop-pycache
           ENABLE_AI_MODE: 'false'
           ENABLE_LLM: 'false'
         run: |
-          ./desktop/test.ps1 -PythonExecutable "$env:RUNNER_TEMP/desktop-test-venv/Scripts/python.exe" -OutputDirectory "$env:RUNNER_TEMP/desktop-results/controller"
+          ./desktop/test.ps1 -PythonExecutable "$env:VASP_DESKTOP_PREPARED_PYTHON" -OutputDirectory "$env:RUNNER_TEMP/desktop-results/controller"
       - name: Preserve small software-validation records
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: desktop-validation-${{ github.event.pull_request.head.sha || github.sha }}
+          name: desktop-validation-py${{ matrix.python }}-${{ github.event.pull_request.head.sha || github.sha }}
           if-no-files-found: warn
           retention-days: 7
           path: |
             desktop/dist/build-manifest.json
             ${{ runner.temp }}/desktop-results/environment.json
+            ${{ runner.temp }}/desktop-results/prepare-*.json
+            ${{ runner.temp }}/中文 自动依赖/logs/*.local.log
             ${{ runner.temp }}/desktop-results/controller/**/results.json

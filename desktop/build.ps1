@@ -54,7 +54,7 @@ foreach ($taskName in $taskDeliverables) {
     $taskFiles[$taskName] = (Get-FileHash -LiteralPath (Join-Path $taskOutput $taskName) -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 $taskInputs = @{}
-$taskInputNames = @('desktop/app.config', 'desktop/app.manifest', 'desktop/webview2.lock.json', 'desktop/build.ps1', 'desktop/common.ps1', 'desktop/restore-sdk.ps1', 'launcher/runtime.py', 'desktop/assets/app-icon.svg', 'desktop/assets/app-icon.png', 'desktop/assets/app-icon.ico', 'desktop/assets/icon-export.json', 'desktop/assets/export_icon.py', 'frontend/package.json', 'frontend/package-lock.json', 'frontend/index.html', 'frontend/vite.config.ts', 'frontend/tsconfig.json', 'frontend/tsconfig.app.json', 'frontend/tsconfig.node.json')
+$taskInputNames = @('desktop/app.config', 'desktop/app.manifest', 'desktop/webview2.lock.json', 'desktop/build.ps1', 'desktop/common.ps1', 'desktop/restore-sdk.ps1', 'launcher/runtime.py', 'launcher/environment.py', 'backend/requirements-runtime.txt', 'backend/requirements-win-cp311-x64.lock', 'backend/requirements-win-cp312-x64.lock', 'desktop/assets/app-icon.svg', 'desktop/assets/app-icon.png', 'desktop/assets/app-icon.ico', 'desktop/assets/icon-export.json', 'desktop/assets/export_icon.py', 'frontend/package.json', 'frontend/package-lock.json', 'frontend/index.html', 'frontend/vite.config.ts', 'frontend/tsconfig.json', 'frontend/tsconfig.app.json', 'frontend/tsconfig.node.json')
 $taskInputPaths = @($taskSources) + @($taskInputNames | ForEach-Object { Join-Path $taskRoot $_ })
 foreach ($taskDirectory in @('frontend/src', 'frontend/public')) {
     $taskInputPaths += @(Get-ChildItem -LiteralPath (Join-Path $taskRoot $taskDirectory) -File -Recurse | Select-Object -ExpandProperty FullName)

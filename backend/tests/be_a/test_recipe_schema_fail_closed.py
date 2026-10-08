@@ -34,11 +34,11 @@ def test_builtin_recipe_hashes_use_lf_raw_bytes():
     loader = RecipePackLoader()
     pack, recipes = loader.load_pack(DEFAULT_PACK_DIR)
     paths = sorted(DEFAULT_PACK_DIR.rglob("*.yaml"))
-    assert len(paths) == 14
+    assert len(paths) == 15
     for path in paths:
         assert b"\r" not in path.read_bytes()
     by_id = {recipe.recipe_id: recipe for recipe in recipes}
-    assert len(by_id) == 13
+    assert len(by_id) == 14
     for path in loader._iter_recipe_files(DEFAULT_PACK_DIR):
         loaded = loader.load_recipe(path)
         assert by_id[loaded.recipe_id].sha256 == hashlib.sha256(path.read_bytes()).hexdigest()

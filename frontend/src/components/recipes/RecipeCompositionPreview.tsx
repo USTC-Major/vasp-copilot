@@ -24,6 +24,9 @@ const LAYER_NAMES: Record<string, string> = {
   user_patch: '用户补丁',
 };
 
+const INITIAL_RECOMMENDATION_CODE = 'INITIAL_RECOMMENDATION_ONLY';
+const INITIAL_RECOMMENDATION_MESSAGE = '这是初始推荐，不是唯一正确设置。';
+
 const CATEGORIES = [
   { key: 'base_task', label: '基础与任务', color: 'default' },
   { key: 'precision', label: '精度', color: 'blue' },
@@ -57,6 +60,9 @@ const hasIdentityConflict = (selected: SelectedRecipe) => (
 
 const jsonValue = (value: unknown) => value === undefined ? '未提供' : JSON.stringify(value, null, 2);
 const confirmationText = (value: boolean | undefined) => value === true ? '已确认' : value === false ? '未确认' : '未提供确认状态';
+const hasWarningCode = (value: unknown, code: string) => (
+  typeof value === 'object' && value !== null && 'code' in value && value.code === code
+);
 
 const NoticeList: React.FC<{ values: unknown[] }> = ({ values }) => (
   <ul style={{ margin: 0, paddingInlineStart: 20 }}>
@@ -152,11 +158,27 @@ const RecipeCompositionPreview: React.FC<RecipeCompositionPreviewProps> = ({
     );
   }
 
+  const hasInitialRecommendationWarning = compositions.some((comp) => (
+    comp.warnings?.some((warning) => hasWarningCode(warning, INITIAL_RECOMMENDATION_CODE))
+  ));
+
   return (
     <Card title={<span><BranchesOutlined /> Recipe 组合与来源</span>} bordered={false}>
+      {hasInitialRecommendationWarning && (
+        <Alert
+          type="info"
+          showIcon
+          title="Recipe 推荐说明"
+          description={INITIAL_RECOMMENDATION_MESSAGE}
+          style={{ marginBottom: 12 }}
+        />
+      )}
       {compositions.map((comp) => {
         const step = workflowSteps.find((s) => s.step_id === comp.step_id);
         const identityConflicts = comp.selected.filter(hasIdentityConflict);
+        const visibleWarnings = (comp.warnings ?? []).filter((warning) => (
+          !hasWarningCode(warning, INITIAL_RECOMMENDATION_CODE)
+        ));
         const patchWarnings = comp.patches?.flatMap((patch) => patch.validation?.warnings ?? []) ?? [];
         return (
           <Card
@@ -170,7 +192,7 @@ const RecipeCompositionPreview: React.FC<RecipeCompositionPreviewProps> = ({
               <Alert type="warning" showIcon title="配方身份不一致，请核对 recipe_id 与 recipe_ref" description={<NoticeList values={identityConflicts.map(({ recipe_id, recipe_ref }) => ({ recipe_id, recipe_ref }))} />} style={{ marginBottom: 12 }} />
             )}
             {!!comp.conflicts?.length && <Alert type="error" showIcon title={`配方冲突（${comp.conflicts.length}）`} description={<NoticeList values={comp.conflicts} />} style={{ marginBottom: 12 }} />}
-            {!!comp.warnings?.length && <Alert type="warning" showIcon title={`配方警告（${comp.warnings.length}）`} description={<NoticeList values={comp.warnings} />} style={{ marginBottom: 12 }} />}
+            {!!visibleWarnings.length && <Alert type="warning" showIcon title={`配方警告（${visibleWarnings.length}）`} description={<NoticeList values={visibleWarnings} />} style={{ marginBottom: 12 }} />}
             {!!patchWarnings.length && <Alert type="warning" showIcon title={`补丁验证警告（${patchWarnings.length}）`} description={<NoticeList values={patchWarnings} />} style={{ marginBottom: 12 }} />}
             {comp.composition_status && <DetailField label="组合状态">{comp.composition_status}</DetailField>}
             {CATEGORIES.map((category) => {

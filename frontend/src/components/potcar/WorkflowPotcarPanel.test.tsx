@@ -1,3 +1,4 @@
+import { MemoryRouter } from 'react-router-dom';
 import { useState } from 'react';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -23,7 +24,7 @@ let choices: WorkflowPotcarChoice[];
 function Harness({ draft = '', revision = 1, redirectPreparedId, generation }: { draft?: string; revision?: number; redirectPreparedId?: string; generation?: WorkflowPotcarState }) {
   const [plan, setPlan] = useState({ ...workflowPlanFixture, revision });
   const [choice, setChoice] = useState<WorkflowPotcarChoice>({ mode: 'include' });
-  return <ConfigProvider theme={{ token: { motion: false } }}><WorkflowPotcarPanel plan={{ ...plan, revision: revision === 1 ? plan.revision : revision }} draftKey={draft} choice={choice} onChoice={value => { choices.push(value); setChoice(value); }} preparePlan={prepare} onPlanPrepared={value => setPlan(redirectPreparedId ? { ...value, workflow_id: redirectPreparedId } : value)} generation={generation} disabled={false} /><output data-testid="choice">{choice.mode}:{choice.artifact_id ?? 'none'}</output></ConfigProvider>;
+  return <ConfigProvider theme={{ token: { motion: false } }}><MemoryRouter><WorkflowPotcarPanel plan={{ ...plan, revision: revision === 1 ? plan.revision : revision }} draftKey={draft} choice={choice} onChoice={value => { choices.push(value); setChoice(value); }} preparePlan={prepare} onPlanPrepared={value => setPlan(redirectPreparedId ? { ...value, workflow_id: redirectPreparedId } : value)} generation={generation} disabled={false} /></MemoryRouter><output data-testid="choice">{choice.mode}:{choice.artifact_id ?? 'none'}</output></ConfigProvider>;
 }
 async function read() {
   await waitFor(() => expect(screen.getByRole('button', { name: '读取 / 刷新工作流 POTCAR 预览' })).toBeEnabled());

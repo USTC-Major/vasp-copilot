@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Alert, Button, Card, Checkbox, Empty, Radio, Select, Space, Tag, Typography } from 'antd';
 import { potcarApi } from '../../api/potcar';
 import { ApiError } from '../../api/client';
@@ -129,7 +130,7 @@ export default function WorkflowPotcarPanel({ plan, draftKey, choice, onChoice, 
     <Paragraph><Tag>{states[status]}</Tag>文件准备不会启动计算；其他上游文件和诊断条件仍需满足。</Paragraph>
     {choice.mode === 'include' && <>
       <Paragraph>最终 POSCAR 和计算上下文由服务端当前计划提供。相同产物关联所有步骤，仅核对确认一次。</Paragraph>
-      <div className="potcar-assembly-library"><label htmlFor="workflow-potcar-library">当前库</label><Select id="workflow-potcar-library" aria-label="工作流赝势库" value={libraryId} disabled={disabled || busy !== null} onChange={id => { invalidate(); setLibraryId(id); }} options={libraries.map(item => ({ value: item.library_id, label: item.display_name }))} /><Button disabled={disabled || busy !== null} loading={busy === 'libraries'} onClick={() => void loadLibraries()}>刷新库信息</Button><a href="/toolbox/potcar">管理 / 重新扫描本地库</a></div>
+      <div className="potcar-assembly-library"><label htmlFor="workflow-potcar-library">当前库</label><Select id="workflow-potcar-library" aria-label="工作流赝势库" value={libraryId} disabled={disabled || busy !== null} onChange={id => { invalidate(); setLibraryId(id); }} options={libraries.map(item => ({ value: item.library_id, label: item.display_name }))} /><Button disabled={disabled || busy !== null} loading={busy === 'libraries'} onClick={() => void loadLibraries()}>刷新库信息</Button><Link to="/toolbox/potcar">管理 / 重新扫描本地库</Link></div>
       {loaded && libraries.length === 0 && <Empty description="尚未登记赝势库；可先选择不包含 POTCAR，或登记并扫描后刷新库信息。" />}
       {library && !ready && <Alert type="warning" showIcon title="当前库未就绪，请检查路径或完成扫描后刷新库信息。" />}
       <Button disabled={disabled || busy !== null || !ready} loading={busy === 'preview'} onClick={() => void refresh()}>读取 / 刷新工作流 POTCAR 预览</Button>

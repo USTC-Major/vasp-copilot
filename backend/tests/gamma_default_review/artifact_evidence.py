@@ -32,7 +32,7 @@ def build() -> dict[str, object]:
         path.relative_to(ROOT).as_posix(): digest(path.read_bytes())
         for path in sorted(DEFAULT_PACK_DIR.rglob("*.yaml"))
     }
-    assert len(sources) == 14 and len(recipes) == 13
+    assert len(sources) == 15 and len(recipes) == 14
     inputs = {
         "fe2o3": cases.fe2o3_request.__wrapped__(cases.fe2o3_structure.__wrapped__()),
         "nacl": cases.nacl_request.__wrapped__(cases.nacl_structure.__wrapped__()),

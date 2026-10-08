@@ -1,5 +1,5 @@
 # VASP-Copilot | 02_static | self-consistent static calculation
-EDIFF = 1e-05
+EDIFF = 1e-06
 ENCUT = 520
 IBRION = -1
 ISIF = 2
