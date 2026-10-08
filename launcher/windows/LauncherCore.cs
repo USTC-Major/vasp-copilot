@@ -67,6 +67,7 @@ namespace VaspCopilot.Launcher
         {
             public string Key, Label, State = "stopped", Detail = "未启动", StopFile, ErrorFile, Token;
             public int Port, RuntimePid; public OwnedProcess Process;
+            public int HealthFailures; public DateTime FirstHealthFailure;
         }
         private readonly object sync = new object();
         private readonly List<Service> services = new List<Service>();
@@ -118,7 +119,6 @@ namespace VaspCopilot.Launcher
                 foreach (Service service in owned)
                 {
                     OwnedProcess process = service.Process;
-                    bool healthy = IsHealthy(service);
                     if (process != null && (process.HasExited || process.RuntimeExited))
                     {
                         try
@@ -130,10 +130,26 @@ namespace VaspCopilot.Launcher
                     }
                     else
                     {
+                        HealthResult health = CheckHealth(service);
                         lock (sync)
                         {
-                            service.State = healthy ? "ready" : "error";
-                            service.Detail = healthy ? "HTTP 健康及进程归属已确认" : "进程仍在，但 HTTP 健康或归属检查未通过；可停止或重启。";
+                            if (health == HealthResult.Healthy)
+                            {
+                                service.HealthFailures = 0; service.FirstHealthFailure = DateTime.MinValue;
+                                service.State = "ready"; service.Detail = "HTTP 健康及进程归属已确认";
+                            }
+                            else if (health == HealthResult.Unavailable)
+                            {
+                                if (service.HealthFailures++ == 0) service.FirstHealthFailure = DateTime.UtcNow;
+                                bool persistent = service.HealthFailures >= 3 && DateTime.UtcNow - service.FirstHealthFailure >= TimeSpan.FromSeconds(8);
+                                service.State = persistent ? "error" : "degraded";
+                                service.Detail = persistent ? "所属进程仍在，但服务持续未响应；恢复后将自动显示原页面，也可重试启动。" : "所属进程仍在，服务响应暂缓，正在复核；当前页面保留。";
+                            }
+                            else
+                            {
+                                service.State = "error";
+                                service.Detail = health == HealthResult.Exited ? "所属服务已退出；不会自动重启。" : "服务进程归属或身份校验失败；未将此响应视为就绪，可停止或重启。";
+                            }
                         }
                     }
                 }
@@ -452,6 +468,7 @@ namespace VaspCopilot.Launcher
                     if (s.Process != null) { s.Process.Dispose(); s.Process = null; }
                     s.Port = s.Key == "toolbox" ? options.ToolboxPort : s.Key == "ai" ? options.AiPort : options.WebPort;
                     s.State = s.Key == "ai" && !options.EnableAi ? "disabled" : "stopped";
+                    s.HealthFailures = 0; s.FirstHealthFailure = DateTime.MinValue;
                     s.Detail = s.State == "disabled" ? "未选择启动" : "未启动";
                 }
             }
@@ -541,16 +558,20 @@ namespace VaspCopilot.Launcher
                 throw new LauncherException(message);
             }
         }
-        private bool IsHealthy(Service s)
+        private enum HealthResult { Healthy, Unavailable, IdentityFailure, Exited }
+        private bool IsHealthy(Service s) { return CheckHealth(s) == HealthResult.Healthy; }
+        private HealthResult CheckHealth(Service s)
         {
             OwnedProcess owned = s.Process;
-            if (owned == null || owned.HasExited) return false;
+            if (owned == null || owned.HasExited || owned.RuntimeExited) return HealthResult.Exited;
+            bool verifyingIdentity = true;
             try
             {
                 int listenerPid = Native.ListenerPid(s.Port);
-                if (!owned.ContainsPid(listenerPid)) return false;
+                if (listenerPid == 0) return HealthResult.Unavailable;
+                if (!owned.ContainsPid(listenerPid)) return HealthResult.IdentityFailure;
                 var request = (HttpWebRequest)WebRequest.Create("http://127.0.0.1:" + s.Port + "/__launcher__/health");
-                request.Proxy = null; request.Timeout = 650; request.ReadWriteTimeout = 650;
+                request.Proxy = null; request.Timeout = 650; request.ReadWriteTimeout = 650; request.AllowAutoRedirect = false;
                 request.Headers["X-Launcher-Token"] = s.Token;
                 using (var response = request.GetResponse())
                 using (var reader = new StreamReader(response.GetResponseStream()))
@@ -558,20 +579,36 @@ namespace VaspCopilot.Launcher
                     var data = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(reader.ReadToEnd());
                     if (Convert.ToString(data["token"]) != s.Token || Convert.ToString(data["kind"]) != s.Key
                         || Convert.ToInt32(data["pid"]) != listenerPid || Convert.ToString(data["fingerprint"]) != fingerprint
-                        || !String.Equals(Path.GetFullPath(Convert.ToString(data["root"])).TrimEnd('\\', '/'), root.TrimEnd('\\', '/'), StringComparison.OrdinalIgnoreCase)) return false;
+                        || !String.Equals(Path.GetFullPath(Convert.ToString(data["root"])).TrimEnd('\\', '/'), root.TrimEnd('\\', '/'), StringComparison.OrdinalIgnoreCase)) return HealthResult.IdentityFailure;
                 }
-                if (s.Key == "web") return true;
-                var health = (HttpWebRequest)WebRequest.Create("http://127.0.0.1:" + s.Port + (s.Key == "toolbox" ? "/health" : "/ai/v1/ping"));
-                health.Proxy = null; health.Timeout = 650; health.ReadWriteTimeout = 650;
-                using (var response = health.GetResponse())
-                using (var reader = new StreamReader(response.GetResponseStream()))
+                verifyingIdentity = false;
+                if (s.Key != "web")
                 {
-                    var data = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(reader.ReadToEnd());
-                    return s.Key == "toolbox" ? Convert.ToString(data["status"]) == "ok"
-                        : Convert.ToString(data["mode"]) == "ai" && (Convert.ToString(data["version"]) == "0.3.0" || Convert.ToString(data["version"]) == "0.4.0") && Convert.ToBoolean(data["enabled"]);
+                    var health = (HttpWebRequest)WebRequest.Create("http://127.0.0.1:" + s.Port + (s.Key == "toolbox" ? "/health" : "/ai/v1/ping"));
+                    health.Proxy = null; health.Timeout = 650; health.ReadWriteTimeout = 650; health.AllowAutoRedirect = false;
+                    using (var response = health.GetResponse())
+                    using (var reader = new StreamReader(response.GetResponseStream()))
+                    {
+                        var data = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(reader.ReadToEnd());
+                        bool ready = s.Key == "toolbox" ? Convert.ToString(data["status"]) == "ok"
+                            : Convert.ToString(data["mode"]) == "ai" && (Convert.ToString(data["version"]) == "0.3.0" || Convert.ToString(data["version"]) == "0.4.0") && Convert.ToBoolean(data["enabled"]);
+                        if (!ready) return HealthResult.Unavailable;
+                    }
                 }
+                // Preserve ownership even if a listener changed during the HTTP requests.
+                if (owned.HasExited || owned.RuntimeExited) return HealthResult.Exited;
+                return Native.ListenerPid(s.Port) == listenerPid && owned.ContainsPid(listenerPid) ? HealthResult.Healthy : HealthResult.IdentityFailure;
             }
-            catch { return false; }
+            catch (WebException exc)
+            {
+                using (var response = exc.Response as HttpWebResponse)
+                {
+                    if (verifyingIdentity && response != null && (response.StatusCode == HttpStatusCode.Unauthorized || response.StatusCode == HttpStatusCode.Forbidden))
+                        return HealthResult.IdentityFailure;
+                }
+                return HealthResult.Unavailable;
+            }
+            catch { return HealthResult.IdentityFailure; }
         }
         private void StopInternal(bool preserveErrors = false)
         {

@@ -23,6 +23,8 @@ try {
         & $taskPython -X utf8 (Join-Path $PSScriptRoot "tests/$taskName")
         if ($LASTEXITCODE -ne 0) { throw "Isolated controller tests failed: $taskName" }
     }
+    & $taskPython -X utf8 (Join-Path $PSScriptRoot 'tests/health_recovery_tests.py') --controller-only --output (Join-Path $OutputDirectory 'health-recovery')
+    if ($LASTEXITCODE -ne 0) { throw 'Health recovery controller tests failed.' }
 } finally {
     [Environment]::SetEnvironmentVariable('VASP_DESKTOP_TEST_OUTPUT', $taskPreviousOutput, 'Process')
     [Environment]::SetEnvironmentVariable('PYTHONUTF8', $taskPreviousUtf8, 'Process')

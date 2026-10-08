@@ -163,7 +163,7 @@ namespace VaspCopilot.DesktopV3
         private readonly Button launchRetry = ShellTheme.Button("重试启动", true), launchSettings = ShellTheme.Button("启动设置"), launchLog = ShellTheme.Button("查看安装日志");
         private readonly Panel launch = new Panel();
         private readonly System.Windows.Forms.Timer timer = new System.Windows.Forms.Timer();
-        private bool closing, finished, initialized, browserReady, servicesReady, pageReady, startupFailed;
+        private bool closing, finished, initialized, browserReady, servicesReady, pageReady, startupFailed, serviceInterrupted, serviceDegraded;
         private Task startup;
         private string origin = "", lastStage = "";
         private ulong navigationId;
@@ -195,6 +195,7 @@ namespace VaspCopilot.DesktopV3
             FormClosing += OnClosing; DpiChanged += async delegate { await RecordDisplay("dpi-changed"); };
             timer.Interval = 400; timer.Tick += delegate
             {
+                if (closing) return;
                 if (activation.WaitOne(0)) { if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal; Show(); Activate(); Program.SetForegroundWindow(Handle); Log("activated", new { pid = System.Diagnostics.Process.GetCurrentProcess().Id }); }
                 var snapshot = controller.GetSnapshot();
                 launchLog.Visible = !String.IsNullOrEmpty(controller.EnvironmentFailureLogPath);
@@ -202,17 +203,39 @@ namespace VaspCopilot.DesktopV3
                 {
                     if (browserReady) { launchMessage.Text = snapshot.Message; UpdateSteps(snapshot.StartupStage); }
                 }
-                // Check cached errors even when every owned process has already exited.
-                if (servicesReady && (startup == null || startup.IsCompleted) && snapshot.Services.Exists(s => s.State == "error"))
-                {
-                    servicesReady = pageReady = false; workflow.Enabled = evidence.Enabled = false;
-                    ShowLaunch("本地服务中断", "本地服务状态异常。请重试启动，或在启动设置检查目录与运行环境。", true);
-                    steps[2].Text = "3. 本地服务  ·  已中断"; steps[3].Text = "4. 真实工作流界面  ·  等待恢复";
-                    status.Text = "本地服务状态异常"; Log("service-failed", new { snapshot });
-                }
+                UpdateServiceHealth(snapshot);
             }; timer.Start();
             AutoScaleDimensions = new SizeF(96, 96); ResumeLayout(true);
             Log("session", new { pid = System.Diagnostics.Process.GetCurrentProcess().Id, isolated, shell = "V3" });
+        }
+        private void UpdateServiceHealth(LauncherSnapshot snapshot)
+        {
+            if (closing || snapshot.Busy || startupFailed || (startup != null && !startup.IsCompleted)) return;
+            // A confirmed interruption hides the page without destroying its document.
+            if (servicesReady && snapshot.Services.Exists(s => s.State == "error"))
+                {
+                    servicesReady = false; serviceInterrupted = true; serviceDegraded = false; workflow.Enabled = evidence.Enabled = false;
+                    ShowLaunch("本地服务中断", "本地服务暂不可用。正在等待恢复，当前页面已保留；也可重试启动。", true);
+                    steps[2].Text = "3. 本地服务  ·  已中断"; steps[3].Text = "4. 真实工作流界面  ·  等待恢复";
+                    status.Text = "本地服务状态异常"; Log("service-failed", new { snapshot });
+                }
+            else if (serviceInterrupted && snapshot.Services.TrueForAll(s => s.State == "ready" || s.State == "disabled") && pageReady && initialized)
+            {
+                Uri current;
+                if (!Uri.TryCreate(web.CoreWebView2.Source, UriKind.Absolute, out current) || !IsLocal(current)) return;
+                serviceInterrupted = serviceDegraded = false; servicesReady = true; launch.Visible = false; web.Visible = true;
+                workflow.Enabled = evidence.Enabled = true; status.Text = "工作空间已恢复，当前页面已保留";
+                UpdateSteps("ready"); Log("service-recovered", new { snapshot, documentPreserved = true });
+            }
+            else if (servicesReady && pageReady)
+            {
+                bool degraded = snapshot.Services.Exists(s => s.State == "degraded");
+                if (degraded != serviceDegraded)
+                {
+                    serviceDegraded = degraded;
+                    status.Text = degraded ? "本地服务响应暂缓，正在复核；当前页面保留" : "工作空间已就绪" + (isolated ? " · 隔离候选" : "");
+                }
+            }
         }
         private void BuildLaunch()
         {
@@ -274,7 +297,7 @@ namespace VaspCopilot.DesktopV3
         private void RunStartup()
         {
             if (closing || (startup != null && !startup.IsCompleted)) return;
-            servicesReady = pageReady = startupFailed = false; workflow.Enabled = evidence.Enabled = false;
+            servicesReady = pageReady = startupFailed = serviceInterrupted = serviceDegraded = false; workflow.Enabled = evidence.Enabled = false;
             ShowLaunch("正在准备工作空间", "正在检查桌面运行时与启动信息…", false); SetActions(false); UpdateSteps(""); startup = StartAsync();
         }
         private async Task Configure()
@@ -311,6 +334,7 @@ namespace VaspCopilot.DesktopV3
                 if (closing || e.NavigationId != navigationId) return;
                 Uri current; bool local = Uri.TryCreate(web.CoreWebView2.Source, UriKind.Absolute, out current) && IsLocal(current);
                 Log("navigation", new { success = e.IsSuccess, error = e.WebErrorStatus.ToString(), local });
+                pageReady = e.IsSuccess && local;
                 if (e.IsSuccess && local && servicesReady)
                 {
                     pageReady = true; launch.Visible = false; web.Visible = true; workflow.Enabled = evidence.Enabled = true;
