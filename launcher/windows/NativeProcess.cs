@@ -1,5 +1,7 @@
 using System;
 using System.ComponentModel;
+using System.Collections;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Net;
 using System.Runtime.InteropServices;
@@ -32,10 +34,11 @@ namespace VaspCopilot.Launcher
             try { bool member; return Native.IsProcessInJob(candidate, job, out member) && member; }
             finally { Native.CloseHandle(candidate); }
         }
-        public static OwnedProcess Start(string executable, string arguments, string workingDirectory)
+        public static OwnedProcess Start(string executable, string arguments, string workingDirectory, IDictionary<string, string> environmentOverrides = null)
         {
             var owner = new OwnedProcess();
             IntPtr thread = IntPtr.Zero;
+            IntPtr environment = IntPtr.Zero;
             try
             {
                 owner.job = Native.CreateJobObject(IntPtr.Zero, null);
@@ -53,9 +56,11 @@ namespace VaspCopilot.Launcher
                 var startup = new Native.STARTUPINFO();
                 startup.cb = Marshal.SizeOf(startup);
                 Native.PROCESS_INFORMATION info;
+                if (environmentOverrides != null)
+                    environment = Marshal.StringToHGlobalUni(BuildEnvironmentBlock(environmentOverrides));
                 if (!Native.CreateProcess(executable, new StringBuilder(Quote(executable) + " " + arguments), IntPtr.Zero,
-                    IntPtr.Zero, false, 0x08000004, IntPtr.Zero, workingDirectory, ref startup, out info))
-                    throw new Win32Exception(); // CREATE_NO_WINDOW | CREATE_SUSPENDED
+                    IntPtr.Zero, false, 0x08000004 | (environment != IntPtr.Zero ? 0x00000400u : 0u), environment, workingDirectory, ref startup, out info))
+                    throw new Win32Exception(); // CREATE_NO_WINDOW | CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT
                 owner.process = info.hProcess;
                 thread = info.hThread;
                 owner.Pid = (int)info.dwProcessId;
@@ -69,7 +74,29 @@ namespace VaspCopilot.Launcher
                 owner.Dispose();
                 throw;
             }
-            finally { if (thread != IntPtr.Zero) Native.CloseHandle(thread); }
+            finally
+            {
+                if (thread != IntPtr.Zero) Native.CloseHandle(thread);
+                if (environment != IntPtr.Zero) Marshal.FreeHGlobal(environment);
+            }
+        }
+        internal static string BuildEnvironmentBlock(IDictionary<string, string> overrides)
+        {
+            // Windows requires a sorted, double-NUL-terminated UTF-16 block.
+            // Copy rather than mutate the parent environment, including Unicode values.
+            var values = new SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (DictionaryEntry entry in Environment.GetEnvironmentVariables())
+                values[(string)entry.Key] = (string)entry.Value;
+            foreach (var entry in overrides)
+            {
+                if (String.IsNullOrEmpty(entry.Key) || entry.Key.IndexOfAny(new [] { '=', '\0' }) >= 0 || (entry.Value != null && entry.Value.IndexOf('\0') >= 0))
+                    throw new ArgumentException("Invalid child environment entry.");
+                if (entry.Value == null) values.Remove(entry.Key); else values[entry.Key] = entry.Value;
+            }
+            var block = new StringBuilder();
+            foreach (var entry in values) block.Append(entry.Key).Append('=').Append(entry.Value).Append('\0');
+            if (block.Length == 0) block.Append('\0');
+            return block.Append('\0').ToString();
         }
         public bool Wait(int milliseconds)
         {

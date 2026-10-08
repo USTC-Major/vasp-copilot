@@ -23,6 +23,7 @@ namespace VaspCopilot.Launcher
         public int AiPort { get; set; }
         public int WebPort { get; set; }
         public bool EnableAi { get; set; }
+        public bool FullFeatures { get; set; }
         public bool IsolatedProfile { get; set; }
         public LauncherOptions() { ToolboxPort = 8000; AiPort = 8500; WebPort = 5173; RootDirectory = ""; PythonExecutable = ""; VaspAiHome = ""; DataDirectory = ""; }
     }
@@ -181,6 +182,7 @@ namespace VaspCopilot.Launcher
         private static void Validate(LauncherOptions options)
         {
             if (options == null || String.IsNullOrWhiteSpace(options.RootDirectory)) throw new LauncherException("请先选择 VASP-Copilot 安装目录。");
+            if (options.FullFeatures && options.IsolatedProfile) throw new LauncherException("完整功能与隔离测试模式不能同时启用。");
             options.RootDirectory = Path.GetFullPath(options.RootDirectory);
             foreach (string file in new [] { "backend/app/main.py", "backend/ai_mode/server.py", "frontend/dist/index.html" })
                 if (!File.Exists(Path.Combine(options.RootDirectory, file.Replace('/', Path.DirectorySeparatorChar))))
@@ -267,7 +269,7 @@ namespace VaspCopilot.Launcher
         {
             lock (sync)
             {
-                root = options.RootDirectory; fingerprint = Fingerprint(root); version = "0.3.0 / 安装指纹 " + fingerprint;
+                root = options.RootDirectory; fingerprint = Fingerprint(root); version = "0.4.0 / 安装指纹 " + fingerprint;
                 webUrl = "http://127.0.0.1:" + options.WebPort;
                 foreach (Service s in services)
                 {
@@ -289,6 +291,15 @@ namespace VaspCopilot.Launcher
                 }
             }
             LauncherPreferences.Save(options);
+            // A new secret belongs only to this start attempt and its two service children.
+            string reviewerSecret = null;
+            if (options.FullFeatures && options.EnableAi)
+            {
+                byte[] bytes = new byte[32];
+                using (var random = RandomNumberGenerator.Create()) random.GetBytes(bytes);
+                reviewerSecret = Convert.ToBase64String(bytes);
+                Array.Clear(bytes, 0, bytes.Length);
+            }
             try
             {
                 foreach (Service s in services.Where(s => s.State != "disabled"))
@@ -301,11 +312,16 @@ namespace VaspCopilot.Launcher
                         + " --port " + s.Port + " --toolbox-port " + options.ToolboxPort + " --ai-port " + options.AiPort
                         + " --token " + s.Token + " --stop-file " + OwnedProcess.Quote(s.StopFile) + " --result-file " + OwnedProcess.Quote(s.ErrorFile)
                         + (options.EnableAi ? " --enable-ai" : "")
+                        + (options.FullFeatures ? " --full-features" : "")
                         + (String.IsNullOrWhiteSpace(options.VaspAiHome) ? "" : " --ai-home " + OwnedProcess.Quote(options.VaspAiHome))
                         + (String.IsNullOrWhiteSpace(options.DataDirectory) ? "" : " --data-dir " + OwnedProcess.Quote(options.DataDirectory));
                     if (options.IsolatedProfile) arguments += " --isolated";
                     SetState(s, "starting", "正在启动并核对 HTTP 健康、安装指纹和进程归属…");
-                    lock (sync) s.Process = OwnedProcess.Start(python, arguments, Path.Combine(root, "backend"));
+                    var environment = new Dictionary<string, string> {
+                        { "VASP_REVIEWER_SHARED_SECRET", s.Key != "web" ? reviewerSecret : null },
+                        { "VASP_REVIEWER_ENABLED", "false" }, { "VASP_REVIEWER_URL", null }
+                    };
+                    lock (sync) s.Process = OwnedProcess.Start(python, arguments, Path.Combine(root, "backend"), environment);
                     DateTime deadline = DateTime.UtcNow.AddSeconds(45);
                     while (DateTime.UtcNow < deadline)
                     {
@@ -376,7 +392,7 @@ namespace VaspCopilot.Launcher
                 {
                     var data = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(reader.ReadToEnd());
                     return s.Key == "toolbox" ? Convert.ToString(data["status"]) == "ok"
-                        : Convert.ToString(data["mode"]) == "ai" && Convert.ToString(data["version"]) == "0.3.0" && Convert.ToBoolean(data["enabled"]);
+                        : Convert.ToString(data["mode"]) == "ai" && (Convert.ToString(data["version"]) == "0.3.0" || Convert.ToString(data["version"]) == "0.4.0") && Convert.ToBoolean(data["enabled"]);
                 }
             }
             catch { return false; }

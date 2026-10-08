@@ -31,14 +31,22 @@ namespace VaspCopilot.DesktopV3
         [STAThread] private static void Main(string[] args)
         {
             Application.EnableVisualStyles(); Application.SetCompatibleTextRenderingDefault(false);
+            bool fullFeatures = Array.IndexOf(args, "--full-features") >= 0;
+            bool testProfileSpecified = Array.IndexOf(args, "--test-profile") >= 0;
+            if (fullFeatures && testProfileSpecified)
+            {
+                MessageBox.Show("--full-features 与 --test-profile 不能同时使用。请删除其中一个启动参数。", "启动参数冲突", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
             string profile = Arg(args, "--test-profile");
             if (profile.Length > 0 && !Path.IsPathRooted(profile)) { MessageBox.Show("测试 profile 必须是绝对路径。"); return; }
             bool isolated = profile.Length > 0;
-            string state = isolated ? Path.GetFullPath(profile) : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "VASP-Copilot", "desktop-v3");
+            string state = isolated ? Path.GetFullPath(profile) : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "VASP-Copilot", fullFeatures ? "desktop-v040-full" : "desktop-v3");
             Directory.CreateDirectory(state);
             Environment.SetEnvironmentVariable("VASP_LAUNCHER_STATE_DIR", state);
             string instance;
-            using (var hash = SHA256.Create()) instance = BitConverter.ToString(hash.ComputeHash(Encoding.UTF8.GetBytes(WindowsIdentity.GetCurrent().User.Value + "|" + (isolated ? state.ToUpperInvariant() : "normal")))).Replace("-", "");
+            string instanceScope = isolated ? state.ToUpperInvariant() : fullFeatures ? "full-features" : "normal";
+            using (var hash = SHA256.Create()) instance = BitConverter.ToString(hash.ComputeHash(Encoding.UTF8.GetBytes(WindowsIdentity.GetCurrent().User.Value + "|" + instanceScope))).Replace("-", "");
             // Event exists before mutex ownership is decided, so an early second launch is retained.
             using (var activation = new EventWaitHandle(false, EventResetMode.AutoReset, "Local\\VaspCopilotV3-Activate-" + instance))
             {
@@ -51,6 +59,7 @@ namespace VaspCopilot.DesktopV3
                         string packageRoot = Path.GetFullPath(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", ".."));
                         var options = LauncherPreferences.Load();
                         options.IsolatedProfile = isolated;
+                        options.FullFeatures = fullFeatures;
                         if (isolated)
                         {
                             options.VaspAiHome = Path.Combine(state, "home"); options.DataDirectory = Path.Combine(state, "data");
@@ -58,6 +67,12 @@ namespace VaspCopilot.DesktopV3
                             if (Arg(args, "--test-python").Length > 0) options.PythonExecutable = Path.GetFullPath(Arg(args, "--test-python"));
                             options.EnableAi = false;
                             Environment.SetEnvironmentVariable("PYTHONPYCACHEPREFIX", Path.Combine(state, "pycache"));
+                        }
+                        else if (fullFeatures)
+                        {
+                            options.EnableAi = true;
+                            if (String.IsNullOrWhiteSpace(options.VaspAiHome)) options.VaspAiHome = Path.Combine(state, "home");
+                            if (String.IsNullOrWhiteSpace(options.DataDirectory)) options.DataDirectory = Path.Combine(state, "data");
                         }
                         using (var controller = new LauncherController(Path.Combine(packageRoot, "launcher", "runtime.py")))
                         using (var form = new DesktopForm(controller, options, state, isolated, activation)) Application.Run(form);
@@ -120,12 +135,12 @@ namespace VaspCopilot.DesktopV3
     }
     internal sealed class AboutForm : Form
     {
-        internal AboutForm(bool isolated)
+        internal AboutForm(bool isolated, bool fullFeatures)
         {
             SuspendLayout(); AutoScaleMode = AutoScaleMode.Dpi; ShellTheme.Apply(this); Text = "关于 VASP-Copilot";
             ClientSize = new Size(590, 390); AutoSize = true; AutoSizeMode = AutoSizeMode.GrowAndShrink; MinimumSize = new Size(590, 390); FormBorderStyle = FormBorderStyle.FixedDialog; StartPosition = FormStartPosition.CenterParent; MaximizeBox = MinimizeBox = false;
             var layout = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(32), FlowDirection = FlowDirection.TopDown, WrapContents = false };
-            layout.Controls.Add(ShellTheme.Logo(64)); layout.Controls.Add(ShellTheme.Label("VASP-Copilot", 23F)); layout.Controls.Add(ShellTheme.Label("科研计算工作空间 · v0.4.0" + (isolated ? " · 隔离候选" : ""), 10F, true));
+            layout.Controls.Add(ShellTheme.Logo(64)); layout.Controls.Add(ShellTheme.Label("VASP-Copilot", 23F)); layout.Controls.Add(ShellTheme.Label("科研计算工作空间 · v0.4.0" + (isolated ? " · 隔离候选" : fullFeatures ? " · 完整功能复测" : ""), 10F, true));
             layout.Controls.Add(ShellTheme.Label(ShellTheme.Institution, 12F)); layout.Controls.Add(ShellTheme.Label(ShellTheme.Group, 10F, true)); layout.Controls.Add(ShellTheme.Label(ShellTheme.Authors, 10F, true));
             var close = ShellTheme.Button("关闭"); close.DialogResult = DialogResult.OK; layout.Controls.Add(close); Controls.Add(layout); AcceptButton = CancelButton = close;
             AutoScaleDimensions = new SizeF(96, 96); ResumeLayout(true);
@@ -152,12 +167,12 @@ namespace VaspCopilot.DesktopV3
         internal DesktopForm(LauncherController controller, LauncherOptions options, string state, bool isolated, EventWaitHandle activation)
         {
             SuspendLayout(); this.controller = controller; this.options = options; this.state = state; this.isolated = isolated;
-            AutoScaleMode = AutoScaleMode.Dpi; ShellTheme.Apply(this); Text = "VASP-Copilot" + (isolated ? " · V3 隔离候选" : ""); Width = 1280; Height = 900; MinimumSize = new Size(960, 700); StartPosition = FormStartPosition.CenterScreen;
+            AutoScaleMode = AutoScaleMode.Dpi; ShellTheme.Apply(this); Text = "VASP-Copilot" + (isolated ? " · V3 隔离候选" : options.FullFeatures ? " · 完整功能复测" : ""); Width = 1280; Height = 900; MinimumSize = new Size(960, 700); StartPosition = FormStartPosition.CenterScreen;
             var bar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 54, Padding = new Padding(14, 5, 8, 5), BackColor = ShellTheme.Surface, WrapContents = false };
             var brand = ShellTheme.Label("VASP-Copilot", 12F); brand.Margin = new Padding(0, 8, 24, 0); bar.Controls.Add(brand);
             workflow.Enabled = false; workflow.Click += delegate { if (initialized && servicesReady && origin.Length > 0) web.CoreWebView2.Navigate(origin + "/workflow"); };
             retry.Click += delegate { RunStartup(); }; advanced.Click += async delegate { await Configure(); };
-            var about = ShellTheme.Button("关于"); about.Click += delegate { using (var dialog = new AboutForm(isolated)) dialog.ShowDialog(this); };
+            var about = ShellTheme.Button("关于"); about.Click += delegate { using (var dialog = new AboutForm(isolated, options.FullFeatures)) dialog.ShowDialog(this); };
             var exit = ShellTheme.Button("退出"); exit.Click += delegate { Close(); };
             evidence.Visible = isolated; evidence.Enabled = false; evidence.Click += async delegate { await CaptureEvidence(); };
             bar.Controls.Add(workflow); bar.Controls.Add(advanced); bar.Controls.Add(about); bar.Controls.Add(retry); bar.Controls.Add(exit); if (isolated) bar.Controls.Add(evidence);
@@ -201,8 +216,9 @@ namespace VaspCopilot.DesktopV3
             center.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50)); center.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 650)); center.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
             center.RowStyles.Add(new RowStyle(SizeType.Percent, 50)); center.RowStyles.Add(new RowStyle(SizeType.AutoSize)); center.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
             var card = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false, Padding = new Padding(32, 18, 32, 18) };
-            card.Controls.Add(ShellTheme.Logo(72)); card.Controls.Add(ShellTheme.Label("DESKTOP WORKSPACE", 10F, true)); card.Controls.Add(ShellTheme.Label("VASP-Copilot", 28F));
+            card.Controls.Add(ShellTheme.Logo(72)); card.Controls.Add(ShellTheme.Label("DESKTOP WORKSPACE" + (options.FullFeatures ? " · 完整功能复测" : ""), 10F, true)); card.Controls.Add(ShellTheme.Label("VASP-Copilot", 28F));
             card.Controls.Add(ShellTheme.Label("把研究意图，连接到可检查的计算计划。", 11F, true));
+            if (options.FullFeatures) { var fullHint = ShellTheme.Label("完整功能复测：可配置真实模型、MP与超算；操作仍按当前流程确认", 9F, true); fullHint.MaximumSize = new Size(570, 0); card.Controls.Add(fullHint); }
             launchTitle.AutoSize = true; launchTitle.Font = new Font(Font.FontFamily, 13F); launchTitle.ForeColor = ShellTheme.Blue; launchTitle.Margin = new Padding(0, 18, 0, 6); card.Controls.Add(launchTitle);
             launchMessage.AutoSize = true; launchMessage.MaximumSize = new Size(570, 0); launchMessage.ForeColor = ShellTheme.Muted; launchMessage.Margin = new Padding(0, 2, 0, 12); card.Controls.Add(launchMessage);
             for (int i = 0; i < steps.Length; i++) { steps[i] = ShellTheme.Label("", 10F, true); card.Controls.Add(steps[i]); }

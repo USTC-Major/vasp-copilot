@@ -193,7 +193,26 @@ def dependency_check(args):
     args.result_file.write_text(json.dumps(result), encoding="utf-8")
 
 
+def configure_service_environment(args):
+    """Apply explicit launcher capabilities before importing either service."""
+    if args.full_features:
+        os.environ.update(ENABLE_BAND_WORKFLOW="true", ENABLE_LLM="true",
+                          ENABLE_MATERIALS_PROJECT="true", ENABLE_POTCAR_ASSEMBLY="true",
+                          ENABLE_LOCAL_FAKE_HPC="false", AI_MODE_LLM_PROVIDER="openai")
+    reviewer = args.full_features and args.enable_ai and not args.isolated
+    if reviewer and len(os.environ.get("VASP_REVIEWER_SHARED_SECRET", "").encode("utf-8")) < 32:
+        raise ValueError("full-feature reviewer requires a child-process secret")
+    os.environ["VASP_REVIEWER_ENABLED"] = "true" if reviewer else "false"
+    if reviewer:
+        os.environ["VASP_REVIEWER_URL"] = f"http://127.0.0.1:{args.ai_port}"
+    else:
+        os.environ.pop("VASP_REVIEWER_SHARED_SECRET", None)
+        os.environ.pop("VASP_REVIEWER_URL", None)
+
+
 def run(args):
+    if args.full_features and args.isolated:
+        raise ValueError("full features cannot use the isolated profile")
     args.root = args.root.resolve()
     os.chdir(args.root / "backend")
     sys.path[:0] = [str(args.root), str(args.root / "backend")]
@@ -221,6 +240,10 @@ def run(args):
         keyring.set_keyring(TestKeyring())
     done = threading.Event()
     if args.kind == "web":
+        # The page proxy never receives or forwards the internal reviewer secret.
+        os.environ.pop("VASP_REVIEWER_SHARED_SECRET", None)
+        os.environ.pop("VASP_REVIEWER_URL", None)
+        os.environ["VASP_REVIEWER_ENABLED"] = "false"
         server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(args), bind_and_activate=False)
         server.allow_reuse_address = False
         try:
@@ -251,8 +274,7 @@ def run(args):
     if args.data_dir:
         os.environ["DATA_DIR"] = args.data_dir
     os.environ["ENABLE_AI_MODE"] = "true" if args.kind == "ai" else "false"
-    # Only the external reviewer is outside the launcher stack. Existing model configuration stays intact.
-    os.environ["VASP_REVIEWER_ENABLED"] = "false"
+    configure_service_environment(args)
     os.environ["TOOLBOX_URL"] = f"http://127.0.0.1:{args.toolbox_port}"
     # Bind and retain this exact socket through startup; bind errors stay machine-readable.
     bound = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -300,7 +322,10 @@ def main():
     parser.add_argument("--ai-home", default="")
     parser.add_argument("--data-dir", default="")
     parser.add_argument("--isolated", action="store_true")
+    parser.add_argument("--full-features", action="store_true")
     args = parser.parse_args()
+    if args.full_features and args.isolated:
+        parser.error("full features cannot use the isolated profile")
     if args.isolated and (not args.ai_home or not args.data_dir or not Path(args.ai_home).is_absolute() or not Path(args.data_dir).is_absolute()):
         parser.error("isolated profile requires absolute home and data directories")
     try:
