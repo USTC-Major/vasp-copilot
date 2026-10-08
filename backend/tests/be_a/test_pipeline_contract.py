@@ -76,6 +76,7 @@ class TestFacadeContract:
             "file_tree",
             "validation",
             "manifest",
+            "potcar",
         }
         assert body["workflow_id"] == "wf_fe2o3"
         assert body["workflow_status"] == "generated"

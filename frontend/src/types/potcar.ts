@@ -66,6 +66,26 @@ export interface PotcarPreviewRequest {
   poscar_text: string;
   dataset_ids?: (string | null)[];
   legacy_species?: string[];
+  context?: PotcarContext;
+}
+export interface PotcarContext {
+  purpose: 'unknown' | 'regular' | 'special';
+  functional: 'unknown' | 'PBE' | 'PBE+U' | 'HSE06';
+  spin_polarized?: boolean | null;
+  short_bonds?: boolean | null;
+  high_pressure?: boolean | null;
+  high_unoccupied?: boolean | null;
+  magnetic_energy?: boolean | null;
+}
+export interface PotcarAdvice {
+  code: string; message: string; rule_ids: string[]; source_ids: string[]; target_variants: string[];
+}
+export interface PotcarWorkflowBinding {
+  workflow_id: string; revision: number; request_sha256: string; step_ids: string[];
+}
+export interface PotcarSelectionReason {
+  code: 'USER_SELECTED' | 'RULE_RECOMMENDED' | 'UNIQUE_COMPATIBLE' | 'SELECTION_REQUIRED' | 'NO_COMPATIBLE_DATASET';
+  message: string;
 }
 export interface PotcarPreviewRow {
   position: number;
@@ -73,7 +93,9 @@ export interface PotcarPreviewRow {
   atom_count: number;
   dataset_id: string | null;
   candidates: PotcarDataset[];
-  reason: { code: 'USER_SELECTED' | 'UNIQUE_COMPATIBLE' | 'SELECTION_REQUIRED' | 'NO_COMPATIBLE_DATASET'; message: string };
+  reason: PotcarSelectionReason;
+  selection_reason?: PotcarSelectionReason;
+  advice?: PotcarAdvice[];
 }
 export interface PotcarPreview {
   mode: 'toolbox';
@@ -84,6 +106,11 @@ export interface PotcarPreview {
   rows: PotcarPreviewRow[];
   blockers: { code: string; message: string; position: number | null }[];
   expires_at: string;
+  rule_version?: string;
+  rule_sources?: { source_id: string; title: string; url: string }[];
+  context?: PotcarContext;
+  context_source?: 'user' | 'unknown' | 'workflow';
+  workflow_binding?: PotcarWorkflowBinding | null;
 }
 export interface PotcarArtifact {
   artifact_id: string;
@@ -93,6 +120,10 @@ export interface PotcarArtifact {
   library_id: string;
   index_revision: number;
   status: 'ready';
+  rule_version?: string;
+  context?: PotcarContext;
+  context_source?: 'user' | 'unknown' | 'workflow';
+  workflow_binding?: PotcarWorkflowBinding | null;
   size_bytes: number;
   sha256: string;
   created_at: string;
@@ -106,3 +137,9 @@ export interface PotcarArtifactRequest {
   idempotency_key: string;
 }
 export interface PotcarArtifactResponse { mode: 'toolbox'; artifact: PotcarArtifact }
+export interface WorkflowPotcarChoice { mode: 'omit' | 'include'; artifact_id?: string | null }
+export interface WorkflowPotcarState extends WorkflowPotcarChoice {
+  status: 'omitted' | 'pending_confirmation' | 'generating' | 'generated' | 'failed';
+  steps: { step_id: string; status: WorkflowPotcarState['status']; artifact_id?: string | null; sha256?: string | null; size_bytes?: number | null }[];
+  error?: { code: string; message: string } | null;
+}

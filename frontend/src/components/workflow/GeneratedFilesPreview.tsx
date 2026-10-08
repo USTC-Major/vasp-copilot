@@ -18,6 +18,7 @@ interface GeneratedFilesPreviewProps {
 
 function treeNodeToDataNode(node: FileTreeNode): DataNode & { data: FileTreeNode } {
   const isFile = node.type === 'file';
+  const isPotcar = node.name.toUpperCase() === 'POTCAR';
   return {
     key: node.relative_path,
     data: node,
@@ -30,9 +31,10 @@ function treeNodeToDataNode(node: FileTreeNode): DataNode & { data: FileTreeNode
             {formatFileSize(node.size_bytes)}
           </Text>
         )}
-        {isFile && node.preview_available && (
+        {isFile && node.preview_available && !isPotcar && (
           <Tag color="blue" style={{ marginLeft: 4, fontSize: 10 }}>可预览</Tag>
         )}
+        {isFile && isPotcar && <Tag style={{ marginLeft: 4 }}>仅随工作流下载</Tag>}
       </span>
     ),
     icon: null as unknown as React.ReactNode,
@@ -58,7 +60,7 @@ const GeneratedFilesPreview: React.FC<GeneratedFilesPreviewProps> = ({ fileTree 
 
   const handleSelect = (_keys: React.Key[], info: { node: DataNode }) => {
     const node = info.node as DataNode & { data: FileTreeNode };
-    if (node.data?.file_id && node.data?.preview_available) {
+    if (node.data?.name.toUpperCase() !== 'POTCAR' && node.data?.file_id && node.data?.preview_available) {
       setPreviewFileId(node.data.file_id);
       setPreviewFileName(node.data.name);
       setPreviewOpen(true);

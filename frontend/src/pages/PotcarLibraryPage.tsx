@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Alert, Button, Card, Checkbox, Empty, Input, Modal, Select, Space, Spin, Table, Tag, Typography } from 'antd';
+import { Alert, Button, Card, Checkbox, Empty, Input, Modal, Select, Space, Spin, Table, Tag, Tooltip, Typography } from 'antd';
 import { FolderOpenOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -13,6 +13,21 @@ const statusLabels: Record<PotcarDatasetStatus, string> = { ready: '格式检查
 const statusColors: Record<PotcarDatasetStatus, string> = { ready: 'success', unsupported: 'default', invalid: 'error', ambiguous: 'warning' };
 const scanLabels: Record<PotcarScan['status'], string> = { queued: '等待扫描', running: '正在扫描', succeeded: '扫描完成', failed: '扫描失败', cancelled: '扫描已取消' };
 const activeScan = (scan?: PotcarScan | null) => scan?.status === 'queued' || scan?.status === 'running';
+const formatLocalDateTime = (value: string | null | undefined) => {
+  if (!value) return '未知';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '未知';
+  return new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short' }).format(date);
+};
+const recentScanText = (scan?: PotcarScan | null) => {
+  if (!scan) return '尚未扫描';
+  const timestamp = scan.status === 'succeeded'
+    ? scan.finished_at
+    : scan.status === 'queued' || scan.status === 'running'
+      ? scan.created_at
+      : scan.finished_at ?? scan.created_at;
+  return `${scanLabels[scan.status]} · ${formatLocalDateTime(timestamp)}`;
+};
 type Failure = { code: string; message: string };
 type Dialog = {
   token: number;
@@ -173,7 +188,7 @@ export default function PotcarLibraryPage() {
     if ((mode === 'register' || mode === 'edit') && !dialog.name.trim()) { setFailure({ code: 'POTCAR_NAME_REQUIRED', message: '请填写库显示名称' }); return; }
     if ((mode === 'register' || mode === 'replace') && (!dialog.discovery || !dialog.collection || !dialog.ack)) { setFailure({ code: 'POTCAR_SOURCE_REQUIRED', message: '请先识别并选择具体集合，再确认该来源的使用权限' }); return; }
     if (mode === 'relink' && !path) { setFailure({ code: 'POTCAR_PATH_REQUIRED', message: '请填写移动后的同一来源目录' }); return; }
-    if (mode === 'register' && librariesQuery.data) await perform(() => potcarApi.register({ display_name: dialog.name.trim(), root_path: path, version_note: dialog.note.trim() || null, source_ack: { confirmed: true }, expected_registry_revision: librariesQuery.data!.revision }), '已登记，请点击“扫描库”建立索引。', true);
+    if (mode === 'register' && librariesQuery.data) await perform(() => potcarApi.register({ display_name: dialog.name.trim(), root_path: path, version_note: dialog.note.trim() || null, source_ack: { confirmed: true }, expected_registry_revision: librariesQuery.data!.revision }), '已登记，请点击“刷新赝势库”建立索引。', true);
     if (mode === 'edit' && target) await perform(() => potcarApi.edit(target.library_id, target.revision, dialog.name.trim(), dialog.note.trim() || null), '库信息已保存', true);
     if (mode === 'relink' && target) await perform(() => potcarApi.relink(target.library_id, path, target.revision), '已重新关联同一来源，来源声明继续有效', true);
     if (mode === 'replace' && target) await perform(() => potcarApi.replace(target.library_id, path, target.revision), '已替换来源，旧索引已清空；请重新扫描。', true);
@@ -197,7 +212,7 @@ export default function PotcarLibraryPage() {
     {librariesQuery.isError && <Alert type="error" showIcon title="无法读取赝势库登记" description={librariesQuery.error.message} action={<Button onClick={() => void librariesQuery.refetch()}>重试读取库列表</Button>} />}
     {librariesQuery.isPending ? <div className="potcar-loading"><Spin /><span>正在读取库登记…</span></div> : <div className="potcar-manager-grid">
       <section aria-label="已登记的赝势库" className="potcar-libraries">
-        <div className="potcar-section-heading"><Text strong>库登记（{libraries.length}）</Text><Button aria-label="刷新库列表" icon={<ReloadOutlined />} onClick={() => void refresh()} /></div>
+        <div className="potcar-section-heading"><Text strong>库登记（{libraries.length}）</Text><Tooltip title="重新读取库列表"><Button aria-label="重新读取库列表" icon={<ReloadOutlined />} onClick={() => void refresh()} /></Tooltip></div>
         {libraries.length === 0 && !librariesQuery.isError && <Empty description="尚未登记赝势库" />}
         {libraries.map(item => <button type="button" disabled={busy} className={`potcar-library-choice${item.library_id === selectedId ? ' is-selected' : ''}`} aria-current={item.library_id === selectedId ? 'true' : undefined} key={item.library_id} onClick={() => { setSelectedId(item.library_id); setFailure(null); }}><strong>{item.display_name}</strong><span className="potcar-path">{item.root_path}</span><span>{item.is_default ? '默认库 · ' : ''}{item.reachable ? '路径可达' : '路径不可达'}{activeScan(item.scan) ? ' · 扫描中' : ''}</span></button>)}
       </section>
@@ -207,15 +222,16 @@ export default function PotcarLibraryPage() {
         {library && <>
           <Card title={<span className="potcar-path">{library.display_name}</span>}>
             {!library.reachable && <Alert type="warning" showIcon title="登记路径当前不可达" description="检查后端电脑上的路径；目录移动后可重新关联同一来源。" />}
-            <dl className="potcar-metadata"><div><dt>目录</dt><dd className="potcar-path">{library.root_path}</dd></div><div><dt>用户版本备注</dt><dd>{library.version_note || '未填写（不等同于发布版本）'}</dd></div><div><dt>来源声明</dt><dd>已确认 · {library.source_ack.confirmed_at}</dd></div><div><dt>完成索引版本</dt><dd>{library.index_revision ?? '尚未完成扫描'}</dd></div></dl>
+            <dl className="potcar-metadata"><div><dt>目录</dt><dd className="potcar-path">{library.root_path}</dd></div><div><dt>用户版本备注</dt><dd>{library.version_note || '未填写（不等同于发布版本）'}</dd></div><div><dt>来源声明</dt><dd>已确认 · {library.source_ack.confirmed_at}</dd></div><div><dt>最近扫描</dt><dd>{recentScanText(scan)}</dd></div><div><dt>完成索引版本</dt><dd>{library.index_revision ?? '尚未完成扫描'}</dd></div></dl>
             <Space wrap className="potcar-actions">
-              <Button type="primary" loading={busy} disabled={activeScan(scan) || detailQuery.isError} onClick={() => void perform(async () => { const result = await potcarApi.startScan(library.library_id, library.revision); client.setQueryData(['potcar', 'library', library.library_id], { mode: 'toolbox', library: result.library, revision: result.revision }); }, '扫描已启动，可查看进度或取消。')}>扫描库</Button>
+              <Button type="primary" loading={busy} disabled={activeScan(scan) || detailQuery.isError} onClick={() => void perform(async () => { const result = await potcarApi.startScan(library.library_id, library.revision); client.setQueryData(['potcar', 'library', library.library_id], { mode: 'toolbox', library: result.library, revision: result.revision }); }, '扫描已启动，可查看进度或取消。')}>刷新赝势库</Button>
               <Button disabled={busy || activeScan(scan) || detailQuery.isError} onClick={() => openDialog('edit', library)}>编辑信息</Button>
               <Button disabled={busy || activeScan(scan) || detailQuery.isError} onClick={() => openDialog('relink', library)}>重新关联路径</Button>
               <Button disabled={busy || activeScan(scan) || detailQuery.isError} onClick={() => openDialog('replace', library)}>替换来源</Button>
               <Button disabled={busy || activeScan(scan) || !librariesQuery.data || detailQuery.isError} onClick={() => void perform(() => potcarApi.setDefault(library.is_default ? null : library.library_id, librariesQuery.data!.revision), library.is_default ? '已清空默认库' : '已设为默认库')}>{library.is_default ? '清空默认库' : '设为默认库'}</Button>
               <Button danger disabled={busy || detailQuery.isError} onClick={() => openDialog('delete', library)}>删除登记</Button>
             </Space>
+            <Paragraph type="secondary">重新扫描本地文件并更新索引，不会下载或修改赝势。</Paragraph>
           </Card>
           {scan && <Card size="small" title={scanLabels[scan.status]}><div role="status">已扫描 {scan.scanned_count} / 候选 {scan.candidate_count}，失败 {scan.failed_count}</div>{scan.error && <Alert type="error" title={scan.error.message} description={scan.error.code} />}{(scan.status === 'failed' || scan.status === 'cancelled') && <Paragraph type="secondary">本次未发布完整索引，之前完成的索引保持。可重新扫描。</Paragraph>}{activeScan(scan) && <Button loading={busy} onClick={() => void perform(async () => { const result = await potcarApi.cancelScan(scan.scan_id); client.setQueryData(['potcar', 'scan', scan.scan_id], result); }, '已收到扫描取消回执，请以当前终态为准。')}>取消扫描</Button>}{scanQuery.isError && <Alert type="error" title="扫描进度读取失败" description={scanQuery.error.message} action={<Button onClick={() => void scanQuery.refetch()}>重试进度查询</Button>} />}</Card>}
           <Card title="候选数据集与异常" className="potcar-candidates">

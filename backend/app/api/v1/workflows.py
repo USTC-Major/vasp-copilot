@@ -25,6 +25,7 @@ from backend.app.schemas.generation import (
     DftuSettings,
     MaterialAssumptions,
     ParameterPatch,
+    PotcarConfig,
     SchedulerSettings,
     StructureContext,
     WorkflowGenerateRequest,
@@ -78,6 +79,7 @@ class WorkflowConfig(BaseModel):
     # the effective server capability before planning or generating.
     enable_band_workflow: bool = False
     confirm: bool = True
+    potcar: PotcarConfig = Field(default_factory=PotcarConfig)
 
     def to_request(self, structure: StructureContext) -> WorkflowGenerateRequest:
         return WorkflowGenerateRequest(
@@ -94,6 +96,7 @@ class WorkflowConfig(BaseModel):
             element_initial_moments=self.element_initial_moments,
             enable_band_workflow=self.enable_band_workflow,
             confirm=self.confirm,
+            potcar=self.potcar,
         )
 
 
@@ -107,6 +110,7 @@ class WorkflowApiRequest(BaseModel):
     assumptions: Optional[Dict[str, Any]] = None
     patches: Optional[List[ParameterPatch]] = None
     workflow: Optional[WorkflowConfig] = None
+    potcar: Optional[PotcarConfig] = None
 
 
 def _new_workflow_id() -> str:
@@ -216,7 +220,27 @@ async def plan(
     x_request_id: str = Depends(get_request_id),
 ) -> ApiEnvelope:
     config = req.workflow or WorkflowConfig()
+    if req.workflow_id and not req.structure_id and not req.diagnosis_id and not config.structure:
+        workflow = workflow_service.replay_request(req.workflow_id)
+        updates = {'enable_band_workflow': settings.feature_flags.band_feature}
+        if req.patches is not None:
+            updates['patches'] = req.patches
+        elif req.workflow is not None and 'patches' in req.workflow.model_fields_set:
+            updates['patches'] = config.patches
+        if req.potcar is not None:
+            updates['potcar'] = req.potcar
+        elif req.workflow is not None and 'potcar' in req.workflow.model_fields_set:
+            updates['potcar'] = config.potcar
+        workflow = workflow.model_copy(update=updates)
+        data = workflow_service.plan(workflow)
+        data.update(workflow_id=workflow.workflow_id, status='needs_confirmation' if data['needs_confirmation'] else 'planned')
+        data['workflow_status'] = data['status']
+        return ApiEnvelope(request_id=x_request_id, data=data)
     config.workflow_id = req.workflow_id or _new_workflow_id()
+    if req.potcar is not None:
+        config.potcar = req.potcar
+    if req.patches is not None:
+        config.patches = req.patches
     if req.goals:
         config.requested_tasks = _map_goals(req.goals)
         config.goal_text = "、".join(req.goals)
@@ -233,7 +257,7 @@ async def plan(
 
 
 @router.post("/workflows/generate", response_model=ApiEnvelope, tags=["workflows"])
-async def generate(
+def generate(
     req: WorkflowApiRequest,
     request: Request,
     x_request_id: str = Depends(get_request_id),
@@ -247,15 +271,25 @@ async def generate(
             workflow = workflow.model_copy(update={
                 "enable_band_workflow": settings.feature_flags.band_feature,
             })
-            patches = req.patches or config.patches
-            if patches:
+            patches = req.patches if req.patches is not None else (config.patches if req.workflow is not None and 'patches' in config.model_fields_set else None)
+            if patches is not None:
                 workflow = workflow.model_copy(update={"patches": patches})
+            if req.potcar is not None:
+                workflow = workflow.model_copy(update={'potcar': req.potcar})
+            elif req.workflow is not None and 'potcar' in config.model_fields_set:
+                workflow = workflow.model_copy(update={'potcar': config.potcar})
         else:
             raise ConflictError(
                 "STRUCTURE_REQUIRED",
                 "provide structure or a previously planned workflow_id",
             )
     else:
+        if req.workflow_id:
+            config.workflow_id = req.workflow_id
+        if req.potcar is not None:
+            config.potcar = req.potcar
+        if req.patches is not None:
+            config.patches = req.patches
         if req.structure_id:
             config.workflow_id = req.workflow_id or _new_workflow_id()
             if req.goals:
@@ -263,9 +297,26 @@ async def generate(
             if req.assumptions:
                 config.material_assumptions = _map_assumptions(req.assumptions)
         workflow = _resolve_workflow(req, config)
-    data = workflow_service.generate(workflow)
+    toolbox = getattr(request.app.state, 'toolbox', None)
+    potcar_service = getattr(toolbox, 'potcar', None)
+    data = workflow_service.generate(workflow, potcar_service=potcar_service)
     workflow_id = data["workflow_id"]
     data["download_url"] = f"/api/v1/workflows/{workflow_id}/download"
+    return ApiEnvelope(request_id=x_request_id, data=data)
+
+
+@router.post('/workflows/{workflow_id}/potcar/preview', response_model=ApiEnvelope, tags=['workflows'])
+def potcar_preview(workflow_id: str, payload: dict, request: Request,
+                   x_request_id: str = Depends(get_request_id)) -> ApiEnvelope:
+    toolbox = getattr(request.app.state, 'toolbox', None)
+    potcar_service = getattr(toolbox, 'potcar', None)
+    if potcar_service is None:
+        raise ConflictError('POTCAR_SERVICE_UNAVAILABLE', '本地赝势服务不可用；请恢复后重试', True)
+    try:
+        data = workflow_service.potcar_preview(workflow_id, payload, potcar_service)
+    except (OSError, ValueError, TypeError, KeyError):
+        from backend.toolbox.contracts import ToolboxError
+        raise ToolboxError('POTCAR_STORE_INVALID', '本地赝势库状态无法读取；请检查状态目录后重试', 503, True) from None
     return ApiEnvelope(request_id=x_request_id, data=data)
 
 

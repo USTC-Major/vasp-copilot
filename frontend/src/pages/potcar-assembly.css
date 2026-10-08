@@ -31,6 +31,19 @@
 .potcar-artifact-order li { margin-bottom:12px; }
 .potcar-artifact-order li>div { color:var(--wf-muted); font-size:12px; }
 .potcar-artifact-card .ant-alert { margin-bottom:16px; }
+.potcar-context-card .ant-card-body { display:grid; gap:10px; }
+.potcar-context-conditions { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; }
+.potcar-context-conditions label { display:flex; flex-direction:column; gap:6px; }
+.potcar-workflow-card { margin:18px 0; }
+.potcar-workflow-card .ant-card-head-title { white-space:normal; }
+.potcar-workflow-card .ant-alert { margin-top:16px; }
+.potcar-workflow-card .ant-space-item { min-width:0; }
+.potcar-workflow-card .ant-radio-wrapper { white-space:normal; }
+.potcar-workflow-card a { color:var(--wf-accent); }
+.potcar-workflow-card a:focus-visible { outline:2px solid var(--wf-accent); outline-offset:3px; }
+.potcar-advice { margin-top:10px; padding-top:10px; border-top:1px solid var(--wf-border); font-size:12px; }
+.potcar-advice a { display:inline-block; }
+.potcar-step-states { overflow-wrap:anywhere; padding-left:20px; }
 @media(max-width:700px) {
   .potcar-assembly-page h1.ant-typography { font-size:21px; }
   .potcar-assembly-page .ant-card-body { padding:14px; }

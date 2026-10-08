@@ -26,19 +26,20 @@ from backend.app.schemas.workflow import (
 
 class StepGatingEvaluator:
     def __init__(self, potcar_prepared: bool = False) -> None:
-        # MVP 恒为 False：系统不内置/下载/拼接 POTCAR。
-        self._potcar_prepared = potcar_prepared
+        # Kept for old callers; only this generation's prepared_steps is proof.
+        pass
 
     def evaluate(
-        self, steps: List[WorkflowStep], plan: FileInheritancePlan
+        self, steps: List[WorkflowStep], plan: FileInheritancePlan,
+        prepared_steps: set[str] | None = None,
     ) -> Dict[str, List[str]]:
-        """就地更新 step.runnable/blocked_by，并返回 step_id → blocked_by 映射。"""
+        """Only actual validated artifacts may mark individual steps prepared."""
 
         dependency_by_target = {dep.to_step_id: dep for dep in plan.dependencies}
         result: Dict[str, List[str]] = {}
         for step in steps:
             codes: List[str] = []
-            if not self._potcar_prepared:
+            if step.step_id not in (prepared_steps or set()):
                 codes.append(POTCAR_NOT_PREPARED)
             if step.requires_runtime_outputs:
                 codes.append(UPSTREAM_OUTPUT_MISSING)

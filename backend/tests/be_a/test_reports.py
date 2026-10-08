@@ -73,9 +73,10 @@ class TestPotcarDocument:
         document = result.bundle.files["POTCAR_REQUIRED.md"].decode("utf-8")
         assert "Na" in document and "Cl" in document
 
-    def test_potcar_required_absent_when_prepared(self, nacl_request):
+    def test_legacy_global_flag_does_not_claim_file_prepared(self, nacl_request):
         result = WorkflowGenerationPipeline(potcar_prepared=True).generate(nacl_request)
-        assert "POTCAR_REQUIRED.md" not in result.bundle.files
+        assert "POTCAR_REQUIRED.md" in result.bundle.files
+        assert all('POTCAR_NOT_PREPARED' in step.blocked_by for step in result.steps)
 
 
 class TestFileTreeConsistency:

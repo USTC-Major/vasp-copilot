@@ -299,6 +299,7 @@ export interface WorkflowConfirmation {
 }
 
 export interface WorkflowPlan {
+  potcar?: import('./potcar').WorkflowPotcarState;
   schema_version: string;
   workflow_id: string;
   revision: number;

@@ -1,5 +1,5 @@
 {
-  "bundle_sha256": "15dd47f71f32def08bfce9fa0bc2a69f94cf6b3593cfd1621a342457e5e720f3",
+  "bundle_sha256": "da948a4762e7cc1a6354213c8bb649969a01a37da729bba4a4f08ed38de128a8",
   "created_at": "2026-08-10T00:00:00Z",
   "files": [
     {
@@ -64,8 +64,8 @@
     },
     {
       "path": "INPUT_CHECK_REPORT.md",
-      "sha256": "10d3226846ca9df27013228a04566cb453b05b2aa5e52efc8eb129fa4f949593",
-      "size_bytes": 9191
+      "sha256": "3b3e7ab6463ad3f56232566c66d98e631dd83b53b3b70d9d80eb4f3529ce9210",
+      "size_bytes": 9190
     },
     {
       "path": "POTCAR_REQUIRED.md",
@@ -79,11 +79,39 @@
     },
     {
       "path": "workflow_plan.json",
-      "sha256": "da87d6157055e43855f6bc8101b13e9f1020cc6476de18f7b4799a380629c64b",
-      "size_bytes": 16509
+      "sha256": "ff0a1cfe1201ec3554d25ef0c8e3d7fbb8564144058f4eaea2f9ebfaff23e591",
+      "size_bytes": 17088
     }
   ],
   "generator_version": "0.1.0",
+  "potcar": {
+    "artifact_id": null,
+    "mode": "omit",
+    "status": "omitted",
+    "steps": [
+      {
+        "artifact_id": null,
+        "sha256": null,
+        "size_bytes": null,
+        "status": "omitted",
+        "step_id": "01_relax"
+      },
+      {
+        "artifact_id": null,
+        "sha256": null,
+        "size_bytes": null,
+        "status": "omitted",
+        "step_id": "02_static"
+      },
+      {
+        "artifact_id": null,
+        "sha256": null,
+        "size_bytes": null,
+        "status": "omitted",
+        "step_id": "03_dos"
+      }
+    ]
+  },
   "recipe_pack_sha256": "3f67b649afdd798a5eeb47ecbf64e3242e10a9ddc6ddf3ba200308d9b9351c01",
   "recipe_pack_version": "1.0.0",
   "revision": 1,

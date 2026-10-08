@@ -142,6 +142,8 @@ export const materialsApi = {
 };
 // ---- Workflows API ----
 export const workflowsApi = {
+  replan: (workflowId: string, patches: import('../types/generated-api').ParameterPatch[], potcar: import('../types/potcar').WorkflowPotcarChoice) =>
+    request<import('../types/generated-api').WorkflowPlan>('/workflows/plan', { method: 'POST', body: { workflow_id: workflowId, patches, potcar } }),
   recent: (limit = 10) =>
     request<import('../types/history').RecentHistoryResponse>('/workflows/recent', {
       params: { limit },
@@ -158,14 +160,14 @@ export const workflowsApi = {
       method: 'POST',
       body,
     }),
-  generate: (workflowId: string, patches: import('../types/generated-api').ParameterPatch[] = []) =>
-    request<{ request_id: string; workflow_id: string; workflow_status: string; file_tree: import('../types/generated-api').FileTreeNode }>('/workflows/generate', {
+  generate: (workflowId: string, patches: import('../types/generated-api').ParameterPatch[] = [], potcar?: import('../types/potcar').WorkflowPotcarChoice) =>
+    request<{ request_id: string; workflow_id: string; workflow_status: string; revision?: number; potcar?: import('../types/potcar').WorkflowPotcarState; file_tree: import('../types/generated-api').FileTreeNode }>('/workflows/generate', {
       method: 'POST',
-      body: { workflow_id: workflowId, patches },
+      body: { workflow_id: workflowId, patches, ...(potcar ? { potcar } : {}) },
     }),
 
   get: (workflowId: string) =>
-    request<{ request_id: string; workflow_id: string; workflow_status: string; plan: import('../types/generated-api').WorkflowPlan; file_tree: import('../types/generated-api').FileTreeNode }>(`/workflows/${workflowId}`),
+    request<{ request_id: string; workflow_id: string; workflow_status: string; revision?: number; potcar?: import('../types/potcar').WorkflowPotcarState; plan: import('../types/generated-api').WorkflowPlan; file_tree: import('../types/generated-api').FileTreeNode }>(`/workflows/${workflowId}`),
 
   download: (workflowId: string) =>
     request<Blob>(`/workflows/${workflowId}/download`, { responseType: 'blob' }),

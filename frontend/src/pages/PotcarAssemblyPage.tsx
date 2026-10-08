@@ -3,14 +3,16 @@ import { Alert, Button, Card, Checkbox, Empty, Input, Select, Space, Spin, Tag, 
 import { Link } from 'react-router-dom';
 import { ApiError } from '../api/client';
 import { potcarApi } from '../api/potcar';
-import type { PotcarArtifact, PotcarLibrary, PotcarPreview } from '../types/potcar';
+import type { PotcarArtifact, PotcarContext, PotcarLibrary, PotcarPreview } from '../types/potcar';
 import './potcar-assembly.css';
+import PotcarSelection from '../components/potcar/PotcarSelection';
 
 const { Title, Paragraph, Text } = Typography;
 const MAX_STRUCTURE_BYTES = 2 * 1024 * 1024;
 const failureOf = (error: unknown) => ({ code: error instanceof ApiError ? error.code : 'POTCAR_REQUEST_FAILED', message: error instanceof Error ? error.message : '请求失败，请重试' });
-const staleCodes = new Set(['POTCAR_PREVIEW_NOT_FOUND', 'POTCAR_PREVIEW_EXPIRED', 'POTCAR_SELECTION_DIGEST_MISMATCH', 'POTCAR_SELECTION_BLOCKED', 'POTCAR_INDEX_REVISION_CONFLICT', 'POTCAR_SOURCE_CHANGED', 'POTCAR_SOURCE_REPLACED', 'POTCAR_LIBRARY_NOT_FOUND', 'POTCAR_SCAN_ACTIVE']);
+const staleCodes = new Set(['POTCAR_PREVIEW_NOT_FOUND', 'POTCAR_PREVIEW_EXPIRED', 'POTCAR_SELECTION_DIGEST_MISMATCH', 'POTCAR_SELECTION_BLOCKED', 'POTCAR_INDEX_REVISION_CONFLICT', 'POTCAR_SOURCE_CHANGED', 'POTCAR_SOURCE_REPLACED', 'POTCAR_LIBRARY_NOT_FOUND', 'POTCAR_SCAN_ACTIVE', 'POTCAR_RULE_VERSION_CHANGED']);
 const recovery: Record<string, string> = {
+  POTCAR_RULE_VERSION_CHANGED: '推荐规则已更新，请刷新预览，再核对并确认。',
   POTCAR_PREVIEW_NOT_FOUND: '请重新读取 / 刷新预览，再核对并确认。',
   POTCAR_PREVIEW_EXPIRED: '预览已到期，请刷新预览，再核对并确认。',
   POTCAR_SELECTION_DIGEST_MISMATCH: '选择已失效，请刷新预览，再核对并确认。',
@@ -33,9 +35,11 @@ export default function PotcarAssemblyPage() {
   const [libraryId, setLibraryId] = useState<string | null>(null);
   const [libraryBusy, setLibraryBusy] = useState(true);
   const [libraryLoaded, setLibraryLoaded] = useState(false);
+  const [context, setContext] = useState<PotcarContext>({ purpose: 'regular', functional: 'PBE' });
   const [poscar, setPoscar] = useState('');
   const [legacySpecies, setLegacySpecies] = useState('');
   const [preview, setPreview] = useState<PotcarPreview | null>(null);
+  const [manualIds, setManualIds] = useState<(string | null)[]>([]);
   const [datasetIds, setDatasetIds] = useState<(string | null)[]>([]);
   const [dirty, setDirty] = useState(true);
   const [confirmed, setConfirmed] = useState(false);
@@ -62,7 +66,7 @@ export default function PotcarAssemblyPage() {
     ++epoch.current; operation.current?.abort();
     busyRef.current = null; setBusy(null); setDirty(true); setConfirmed(false);
     setArtifact(null); setArtifactUnavailable(false); setFailure(null); idempotency.current = null;
-    if (clearRows) { setPreview(null); setDatasetIds([]); }
+    if (clearRows) { setPreview(null); setDatasetIds([]); setManualIds([]); }
   };
   const loadLibraries = async (initial = false) => {
     if (busyRef.current === 'generate') return;
@@ -132,9 +136,9 @@ export default function PotcarAssemblyPage() {
     busyRef.current = 'preview'; setBusy('preview');
     try {
       const species = legacySpecies.trim();
-      const result = await potcarApi.preview({ library_id: library!.library_id, index_revision: library!.index_revision!, poscar_text: poscar, ...(preview ? { dataset_ids: datasetIds } : {}), ...(species ? { legacy_species: species.split(/\s+/) } : {}) }, controller.signal);
+      const result = await potcarApi.preview({ library_id: library!.library_id, index_revision: library!.index_revision!, poscar_text: poscar, context, ...(preview ? { dataset_ids: manualIds } : {}), ...(species ? { legacy_species: species.split(/\s+/) } : {}) }, controller.signal);
       if (!mounted.current || controller.signal.aborted || epoch.current !== token) return;
-      setPreview(result); setDatasetIds(result.rows.map(row => row.dataset_id)); setDirty(false);
+      setPreview(result); setDatasetIds(result.rows.map(row => row.dataset_id)); setManualIds(result.rows.map((_, index) => manualIds[index] ?? null)); setDirty(false);
     } catch (error) { if (mounted.current && !controller.signal.aborted && epoch.current === token) setFailure(failureOf(error)); }
     finally { if (mounted.current && epoch.current === token) { busyRef.current = null; setBusy(null); } }
   };
@@ -188,6 +192,12 @@ export default function PotcarAssemblyPage() {
     {libraryLoaded && libraries.length === 0 && <Empty description="尚未登记赝势库"><Link to="/toolbox/potcar">前往登记并扫描本地库</Link></Empty>}
     {library && !libraryReady && <Alert type="warning" showIcon title={libraryStatus(library)} description="请在管理页检查路径或完成扫描，然后刷新库信息。" />}
     {failure && <Alert role="alert" type="error" showIcon title={failure.message} description={<><Text code>{failure.code}</Text><div>{recovery[failure.code] ?? '请求未完成，当前输入保留，可以重试。'}</div></>} />}
+    <Card title="计算用途与方法" className="potcar-context-card">
+      <Paragraph>当前默认普通用途 / PBE；核对后随物种和变体一起确认。特殊研究目标请明确声明，未知条件保持未知。</Paragraph>
+      <label htmlFor="assembly-purpose">计算用途</label><Select id="assembly-purpose" aria-label="计算用途" value={context.purpose} disabled={generating} onChange={purpose => { invalidate(false); setContext(current => ({ ...current, purpose })); }} options={[{ value: 'regular', label: '普通用途（一般基态准备）' }, { value: 'special', label: '特殊用途（需人工核对）' }, { value: 'unknown', label: '用途未指定' }]} />
+      <label htmlFor="assembly-functional">计算方法</label><Select id="assembly-functional" aria-label="计算方法" value={context.functional} disabled={generating} onChange={functional => { invalidate(false); setContext(current => ({ ...current, functional })); }} options={['PBE', 'PBE+U', 'HSE06', 'unknown'].map(value => ({ value, label: value === 'unknown' ? '方法未指定' : value }))} />
+      <div className="potcar-context-conditions">{([['short_bonds', '短键目标'], ['high_pressure', '高压目标'], ['high_unoccupied', '高能未占据态'], ['spin_polarized', '自旋极化'], ['magnetic_energy', '磁性能量差']] as const).map(([key, label]) => <label key={key}>{label}<Select aria-label={label} value={context[key] == null ? 'unknown' : context[key] ? 'yes' : 'no'} disabled={generating} onChange={value => { invalidate(false); setContext(current => ({ ...current, [key]: value === 'unknown' ? null : value === 'yes' })); }} options={[{ value: 'unknown', label: '未知 / 未声明' }, { value: 'yes', label: '是' }, { value: 'no', label: '否' }]} /></label>)}</div>
+    </Card>
     <Card title="1. 读取结构" className="potcar-structure-card">
       <div className="potcar-file-input"><label htmlFor="assembly-file">读取本地 POSCAR 文件</label><input id="assembly-file" type="file" disabled={generating} onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; void readFile(file); }} /><Text type="secondary">仅在浏览器读取 UTF-8 文本，最大 2 MiB。</Text>{busy === 'file' && <Spin size="small" />}</div>
       <label htmlFor="assembly-poscar">POSCAR 文本</label>
@@ -199,22 +209,8 @@ export default function PotcarAssemblyPage() {
     </Card>
     {preview && <Card title="2. 核对物种顺序和变体" className="potcar-confirmation-card">
       <Paragraph type="secondary">按 POSCAR 原始物种块顺序展示，保留重复物种与零数量块。唯一兼容候选仅表示可用，不代表科学最优；变体选择仍需结合研究对象验证。</Paragraph>
-      {dirty && <Alert type="warning" showIcon title="选择预览已失效，请刷新预览后重新核对并确认。" />}
-      <div role="table" aria-label="物种顺序与变体" className="potcar-selection-table">
-        <div role="row" className="potcar-selection-heading"><span role="columnheader">序号 / 物种 / 数量</span><span role="columnheader">变体及数据集元数据</span><span role="columnheader">选择依据</span></div>
-        {preview.rows.map((row, index) => {
-          const chosen = row.candidates.find(candidate => candidate.dataset_id === datasetIds[index]);
-          return <div role="row" className="potcar-selection-row" key={row.position}>
-            <div role="cell"><Text strong>#{row.position} · {row.element}</Text><div>数量：{row.atom_count}</div></div>
-            <div role="cell"><Select aria-label={`第 ${row.position} 项 ${row.element} 变体`} value={datasetIds[index]} disabled={generating || row.candidates.length === 0} placeholder="请选择兼容变体" onChange={id => { invalidate(false); setDatasetIds(current => current.map((value, position) => position === index ? id : value)); }} options={row.candidates.map(candidate => ({ value: candidate.dataset_id, label: `${candidate.variant ?? '未知变体'} · ZVAL ${candidate.zval ?? '未知'} · ENMAX ${candidate.enmax_ev ?? '未知'} eV · ${candidate.title ?? '标题未知'} · ${candidate.relative_path}` }))} />
-              {chosen ? <div className="potcar-selected-metadata">{chosen.title ?? '标题未知'}<div>ZVAL：{chosen.zval ?? '未知'} · ENMAX：{chosen.enmax_ev === null ? '未知' : `${chosen.enmax_ev} eV`}</div><div>来源相对路径：{chosen.relative_path}</div></div> : <Text type="warning">尚未选择变体</Text>}
-            </div><div role="cell"><Tag>{dirty ? '待刷新确认' : ({ USER_SELECTED: '明确选择', UNIQUE_COMPATIBLE: '唯一兼容候选', SELECTION_REQUIRED: '需选择变体', NO_COMPATIBLE_DATASET: '无兼容候选' }[row.reason.code])}</Tag><div>{dirty ? '所示依据属于上次预览，请刷新取得当前选择依据。' : row.reason.message}</div></div>
-          </div>;
-        })}
-      </div>
-      {preview.blockers.length > 0 && <Alert type="warning" showIcon title={dirty ? '上次预览阻断项（刷新后更新）' : '生成前需处理的阻断项'} description={<ul>{preview.blockers.map((blocker, index) => <li key={`${blocker.code}-${index}`}>{blocker.position !== null && `第 ${blocker.position} 项：`}{blocker.message} <Text code>{blocker.code}</Text></li>)}</ul>} />}
-      <div className="potcar-preview-details"><span>库：{preview.library.display_name} · 索引 {preview.library.index_revision}</span><span>预览到期：{displayTime(preview.expires_at)}</span><span>结构 SHA-256：{preview.structure_sha256}</span></div>
-      <Space wrap className="potcar-confirm-actions"><Checkbox checked={confirmed} disabled={!canConfirm || busy !== null || !!artifact} onChange={event => setConfirmed(event.target.checked)}>已核对物种顺序和变体</Checkbox><Button type="primary" loading={generating} disabled={!canConfirm || !confirmed || busy !== null || !!artifact} onClick={() => void generate()}>生成 POTCAR</Button></Space>
+      <PotcarSelection preview={preview} datasetIds={datasetIds} dirty={dirty} disabled={generating} onChange={(index, id) => { invalidate(false); setManualIds(current => preview.rows.map((_, position) => position === index ? id : current[position] ?? null)); setDatasetIds(current => current.map((value, position) => position === index ? id : value)); }} />
+      <Space wrap className="potcar-confirm-actions"><Checkbox checked={confirmed} disabled={!canConfirm || busy !== null || !!artifact} onChange={event => setConfirmed(event.target.checked)}>已核对物种顺序和变体（含当前用途与建议）</Checkbox><Button type="primary" loading={generating} disabled={!canConfirm || !confirmed || busy !== null || !!artifact} onClick={() => void generate()}>生成 POTCAR</Button></Space>
     </Card>}
     {artifact && <Card title="3. 已生成 POTCAR" className="potcar-artifact-card">
       <Paragraph>文件已生成。下方仅展示元数据和有序清单，下载保留原始字节。</Paragraph>

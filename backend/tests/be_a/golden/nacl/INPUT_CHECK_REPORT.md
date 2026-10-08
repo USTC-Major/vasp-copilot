@@ -30,11 +30,11 @@
 
 ## 5. POTCAR 准备
 
-- 系统不内置、不下载、不分发 POTCAR（VASP 许可证限制，`ENABLE_POTCAR_ASSEMBLY=false`）。
-- 请在合法授权环境按下列 POSCAR 元素顺序拼接 POTCAR：
-  1. Na
-  2. Cl
-- 未完成前所有 step 保持 `POTCAR_NOT_PREPARED` 阻塞。
+- 本地赝势产物按最终 POSCAR 顺序核验；格式与字节核验不代表科学适用性或收敛。
+| 步骤 | 状态 | SHA-256 | 字节数 |
+|---|---|---|---|
+| 01_relax | omitted | - | - |
+| 02_static | omitted | - | - |
 
 ## 6. 参数来源
 

@@ -52,6 +52,27 @@
       "static"
     ]
   },
+  "potcar": {
+    "artifact_id": null,
+    "mode": "omit",
+    "status": "omitted",
+    "steps": [
+      {
+        "artifact_id": null,
+        "sha256": null,
+        "size_bytes": null,
+        "status": "omitted",
+        "step_id": "01_relax"
+      },
+      {
+        "artifact_id": null,
+        "sha256": null,
+        "size_bytes": null,
+        "status": "omitted",
+        "step_id": "02_static"
+      }
+    ]
+  },
   "recipe_compositions": [
     {
       "composition_id": "composition_01_relax",
