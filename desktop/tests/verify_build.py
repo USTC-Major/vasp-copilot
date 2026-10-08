@@ -10,7 +10,8 @@ expected = {'VASP-Copilot-Desktop-V3.exe', 'VASP-Copilot-Desktop-V3.exe.config',
             'WebView2Loader.dll', 'WebView2-LICENSE.txt', 'WebView2-NOTICE.txt'}
 assert set(manifest['output']) == expected
 assert manifest['sdkVersion'] == '1.0.3650.58' and manifest['frontendMock'] is False
-required = {'launcher/runtime.py', 'desktop/assets/app-icon.svg', 'desktop/assets/app-icon.png',
+required = {'launcher/runtime.py', 'launcher/environment.py',
+            'backend/requirements-runtime.txt', 'backend/requirements-win-cp311-x64.lock', 'backend/requirements-win-cp312-x64.lock', 'desktop/assets/app-icon.svg', 'desktop/assets/app-icon.png',
             'desktop/assets/app-icon.ico', 'desktop/build.ps1', 'desktop/restore-sdk.ps1'}
 assert required <= set(manifest['inputs'])
 assert any(name.startswith('frontend/src/') for name in manifest['inputs'])
