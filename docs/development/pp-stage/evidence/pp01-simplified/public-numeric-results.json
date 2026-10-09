@@ -1,0 +1,13 @@
+{
+  "passed": true,
+  "dos_grid_points": 301,
+  "dos_source_ef_ev": 7.93802192,
+  "band_source_ef_ev": 5.85611255,
+  "band_source_eigenvalues": 4160,
+  "band_display_values": 4160,
+  "kpath_points": 160,
+  "kpath_end_inv_angstrom": 7.375205356102283,
+  "band_high_symmetry_marks": 11,
+  "method": "raw XML ElementTree floats; reciprocal = 2pi inverse lattice transpose; per-segment Euclidean cumulative distances; no application plotting/parser helpers",
+  "limit": "Two public XML fixtures and declared synthetic arrays; no VASP executable, new scientific calculation, NCL/SOC or cross-platform validation."
+}

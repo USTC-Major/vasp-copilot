@@ -10,6 +10,7 @@ const links = [
   { to: '/', label: '首页', icon: <HomeOutlined /> },
   { to: '/ai', label: '智能模式', icon: <RobotOutlined /> },
   { to: '/toolbox/projects', label: '计算任务', icon: <ToolOutlined /> },
+  { to: '/toolbox/postprocessing', label: '结果后处理', icon: <ToolOutlined /> },
   { to: '/workflow', label: '生成工作流', icon: <BuildOutlined /> },
   { to: '/diagnosis/upload', label: '诊断计算', icon: <BugOutlined /> },
   { to: '/toolbox/settings', label: '执行设置', icon: <SettingOutlined /> },

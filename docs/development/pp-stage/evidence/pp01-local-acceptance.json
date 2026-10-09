@@ -1,0 +1,46 @@
+{
+  "frontend": {
+    "numTotalTests": 471,
+    "numPassedTests": 471,
+    "numFailedTests": 0,
+    "numFailedTestSuites": 0,
+    "success": true
+  },
+  "backend": {
+    "new_tests_passed": 25,
+    "combined_passed": 39,
+    "platform_skipped": 3
+  },
+  "browser": {
+    "browser": "Microsoft Edge Chromium",
+    "syntheticOrPublicDataOnly": true,
+    "realBackend": true,
+    "results": [
+      {
+        "case": "public XML DOS, mirror, navigate/restore, CSV/JSON/PNG export",
+        "passed": true,
+        "id": "ds_162ff434feee4f12adab8ac817776d3c"
+      },
+      {
+        "case": "390px full application layout",
+        "passed": true,
+        "scroll": 390,
+        "width": 390
+      },
+      {
+        "case": "public Si path band with separate segments and labels",
+        "passed": true,
+        "id": "ds_41165a76069d49fe9c73f2b085ea723f",
+        "ticks": 11,
+        "curves": 260
+      }
+    ],
+    "errors": [],
+    "dosUrl": "http://127.0.0.1:10327/toolbox/postprocessing?analysis=ds_162ff434feee4f12adab8ac817776d3c",
+    "bandUrl": "http://127.0.0.1:10327/toolbox/postprocessing?analysis=ds_41165a76069d49fe9c73f2b085ea723f"
+  },
+  "build": "passed",
+  "lint": "passed with Fast Refresh warnings",
+  "remote_ci": "not run",
+  "git_delivery": "uncommitted candidate"
+}

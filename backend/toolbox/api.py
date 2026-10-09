@@ -12,6 +12,10 @@ from .service import ExecutionService, envelope
 router = APIRouter(prefix='/toolbox', tags=['Toolbox execution'])
 from .potcar.api import router as potcar_router
 router.include_router(potcar_router)
+from .postprocessing.api import router as postprocessing_router
+router.include_router(postprocessing_router)
+from .postprocessing.preferences_api import router as postprocessing_preferences_router
+router.include_router(postprocessing_preferences_router)
 
 def service(request: Request) -> ExecutionService:
     return request.app.state.toolbox
@@ -396,6 +400,8 @@ def create_toolbox_app(*, root: Path | None = None, settings_loader=None, orch_f
         try:
             yield
         finally:
+            if hasattr(app.state, 'postprocessing'):
+                app.state.postprocessing.close()
             app.state.toolbox.close()
     app = FastAPI(lifespan=lifespan)
     app.add_exception_handler(ToolboxError, error_handler)

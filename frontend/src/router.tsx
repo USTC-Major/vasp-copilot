@@ -23,6 +23,7 @@ const HpcDeploymentPage = lazy(() => import('./pages/HpcDeploymentPage'));
 const RemoteJobPage = lazy(() => import('./pages/RemoteJobPage'));
 const PotcarLibraryPage = lazy(() => import('./pages/PotcarLibraryPage'));
 const PotcarAssemblyPage = lazy(() => import('./pages/PotcarAssemblyPage'));
+const PostprocessingPage = lazy(() => import('./pages/PostprocessingPage'));
 
 const withSuspense = (element: React.ReactNode) => (
   <Suspense fallback={<PageLoading />}>{element}</Suspense>
@@ -49,6 +50,7 @@ export const routes: RouteObject[] = [
       { path: 'toolbox/settings', element: <ToolboxSettingsPage /> },
       { path: 'toolbox/potcar', element: withSuspense(<PotcarLibraryPage />) },
       { path: 'toolbox/potcar/assemble', element: withSuspense(<PotcarAssemblyPage />) },
+      { path: 'toolbox/postprocessing', element: withSuspense(<PostprocessingPage />) },
       { index: true, element: <HomePage /> },
       { path: 'workflow', element: withSuspense(<WorkflowBuilderPage />) },
       { path: 'workflow/history/:id', element: withSuspense(<WorkflowHistoryPage />) },

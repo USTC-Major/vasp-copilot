@@ -5,6 +5,11 @@ import { MemoryRouter } from "react-router-dom";
 import { useState } from "react";
 import AiSettingsPage from "./AiSettingsPage";
 
+vi.mock("../api/plotPreferences", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../api/plotPreferences")>();
+  return { ...actual, plotPreferencesApi: { get: vi.fn().mockResolvedValue({ preferences: actual.defaultPlotPreferences(), presets: actual.PLOT_PALETTES }), save: vi.fn() } };
+});
+
 const mocks = vi.hoisted(() => ({
   save: vi.fn().mockResolvedValue({}),
   test: vi.fn().mockResolvedValue({ ok: true, message: "测试成功" }),

@@ -1,0 +1,110 @@
+{
+  "results": [
+    {
+      "filename": "synthetic-scientific.png",
+      "width": 1200,
+      "height": 800,
+      "opaque_white_corners": true,
+      "blank_bottom_no_slider": true,
+      "legend_curve_color_pixels": [
+        {
+          "color": "#0072B2",
+          "legend_pixels": 112,
+          "line_pixels": 581
+        },
+        {
+          "color": "#D55E00",
+          "legend_pixels": 102,
+          "line_pixels": 459
+        },
+        {
+          "color": "#009E73",
+          "legend_pixels": 112,
+          "line_pixels": 593
+        },
+        {
+          "color": "#CC79A7",
+          "legend_pixels": 109,
+          "line_pixels": 457
+        }
+      ]
+    },
+    {
+      "filename": "synthetic-temporary-square.png",
+      "width": 1200,
+      "height": 1200,
+      "opaque_white_corners": true,
+      "blank_bottom_no_slider": true,
+      "legend_curve_color_pixels": [
+        {
+          "color": "#2166AC",
+          "legend_pixels": 114,
+          "line_pixels": 785
+        },
+        {
+          "color": "#B35806",
+          "legend_pixels": 102,
+          "line_pixels": 481
+        },
+        {
+          "color": "#4393C3",
+          "legend_pixels": 114,
+          "line_pixels": 704
+        },
+        {
+          "color": "#D6604D",
+          "legend_pixels": 108,
+          "line_pixels": 474
+        }
+      ]
+    },
+    {
+      "filename": "public-dos-custom.png",
+      "width": 1200,
+      "height": 800,
+      "opaque_white_corners": true,
+      "blank_bottom_no_slider": true,
+      "legend_curve_color_pixels": [
+        {
+          "color": "#112233",
+          "legend_pixels": 114,
+          "line_pixels": 5095
+        },
+        {
+          "color": "#334455",
+          "legend_pixels": 102,
+          "line_pixels": 278
+        },
+        {
+          "color": "#009E73",
+          "legend_pixels": 112,
+          "line_pixels": 1506
+        },
+        {
+          "color": "#CC79A7",
+          "legend_pixels": 109,
+          "line_pixels": 966
+        }
+      ]
+    },
+    {
+      "filename": "public-band-custom.png",
+      "width": 1200,
+      "height": 800,
+      "opaque_white_corners": true,
+      "blank_bottom_no_slider": true,
+      "legend_curve_color_pixels": [
+        {
+          "color": "#112233",
+          "legend_pixels": 114,
+          "line_pixels": 200
+        },
+        {
+          "color": "#334455",
+          "legend_pixels": 108,
+          "line_pixels": 513
+        }
+      ]
+    }
+  ]
+}

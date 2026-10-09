@@ -1,0 +1,42 @@
+{
+  "repository": "materialsproject/pymatgen",
+  "commit": "975fed926f3b2606648ddb57679ddceaeac10d8a",
+  "files": [
+    {
+      "name": "LICENSE",
+      "url": "https://raw.githubusercontent.com/materialsproject/pymatgen/975fed926f3b2606648ddb57679ddceaeac10d8a/LICENSE",
+      "sha256": "7e8f24f9b40be59291c7d82819edb8e93fb344f1d53997880e7db80bbc4f5d89",
+      "size": 1167
+    },
+    {
+      "name": "vasprun.Al.xml.gz",
+      "url": "https://raw.githubusercontent.com/materialsproject/pymatgen/975fed926f3b2606648ddb57679ddceaeac10d8a/test-files/io/vasp/outputs/vasprun.Al.xml.gz",
+      "sha256": "85d10f9c6589b13632e225a55b280387e1dcf4250e1df236baf7588bdc967741",
+      "size": 32866
+    },
+    {
+      "name": "vasprun_Si_bands.xml.gz",
+      "url": "https://raw.githubusercontent.com/materialsproject/pymatgen/975fed926f3b2606648ddb57679ddceaeac10d8a/test-files/io/vasp/outputs/vasprun_Si_bands.xml.gz",
+      "sha256": "c54b9e248c598c42fff058aab4ccb3dae90eb5362010cdece9a4542a0581b37c",
+      "size": 121071
+    },
+    {
+      "name": "vasprun.magmom_ldau.xml.gz",
+      "url": "https://raw.githubusercontent.com/materialsproject/pymatgen/975fed926f3b2606648ddb57679ddceaeac10d8a/test-files/io/vasp/outputs/vasprun.magmom_ldau.xml.gz",
+      "sha256": "6365f4efc3b2e2ea5ea6268045b7e8a168fcb19734c248ce8b6bd38a490ee01e",
+      "size": 452787
+    },
+    {
+      "name": "vasprun.LiF.xml.gz",
+      "url": "https://raw.githubusercontent.com/materialsproject/pymatgen/975fed926f3b2606648ddb57679ddceaeac10d8a/test-files/io/vasp/outputs/vasprun.LiF.xml.gz",
+      "sha256": "de84b8b85ea770ffd71ad2939f4b6e436d00b34f743897e0d37da8ebbd2a9cb6",
+      "size": 29290
+    },
+    {
+      "name": "vasprun.static_silicon.xml.gz",
+      "url": "https://raw.githubusercontent.com/materialsproject/pymatgen/975fed926f3b2606648ddb57679ddceaeac10d8a/test-files/io/vasp/fixtures/static_silicon/vasprun.xml.gz",
+      "sha256": "a9d74c3f928cd32880d77b81a1968a6abf2ca8b88a41516ecb8bdfe210e333fc",
+      "size": 29148
+    }
+  ]
+}

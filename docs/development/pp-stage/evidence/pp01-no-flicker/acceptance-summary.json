@@ -1,0 +1,51 @@
+{
+  "date": "2026-10-10",
+  "scope": "same-analysis plot flicker only",
+  "targeted": {
+    "files": 4,
+    "passed": 43,
+    "failed": 0
+  },
+  "build_exit": 0,
+  "lint_exit": 0,
+  "browser_cases": 8,
+  "page_errors": 0,
+  "same_analysis_frames": 595,
+  "blank_frames_after_fix": 0,
+  "baseline_missing_frames": 116,
+  "real_series_counts": {
+    "dos": [
+      2,
+      4,
+      2
+    ],
+    "band": [
+      260,
+      20,
+      260
+    ]
+  },
+  "static_publication": {
+    "updated_at": "2026-10-10T06:41:49.866322+08:00",
+    "target": "D:\\Documents\\VASP-Doctor\\.tmp\\pp-review-simplified\\dist",
+    "backup": "D:\\Documents\\VASP-Doctor\\.tmp\\pp-review-no-flicker\\backup-13683-dist-20261010-064149",
+    "backup_files": 65,
+    "old_assets_preserved": true,
+    "index_switched_last": true,
+    "backend_restarted": false,
+    "state_modified": false,
+    "index_sha256": "5a965204fdce0609f73f683bf7e3ae5d706d1a00bd5ba201f3d55d1650df5f4f"
+  },
+  "readonly_13683": {
+    "origin": "http://127.0.0.1:13683",
+    "id": "ds_13b5ea7f41684e0c9c0584cf93cc5684",
+    "revision": 7,
+    "current_record_unchanged": true,
+    "page_mutations": [],
+    "page_errors": [],
+    "new_applied_plot_markup": true,
+    "passed": true
+  },
+  "limitations": "Windows Edge, controlled delays/failures, two public XML fixtures; no new VASP calculation or repeat of prior full suite",
+  "unresolved_findings": 0
+}

@@ -7,6 +7,7 @@ import ErrorAlert from "../components/common/ErrorAlert";
 import SecretInput from "../components/ai/SecretInput";
 import type { AiSecretState, AiSettingsOut } from "../types/ai";
 import { useAiSettings, useAiSettingsSave, useAiSettingsTest, useAiSecretStatus, useAiSecretUpdate } from "../hooks/useApi";
+import PlotPreferencesSettings from "../components/postprocessing/PlotPreferencesSettings";
 import "./scientific-settings.css";
 
 const { Title, Text, Paragraph } = Typography;
@@ -232,6 +233,7 @@ const AiSettingsPage: React.FC = () => {
       {secretQuery.error && <ErrorAlert error={secretQuery.error} title="凭据状态读取失败" />}
       <Button onClick={() => { void settingsQuery.refetch(); void secretQuery.refetch(); }}>重试读取设置</Button>
       <Link to="/toolbox/potcar">管理本地 POTCAR 赝势库</Link>
+      <PlotPreferencesSettings />
     </div>;
   }
 
@@ -336,6 +338,7 @@ const AiSettingsPage: React.FC = () => {
         </Row>
       ))}
 
+      <PlotPreferencesSettings />
       {testNotice && <Alert type="warning" showIcon message={testNotice} style={{ marginBottom: 16 }} />}
     </div>
   );

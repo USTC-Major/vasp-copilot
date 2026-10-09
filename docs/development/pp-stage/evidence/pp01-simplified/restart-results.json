@@ -1,0 +1,53 @@
+{
+  "origin": "http://127.0.0.1:13683",
+  "results": [
+    {
+      "id": "ds_13b5ea7f41684e0c9c0584cf93cc5684",
+      "revision": 4,
+      "reference": "fermi",
+      "reference_ev": 0,
+      "energy_min_ev": -5,
+      "energy_max_ev": 3,
+      "passed": true
+    },
+    {
+      "id": "ds_658f44444ed144f5bda057604f765a81",
+      "revision": 8,
+      "reference": "fermi",
+      "reference_ev": 0,
+      "energy_min_ev": -3,
+      "energy_max_ev": 2,
+      "passed": true
+    },
+    {
+      "id": "ds_34a3613fbb7847b7a04ee255ad062153",
+      "revision": 44,
+      "reference": "custom",
+      "reference_ev": 1,
+      "energy_min_ev": -2.3,
+      "energy_max_ev": 2,
+      "passed": true
+    },
+    {
+      "id": "ds_e4a41109fe9c44999e456b7e546eeeac",
+      "revision": 5,
+      "reference": "custom",
+      "reference_ev": 3,
+      "energy_min_ev": -4,
+      "energy_max_ev": 4,
+      "passed": true
+    },
+    {
+      "id": "ds_42f561cbf20c4da7915ad5a488c09f83",
+      "revision": 5,
+      "reference": "legacy_absolute",
+      "reference_ev": 5,
+      "energy_min_ev": -4,
+      "energy_max_ev": 4,
+      "passed": true
+    }
+  ],
+  "new_browser": true,
+  "default_palette_restored": true,
+  "errors": []
+}

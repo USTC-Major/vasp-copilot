@@ -1,0 +1,12 @@
+.plot-palette-editor { display: grid; gap: 10px; }
+.plot-color-list { display: grid; gap: 7px; }
+.plot-color-row { display: flex; gap: 8px; align-items: center; min-width: 0; }
+.plot-color-row > input[type="color"] { width: 38px; height: 32px; padding: 2px; border: 1px solid #a6adb5; border-radius: 5px; flex-shrink: 0; }
+.plot-color-row > .ant-input { min-width: 80px; max-width: 150px; }
+.plot-palette-preview { width: 100%; border: 1px solid #a6adb5; border-radius: 6px; }
+.plot-export-size { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+.plot-export-size label { display: grid; gap: 4px; }
+.plot-export-controls { display: flex; flex-wrap: wrap; gap: 12px; margin: 12px 0; align-items: center; }
+.plot-export-preview { width: 100%; display: block; background: #fff; border: 1px solid #a6adb5; }
+.plot-preferences-card { margin-top: 20px; }
+@media (max-width: 430px) { .plot-color-row { flex-wrap: wrap; } .plot-export-size { grid-template-columns: 1fr; } }

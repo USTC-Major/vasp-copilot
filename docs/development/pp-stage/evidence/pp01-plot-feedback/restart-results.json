@@ -1,0 +1,21 @@
+{
+  "passed": true,
+  "prefs": {
+    "schema_version": "pp.preferences.v1",
+    "revision": 3,
+    "palette": {
+      "preset": "custom",
+      "colors": [
+        "#112233",
+        "#334455",
+        "#009E73",
+        "#CC79A7",
+        "#333333",
+        "#8B5C00"
+      ]
+    }
+  },
+  "bandId": "ds_e2c3864dfc98468d88b5da2d9dfa1163",
+  "dosId": "ds_76a7cea571b342069de4b8562e2e2302",
+  "backendPid": 46800
+}
