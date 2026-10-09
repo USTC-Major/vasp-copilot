@@ -51,7 +51,7 @@ class Handler(BaseHTTPRequestHandler):
                 key=m[6:];data[key]=-1 if key=='pid' else 'synthetic-wrong-identity'
             body=json.dumps(data).encode();content='application/json'
         elif self.path in ('/health','/ai/v1/ping'):
-            body=json.dumps({'status':'ok','mode':'ai','version':'0.4.0','enabled':True}).encode();content='application/json'
+            body=json.dumps({'status':'ok','mode':'ai','version':'0.4.1','enabled':True}).encode();content='application/json'
         else:body=b'<!doctype html><html><body><input id="draft"><p>Disposable health recovery fixture</p></body></html>';content='text/html'
         try:
             self.send_response(200);self.send_header('Content-Type',content);self.send_header('Content-Length',str(len(body)));self.end_headers();self.wfile.write(body)

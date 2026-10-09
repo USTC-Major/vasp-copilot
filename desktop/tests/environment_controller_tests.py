@@ -71,7 +71,7 @@ fingerprint='.'.join(hashlib.sha256((root/file).read_bytes()).hexdigest()[:12] f
 class Handler(BaseHTTPRequestHandler):
     def log_message(self,*args):pass
     def do_GET(self):
-        data={'token':a.token,'kind':a.kind,'pid':os.getpid(),'fingerprint':fingerprint,'root':str(root)} if self.path=='/__launcher__/health' else {'status':'ok','mode':'ai','version':'0.4.0','enabled':True}
+        data={'token':a.token,'kind':a.kind,'pid':os.getpid(),'fingerprint':fingerprint,'root':str(root)} if self.path=='/__launcher__/health' else {'status':'ok','mode':'ai','version':'0.4.1','enabled':True}
         body=json.dumps(data).encode();self.send_response(200);self.send_header('Content-Length',str(len(body)));self.end_headers();self.wfile.write(body)
 server=HTTPServer(('127.0.0.1',int(a.port)),Handler);server.timeout=.1
 while not Path(a.stop_file).exists():server.handle_request()

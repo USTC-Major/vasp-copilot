@@ -1,8 +1,8 @@
 # Windows 桌面源码构建与运行环境
 
-本目录承接已试用的 Desktop V3 原生壳和控制器。启动后准备本地服务并打开真实 `/workflow` 页面；其他业务页面的视觉主题保持当前实现。0.4.0提供配套包与源码构建说明；仍不包含安装器、签名、更新器或科学计算验证。整包本地验收见仓库根《0.4.0本地验收步骤》。
+本目录承接已试用的 Desktop V3 原生壳和控制器。启动后准备本地服务并打开真实 `/workflow` 页面；其他业务页面的视觉主题保持当前实现。0.4.1提供配套包与源码构建说明；仍不包含安装器、签名、更新器或科学计算验证。整包本地验收见仓库根《0.4.0本地验收步骤》。
 
-当前源码包含 v0.4.1 Python 兼容修复候选；已发布 v0.4.0 的原包仍只支持 3.11/3.12。3.15 尚缺关键 Windows wheel，识别后明确提示原因。详见 [兼容计划与验收](../docs/development/v0.4.1/Python兼容与自动发现.md)。
+v0.4.1 支持标准 Windows x64 CPython 3.11–3.14，改进注册信息、PATH、常见目录及 Conda 环境的自动发现。3.15 尚缺关键 Windows wheel，识别后明确提示原因。详见 [兼容计划与验收](../docs/development/v0.4.1/Python兼容与自动发现.md)。
 
 ## 完整功能入口
 
@@ -32,7 +32,7 @@
 
 ## 自动运行环境
 
-完整功能入口使用 `launcher/environment.py`，读取 `launcher/python-support.json`，按对应 `backend/requirements-win-cp3xx-x64.lock` 安装完整闭包；每包精确版本及 wheel SHA256，禁止源码临时编译。运行依赖来自 `requirements-runtime.txt`，开发/测试仍用 `requirements.txt`。依赖变化必须重建相应锁并通过两版本 CI，不能只改宽泛运行清单。
+完整功能入口使用 `launcher/environment.py`，读取 `launcher/python-support.json`，按对应 `backend/requirements-win-cp3xx-x64.lock` 安装完整闭包；每包精确版本及 wheel SHA256，禁止源码临时编译。运行依赖来自 `requirements-runtime.txt`，开发/测试仍用 `requirements.txt`。依赖变化必须重建相应锁并通过四版本 CI，不能只改宽泛运行清单。
 
 环境和下载缓存位于完整功能偏好目录下的 runtime/full；按解释器版本/架构/锁摘要分开，未完成标记不能作为可用凭证，成功环境后续本地核验。取消仅停止所属安装进程树；旧环境及用户 Python 不修改。准备日志留本地，UI报告固定错误与日志位置。当前仅官方 PyPI 直连，不继承 pip 配置、额外源或带凭据代理；无网络时保留缓存并明确提示重试。
 

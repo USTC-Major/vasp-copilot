@@ -93,7 +93,7 @@ app=FastAPI()
 @app.get('/health')
 def health():return {'status':'ok'}
 @app.get('/ai/v1/ping')
-def ping():return {'mode':'ai','version':'0.4.0','enabled':True}
+def ping():return {'mode':'ai','version':'0.4.1','enabled':True}
 @app.post('/ai/internal/reviewer/review')
 def review(request:Request):
     assert hmac.compare_digest(request.headers.get('authorization',''), 'Bearer '+os.environ['VASP_REVIEWER_SHARED_SECRET'])
