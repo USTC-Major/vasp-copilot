@@ -217,8 +217,15 @@ class EnvironmentTests(unittest.TestCase):
         finally:
             process.terminate()
             process.wait(timeout=10)
-        with installer.environment_lock(lock):
-            pass
+        deadline = time.monotonic() + 3
+        while True:
+            try:
+                with installer.environment_lock(lock):
+                    break
+            except installer.PreparationError:
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(.02)
 
 
 class PureTests(unittest.TestCase):

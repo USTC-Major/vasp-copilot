@@ -15,9 +15,9 @@ using Microsoft.Web.WebView2.WinForms;
 using VaspCopilot.Launcher;
 
 [assembly: TargetFramework(".NETFramework,Version=v4.8", FrameworkDisplayName = ".NET Framework 4.8")]
-[assembly: System.Reflection.AssemblyVersion("0.4.0.0")]
-[assembly: System.Reflection.AssemblyFileVersion("0.4.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersion("0.4.0")]
+[assembly: System.Reflection.AssemblyVersion("0.4.1.0")]
+[assembly: System.Reflection.AssemblyFileVersion("0.4.1.0")]
+[assembly: System.Reflection.AssemblyInformationalVersion("0.4.1")]
 namespace VaspCopilot.DesktopV3
 {
     internal static class Program
@@ -107,7 +107,7 @@ namespace VaspCopilot.DesktopV3
     {
         private readonly TextBox root = new TextBox(), python = new TextBox();
         private readonly CheckBox ai = new CheckBox();
-        internal SettingsForm(LauncherOptions options)
+        internal SettingsForm(LauncherOptions options, string selectedPython)
         {
             SuspendLayout(); AutoScaleMode = AutoScaleMode.Dpi; ShellTheme.Apply(this);
             Text = "启动设置 · VASP-Copilot"; ClientSize = new Size(760, 340); AutoSize = true; AutoSizeMode = AutoSizeMode.GrowAndShrink; MinimumSize = new Size(780, 380); FormBorderStyle = FormBorderStyle.FixedDialog;
@@ -120,13 +120,19 @@ namespace VaspCopilot.DesktopV3
             var folder = ShellTheme.Button("选择目录");
             folder.Click += delegate { using (var dialog = new FolderBrowserDialog { Description = "选择已有 VASP-Copilot 安装目录（含 backend 与 frontend/dist）", SelectedPath = root.Text }) if (dialog.ShowDialog(this) == DialogResult.OK) root.Text = dialog.SelectedPath; };
             var executable = ShellTheme.Button("选择文件");
-            executable.Click += delegate { using (var dialog = new OpenFileDialog { Title = options.FullFeatures && options.AutoPrepareEnvironment ? "选择 Python 3.11/3.12 x64 基础解释器" : "选择已有 Python 3.10+ 环境", Filter = "Python|python.exe|可执行文件|*.exe", CheckFileExists = true }) if (dialog.ShowDialog(this) == DialogResult.OK) python.Text = dialog.FileName; };
+            executable.Click += delegate { using (var dialog = new OpenFileDialog { Title = "手动选择 Windows x64 CPython 解释器", Filter = "Python|python*.exe|可执行文件|*.exe", CheckFileExists = true }) if (dialog.ShowDialog(this) == DialogResult.OK) python.Text = dialog.FileName; };
+            var automatic = ShellTheme.Button("自动检测");
+            automatic.Click += delegate { python.Clear(); };
+            var pythonButtons = new FlowLayoutPanel { AutoSize = true, WrapContents = false };
+            pythonButtons.Controls.Add(automatic); pythonButtons.Controls.Add(executable);
             layout.Controls.Add(ShellTheme.Label("安装目录"), 0, 1); layout.Controls.Add(root, 1, 1); layout.Controls.Add(folder, 2, 1);
-            layout.Controls.Add(ShellTheme.Label("Python"), 0, 2); layout.Controls.Add(python, 1, 2); layout.Controls.Add(executable, 2, 2);
+            layout.Controls.Add(ShellTheme.Label("Python（留空自动）"), 0, 2); layout.Controls.Add(python, 1, 2); layout.Controls.Add(pythonButtons, 2, 2);
             ai.Text = "启用智能模式服务"; ai.AutoSize = true; ai.Checked = options.EnableAi && !options.IsolatedProfile; ai.Enabled = !options.IsolatedProfile; ai.Margin = new Padding(4, 12, 4, 8); layout.Controls.Add(ai, 1, 3);
             string pythonHint = options.FullFeatures && options.AutoPrepareEnvironment
-                ? "选择 Python 3.11/3.12 x64 基础解释器即可，无需预装项目依赖。首次启动会创建应用专用环境并安装运行依赖；首次需要联网，本地端口自动分配。"
+                ? "默认自动检测已有 Python，无需预装项目依赖。首次启动会创建应用专用环境并安装运行依赖；首次需要联网，本地端口自动分配。"
                 : "Python 留空时自动检查已有环境；本地端口自动分配。";
+            try { pythonHint += " 支持 Windows x64 CPython " + PythonRuntimePolicy.Load(options.RootDirectory).Supported + "。"; } catch (LauncherException) { }
+            if (!String.IsNullOrWhiteSpace(selectedPython)) pythonHint += "\n上次启动采用：" + selectedPython;
             var hint = ShellTheme.Label(pythonHint, 10F, true); hint.MaximumSize = new Size(650, 0); layout.Controls.Add(hint, 1, 4); layout.SetColumnSpan(hint, 2);
             if (options.IsolatedProfile) { var isolation = ShellTheme.Label("隔离候选：智能模式关闭，数据保存在独立测试目录。", 10F, true); layout.Controls.Add(isolation, 1, 5); layout.SetColumnSpan(isolation, 2); }
             var buttons = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.RightToLeft, Dock = DockStyle.Fill, Margin = new Padding(0, 16, 0, 0) };
@@ -144,7 +150,7 @@ namespace VaspCopilot.DesktopV3
             SuspendLayout(); AutoScaleMode = AutoScaleMode.Dpi; ShellTheme.Apply(this); Text = "关于 VASP-Copilot";
             ClientSize = new Size(590, 390); AutoSize = true; AutoSizeMode = AutoSizeMode.GrowAndShrink; MinimumSize = new Size(590, 390); FormBorderStyle = FormBorderStyle.FixedDialog; StartPosition = FormStartPosition.CenterParent; MaximizeBox = MinimizeBox = false;
             var layout = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(32), FlowDirection = FlowDirection.TopDown, WrapContents = false };
-            layout.Controls.Add(ShellTheme.Logo(64)); layout.Controls.Add(ShellTheme.Label("VASP-Copilot", 23F)); layout.Controls.Add(ShellTheme.Label("科研计算工作空间 · v0.4.0" + (isolated ? " · 隔离候选" : fullFeatures ? " · 完整功能候选" : ""), 10F, true));
+            layout.Controls.Add(ShellTheme.Logo(64)); layout.Controls.Add(ShellTheme.Label("VASP-Copilot", 23F)); layout.Controls.Add(ShellTheme.Label("科研计算工作空间 · v0.4.1" + (isolated ? " · 隔离候选" : fullFeatures ? " · 完整功能" : ""), 10F, true));
             layout.Controls.Add(ShellTheme.Label(ShellTheme.Institution, 12F)); layout.Controls.Add(ShellTheme.Label(ShellTheme.Group, 10F, true)); layout.Controls.Add(ShellTheme.Label(ShellTheme.Authors, 10F, true));
             var close = ShellTheme.Button("关闭"); close.DialogResult = DialogResult.OK; layout.Controls.Add(close); Controls.Add(layout); AcceptButton = CancelButton = close;
             AutoScaleDimensions = new SizeF(96, 96); ResumeLayout(true);
@@ -171,7 +177,7 @@ namespace VaspCopilot.DesktopV3
         internal DesktopForm(LauncherController controller, LauncherOptions options, string state, bool isolated, EventWaitHandle activation)
         {
             SuspendLayout(); this.controller = controller; this.options = options; this.state = state; this.isolated = isolated;
-            AutoScaleMode = AutoScaleMode.Dpi; ShellTheme.Apply(this); Text = "VASP-Copilot" + (isolated ? " · V3 隔离候选" : options.FullFeatures ? " · 完整功能复测" : ""); Width = 1280; Height = 900; MinimumSize = new Size(960, 700); StartPosition = FormStartPosition.CenterScreen;
+            AutoScaleMode = AutoScaleMode.Dpi; ShellTheme.Apply(this); Text = "VASP-Copilot" + (isolated ? " · V3 隔离候选" : options.FullFeatures ? " · 完整功能" : ""); Width = 1280; Height = 900; MinimumSize = new Size(960, 700); StartPosition = FormStartPosition.CenterScreen;
             var bar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 54, Padding = new Padding(14, 5, 8, 5), BackColor = ShellTheme.Surface, WrapContents = false };
             var brand = ShellTheme.Label("VASP-Copilot", 12F); brand.Margin = new Padding(0, 8, 24, 0); bar.Controls.Add(brand);
             workflow.Enabled = false; workflow.Click += delegate { if (initialized && servicesReady && origin.Length > 0) web.CoreWebView2.Navigate(origin + "/workflow"); };
@@ -244,9 +250,9 @@ namespace VaspCopilot.DesktopV3
             center.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50)); center.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 650)); center.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
             center.RowStyles.Add(new RowStyle(SizeType.Percent, 50)); center.RowStyles.Add(new RowStyle(SizeType.AutoSize)); center.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
             var card = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false, Padding = new Padding(32, 18, 32, 18) };
-            card.Controls.Add(ShellTheme.Logo(72)); card.Controls.Add(ShellTheme.Label("DESKTOP WORKSPACE" + (options.FullFeatures ? " · 完整功能复测" : ""), 10F, true)); card.Controls.Add(ShellTheme.Label("VASP-Copilot", 28F));
+            card.Controls.Add(ShellTheme.Logo(72)); card.Controls.Add(ShellTheme.Label("DESKTOP WORKSPACE" + (options.FullFeatures ? " · 完整功能" : ""), 10F, true)); card.Controls.Add(ShellTheme.Label("VASP-Copilot", 28F));
             card.Controls.Add(ShellTheme.Label("把研究意图，连接到可检查的计算计划。", 11F, true));
-            if (options.FullFeatures) { var fullHint = ShellTheme.Label("完整功能复测：可配置真实模型、MP与超算；操作仍按当前流程确认", 9F, true); fullHint.MaximumSize = new Size(570, 0); card.Controls.Add(fullHint); }
+            if (options.FullFeatures) { var fullHint = ShellTheme.Label("完整功能：可配置真实模型、MP与超算；操作仍按当前流程确认", 9F, true); fullHint.MaximumSize = new Size(570, 0); card.Controls.Add(fullHint); }
             launchTitle.AutoSize = true; launchTitle.Font = new Font(Font.FontFamily, 13F); launchTitle.ForeColor = ShellTheme.Blue; launchTitle.Margin = new Padding(0, 18, 0, 6); card.Controls.Add(launchTitle);
             launchMessage.AutoSize = true; launchMessage.MaximumSize = new Size(570, 0); launchMessage.ForeColor = ShellTheme.Muted; launchMessage.Margin = new Padding(0, 2, 0, 12); card.Controls.Add(launchMessage);
             for (int i = 0; i < steps.Length; i++) { steps[i] = ShellTheme.Label("", 10F, true); card.Controls.Add(steps[i]); }
@@ -303,7 +309,7 @@ namespace VaspCopilot.DesktopV3
         private async Task Configure()
         {
             if (closing || (startup != null && !startup.IsCompleted)) return;
-            using (var dialog = new SettingsForm(options))
+            using (var dialog = new SettingsForm(options, controller.SelectedPythonDescription))
             {
                 if (dialog.ShowDialog(this) != DialogResult.OK) return;
                 LauncherPreferences.Save(options); RunStartup();

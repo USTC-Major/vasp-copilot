@@ -1,6 +1,6 @@
-# VASP-Copilot Windows 源码安装与基础使用（0.4.0）
+# VASP-Copilot Windows 源码安装与基础使用（0.4.1）
 
-以下命令面向新解压的源码目录、PowerShell 和本机浏览器。可使用已有Python 3.12环境与Node.js 24/npm；安装依赖需要网络。确切构建环境见发布来源记录；不同电脑环境仍需按安装步骤核对。使用普通用户权限即可。0.4.0于2026-10-09发布；历史真实计算证据不因版本更新自动扩展。桌面包用户可先读[快速开始](0.4.0快速开始.md)。
+以下命令面向新解压的源码目录、PowerShell 和本机浏览器。可使用已有标准CPython 3.11–3.14 x64环境与Node.js 24/npm；安装依赖需要网络。确切构建环境见发布来源记录；不同电脑环境仍需按安装步骤核对。使用普通用户权限即可。0.4.1于2026-10-09发布；历史真实计算证据不因版本更新自动扩展。桌面包用户可先读[快速开始](0.4.1快速开始.md)。
 
 ## 桌面配套包的简化入口
 
@@ -13,7 +13,7 @@
 在**源码根目录**打开 PowerShell；请将首行路径替换为实际解压目录。`python -m venv` 创建隔离环境，随后从本包依赖清单安装；`npm ci` 从锁文件安装前端依赖。无需使用旧 `setup_env.ps1`。
 
 ```powershell
-$sourceRoot = 'C:\path\to\VASP-Copilot-0.4.0'
+$sourceRoot = 'C:\path\to\VASP-Copilot-0.4.1'
 Set-Location $sourceRoot
 python --version
 node --version
@@ -30,8 +30,8 @@ npm ci
 用新的本地目录存储诊断与 Toolbox 数据；不要把原先 8000 服务的数据根用于并行候选验收。`DATA_DIR` 控制诊断数据，`VASP_AI_HOME` 控制 Toolbox 执行设置和任务库。示例数据根可改成任意本机绝对路径。
 
 ```powershell
-$sourceRoot = 'C:\path\to\VASP-Copilot-0.4.0'
-$dataRoot = Join-Path $env:LOCALAPPDATA 'VASP-Copilot\0.4.0-local'
+$sourceRoot = 'C:\path\to\VASP-Copilot-0.4.1'
+$dataRoot = Join-Path $env:LOCALAPPDATA 'VASP-Copilot\0.4.1-local'
 # 已安装用户可保留原数据目录；目录名不影响产品名称。
 New-Item -ItemType Directory -Force -Path $dataRoot | Out-Null
 $env:DATA_DIR = Join-Path $dataRoot 'doctor'
@@ -52,7 +52,7 @@ Set-Location (Join-Path $sourceRoot 'backend')
 ## 3. 启动前端（窗口 B）
 
 ```powershell
-$sourceRoot = 'C:\path\to\VASP-Copilot-0.4.0'
+$sourceRoot = 'C:\path\to\VASP-Copilot-0.4.1'
 Set-Location (Join-Path $sourceRoot 'frontend')
 npm run dev -- --host 127.0.0.1
 ```
@@ -85,7 +85,7 @@ export default {
 然后在窗口 B 运行：
 
 ```powershell
-$sourceRoot = 'C:\path\to\VASP-Copilot-0.4.0'
+$sourceRoot = 'C:\path\to\VASP-Copilot-0.4.1'
 Set-Location (Join-Path $sourceRoot 'frontend')
 npm run dev -- --config vite.local.config.ts --host 127.0.0.1
 ```

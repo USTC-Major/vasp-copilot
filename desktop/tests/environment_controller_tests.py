@@ -71,7 +71,7 @@ fingerprint='.'.join(hashlib.sha256((root/file).read_bytes()).hexdigest()[:12] f
 class Handler(BaseHTTPRequestHandler):
     def log_message(self,*args):pass
     def do_GET(self):
-        data={'token':a.token,'kind':a.kind,'pid':os.getpid(),'fingerprint':fingerprint,'root':str(root)} if self.path=='/__launcher__/health' else {'status':'ok','mode':'ai','version':'0.4.0','enabled':True}
+        data={'token':a.token,'kind':a.kind,'pid':os.getpid(),'fingerprint':fingerprint,'root':str(root)} if self.path=='/__launcher__/health' else {'status':'ok','mode':'ai','version':'0.4.1','enabled':True}
         body=json.dumps(data).encode();self.send_response(200);self.send_header('Content-Length',str(len(body)));self.end_headers();self.wfile.write(body)
 server=HTTPServer(('127.0.0.1',int(a.port)),Handler);server.timeout=.1
 while not Path(a.stop_file).exists():server.handle_request()
@@ -90,6 +90,7 @@ def run(name, mode='full', helper='success', python=sys.executable, extra_env=No
     for folder in ('backend/app','backend/ai_mode','frontend/dist','launcher'):(installation/folder).mkdir(parents=True)
     for file in ('backend/app/main.py','backend/ai_mode/server.py','frontend/dist/index.html'):(installation/file).write_text('synthetic fixture')
     (installation/'launcher/environment.py').write_text(HELPER,encoding='utf-8')
+    shutil.copyfile(ROOT/'launcher/python-support.json', installation/'launcher/python-support.json')
     runtime=installation/'launcher/stub-runtime.py';runtime.write_text(RUNTIME,encoding='utf-8')
     (installation/'helper-mode').write_text(helper)
     if check_fail:(installation/'check-fail').touch()

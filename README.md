@@ -4,7 +4,7 @@
 
 把结构导入、输入文件准备、计算任务管理与结果诊断集中在一个界面中，并提供可选的 AI 辅助解释与交互。无论是准备一次计算，还是排查已有结果，都可以从清晰的步骤和可核对的信息开始。
 
-[下载 v0.4.0](https://github.com/USTC-Major/vasp-copilot/releases/tag/v0.4.0) · [快速开始](0.4.0快速开始.md) · [更新日志](CHANGELOG.md) · [问题反馈](https://github.com/USTC-Major/vasp-copilot/issues)
+[下载 v0.4.1](https://github.com/USTC-Major/vasp-copilot/releases/tag/v0.4.1) · [快速开始](0.4.1快速开始.md) · [更新日志](CHANGELOG.md) · [问题反馈](https://github.com/USTC-Major/vasp-copilot/issues)
 
 ## 你可以用它做什么
 
@@ -23,13 +23,15 @@ AI 是可选功能。不配置模型，也可以使用基础工作流、确定�
 
 Windows 用户可以直接使用桌面包：
 
-1. 从 [Releases](https://github.com/USTC-Major/vasp-copilot/releases/tag/v0.4.0) 下载 **`vasp-copilot-0.4.0-windows-x64.zip`**，完整解压到一个新目录。
-2. 双击根目录的 **`启动完整功能.cmd`**，在启动设置中确认解压目录和 Python 环境。
+1. 从 [Releases](https://github.com/USTC-Major/vasp-copilot/releases/tag/v0.4.1) 下载 **`vasp-copilot-0.4.1-windows-x64.zip`**，完整解压到一个新目录。
+2. 双击根目录的 **`启动完整功能.cmd`**，在启动设置中确认本次解压目录，Python 留空自动检测。
 3. 等待首次依赖准备完成，打开工作台；按需配置模型、Materials Project 或超算连接。
 
-需要已有 **Windows x64、Python 3.11/3.12 x64、.NET Framework 4.8 和 WebView2 Runtime**。程序首次联网自动准备专用的项目依赖环境，后续复用；运行桌面包不需要 Node/npm。
+需要已有 **Windows x64、标准 CPython 3.11–3.14 x64、.NET Framework 4.8 和 WebView2 Runtime**。程序首次联网自动准备专用的项目依赖环境，后续复用；运行桌面包不需要 Node/npm。
 
-安装、升级和常见注意事项见[快速开始与升级](0.4.0快速开始.md)。开发者或希望从源码运行的用户，请看[源码安装指南](Windows源码安装与基础使用.md)。
+v0.4.1 改进了 Python 自动发现，并新增 3.13/3.14 支持。Python 3.15 暂缺关键依赖的 Windows 安装包，尚不能运行完整应用。
+
+安装、升级和常见注意事项见[快速开始与升级](0.4.1快速开始.md)。开发者或希望从源码运行的用户，请看[源码安装指南](Windows源码安装与基础使用.md)。
 
 ## 从哪里开始使用
 
@@ -41,12 +43,12 @@ Windows 用户可以直接使用桌面包：
 
 | 文档 | 内容 |
 |---|---|
-| [快速开始与升级](0.4.0快速开始.md) | 桌面启动、环境要求、旧版本升级和下载校验 |
+| [快速开始与升级](0.4.1快速开始.md) | 桌面启动、环境要求、旧版本升级和下载校验 |
 | [源码安装指南](Windows源码安装与基础使用.md) | 从源码启动和配置服务 |
 | [基础计算与结果取回](首版基础计算与结果取回.md) | 从输入文件到计算任务、监控和结果下载 |
 | [桌面构建说明](desktop/README.md) | 桌面程序的构建与开发验证 |
-| [发布公告](docs/release/v0.4.0/发布公告.md) · [更新日志](CHANGELOG.md) | 本版变化与版本历史 |
-| [版本范围与验收说明](docs/release/v0.4.0/发布范围与验收说明.md) | 已知限制、验证范围和后续功能边界 |
+| [发布公告](docs/release/v0.4.1/发布公告.md) · [更新日志](CHANGELOG.md) | 本版变化与版本历史 |
+| [版本范围与验收说明](docs/release/v0.4.1/发布范围与验收说明.md) | 已知限制、验证范围和后续功能边界 |
 
 ## 使用说明
 

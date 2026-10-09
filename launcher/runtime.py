@@ -188,8 +188,12 @@ def dependency_check(args):
             import_module(name)
         except Exception:
             missing.append(name)
-    result = {"ok": sys.version_info >= (3, 10) and not missing,
-              "python_supported": sys.version_info >= (3, 10), "missing": missing}
+    spec = importlib.util.spec_from_file_location('launcher_python_support', Path(__file__).with_name('python_support.py'))
+    support = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(support)
+    supported, reason = support.compatibility()
+    result = {"ok": supported and not missing, "python_supported": supported,
+              "python_reason": reason, "missing": missing}
     args.result_file.write_text(json.dumps(result), encoding="utf-8")
 
 

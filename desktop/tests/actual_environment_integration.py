@@ -13,11 +13,13 @@ import socket
 import subprocess
 import sys
 import time
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import test_support
 
 p=argparse.ArgumentParser()
 p.add_argument('--output',type=Path,required=True)
 p.add_argument('--cache-source',type=Path)
+p.add_argument('--automatic', action='store_true', help='Discover the real base Python from PATH, without a manual selection')
 a=p.parse_args()
 ROOT=Path(__file__).resolve().parents[2]
 OUT=a.output.resolve();OUT.mkdir(parents=True,exist_ok=True)
@@ -56,7 +58,9 @@ module.main()
 '''.replace('RUNTIME_PATH',repr(str(ROOT/'launcher/runtime.py'))),encoding='utf-8')
 env={k:v for k,v in os.environ.items() if k.upper() in {'SYSTEMROOT','SYSTEMDRIVE','WINDIR','PATH','PATHEXT','TEMP','TMP','COMSPEC','PROCESSOR_ARCHITECTURE','NUMBER_OF_PROCESSORS'}}
 env.update(VASP_LAUNCHER_STATE_DIR=str(OUT/'state'),OPENAI_API_KEY='synthetic-controller-secret',PYTHONUTF8='1')
-child=test_support.start_process([str(HARNESS),str(ROOT),sys.executable,str(wrapper),str(OUT),'actual'],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+if a.automatic:
+    env['PATH'] = str(Path(sys.executable).parent)
+child=test_support.start_process([str(HARNESS),str(ROOT),'' if a.automatic else sys.executable,str(wrapper),str(OUT),'actual'],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
 def wait(file,seconds):
     end=time.monotonic()+seconds
     while time.monotonic()<end:

@@ -68,6 +68,7 @@ class EnvironmentHarness
             }
             if (mode == "discovery-probe")
             {
+                typeof(LauncherController).GetField("pythonPolicy", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(controller, PythonRuntimePolicy.Load(options.RootDirectory));
                 // Other supported Pythons may legitimately precede py.exe on this
                 // machine. Exercise the private discovery/probe contract directly.
                 string request = Path.Combine(evidence, "probe-request"); Directory.CreateDirectory(request);
