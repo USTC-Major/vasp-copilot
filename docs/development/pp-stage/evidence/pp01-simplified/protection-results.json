@@ -1,0 +1,14 @@
+[
+  {
+    "snapshot": "protected-state-before.json",
+    "checked": 20,
+    "changed": 0,
+    "passed": true
+  },
+  {
+    "snapshot": "protected-dist-before.json",
+    "checked": 51,
+    "changed": 0,
+    "passed": true
+  }
+]

@@ -1,0 +1,14 @@
+{
+  "cases": [
+    {
+      "case": "final session helper: dataset flight/queued edit continues after unmount and return without cross-dataset leakage",
+      "passed": true
+    },
+    {
+      "case": "band draft range disables stale complete window; loaded current range used; public default restored",
+      "passed": true
+    }
+  ],
+  "errors": [],
+  "origin": "http://127.0.0.1:13683"
+}

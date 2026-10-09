@@ -1,0 +1,17 @@
+[
+  {
+    "scope": "13683/7518/10327 postprocessing state",
+    "count": 32,
+    "changed": 0
+  },
+  {
+    "scope": "7518/10327 shared dist",
+    "count": 51,
+    "changed": 0
+  },
+  {
+    "scope": "13683 old files except authorized index switch",
+    "count": 64,
+    "changed": 0
+  }
+]

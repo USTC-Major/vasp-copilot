@@ -80,6 +80,8 @@ async def lifespan(_app: FastAPI):
                 await task
             except asyncio.CancelledError:
                 pass
+        if hasattr(_app.state, 'postprocessing'):
+            _app.state.postprocessing.close()
         _app.state.toolbox.close()
 
 

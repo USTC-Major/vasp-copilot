@@ -1,0 +1,124 @@
+{
+  "results": [
+    {
+      "filename": "synthetic-scientific.png",
+      "width": 1200,
+      "height": 800,
+      "opaque_white_corners": true,
+      "dark_text": true,
+      "blank_bottom_no_slider": true,
+      "legend_curve_color_pixels": [
+        {
+          "color": "#0072B2",
+          "legend_pixels": 112,
+          "line_pixels": 1155
+        },
+        {
+          "color": "#D55E00",
+          "legend_pixels": 102,
+          "line_pixels": 753
+        },
+        {
+          "color": "#009E73",
+          "legend_pixels": 218,
+          "line_pixels": 1764
+        }
+      ]
+    },
+    {
+      "filename": "synthetic-square.png",
+      "width": 1200,
+      "height": 1200,
+      "opaque_white_corners": true,
+      "dark_text": true,
+      "blank_bottom_no_slider": true,
+      "legend_curve_color_pixels": [
+        {
+          "color": "#0072B2",
+          "legend_pixels": 112,
+          "line_pixels": 1236
+        },
+        {
+          "color": "#D55E00",
+          "legend_pixels": 102,
+          "line_pixels": 826
+        },
+        {
+          "color": "#009E73",
+          "legend_pixels": 218,
+          "line_pixels": 1793
+        }
+      ]
+    },
+    {
+      "filename": "public-dos.png",
+      "width": 1200,
+      "height": 800,
+      "opaque_white_corners": true,
+      "dark_text": true,
+      "blank_bottom_no_slider": true,
+      "legend_curve_color_pixels": [
+        {
+          "color": "#0072B2",
+          "legend_pixels": 106,
+          "line_pixels": 538
+        },
+        {
+          "color": "#D55E00",
+          "legend_pixels": 110,
+          "line_pixels": 1356
+        }
+      ]
+    },
+    {
+      "filename": "public-band.png",
+      "width": 1200,
+      "height": 800,
+      "opaque_white_corners": true,
+      "dark_text": true,
+      "blank_bottom_no_slider": true,
+      "legend_curve_color_pixels": [
+        {
+          "color": "#0072B2",
+          "legend_pixels": 114,
+          "line_pixels": 496
+        },
+        {
+          "color": "#D55E00",
+          "legend_pixels": 110,
+          "line_pixels": 1183
+        }
+      ]
+    }
+  ],
+  "screens": [
+    {
+      "filename": "synthetic-screen-light.png",
+      "width": 798,
+      "height": 431,
+      "white_canvas_inset": true,
+      "dark_text": true
+    },
+    {
+      "filename": "synthetic-screen-dark.png",
+      "width": 798,
+      "height": 431,
+      "white_canvas_inset": true,
+      "dark_text": true
+    },
+    {
+      "filename": "public-dos-chart.png",
+      "width": 798,
+      "height": 431,
+      "white_canvas_inset": true,
+      "dark_text": true
+    },
+    {
+      "filename": "public-band-chart.png",
+      "width": 798,
+      "height": 431,
+      "white_canvas_inset": true,
+      "dark_text": true
+    }
+  ]
+}

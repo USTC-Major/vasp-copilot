@@ -1,0 +1,175 @@
+{
+  "python": "3.12.7",
+  "versions": {
+    "pymatgen": "2026.9.24",
+    "numpy": "2.5.3",
+    "matplotlib": "3.11.2"
+  },
+  "vasp_doscar_class_available": false,
+  "upstream_commit": "975fed926f3b2606648ddb57679ddceaeac10d8a",
+  "xml_probes": [
+    {
+      "sample": "vasprun.Al.xml.gz",
+      "compressed_sha256": "85d10f9c6589b13632e225a55b280387e1dcf4250e1df236baf7588bdc967741",
+      "compressed_bytes": 32866,
+      "xml_bytes": 336275,
+      "is_spin": true,
+      "kpoints": 84,
+      "dos_points": 301,
+      "eigenvalue_shapes": {
+        "1": [
+          84,
+          5,
+          2
+        ],
+        "-1": [
+          84,
+          5,
+          2
+        ]
+      },
+      "compared_scalars": 9157,
+      "projected_dos_scalars": 5418,
+      "max_absolute_error": 0.0,
+      "efermi_ev": 7.93802192,
+      "warning_types": [],
+      "scope": "parser/reference agreement; not a validation of original calculation"
+    },
+    {
+      "sample": "vasprun_Si_bands.xml.gz",
+      "compressed_sha256": "c54b9e248c598c42fff058aab4ccb3dae90eb5362010cdece9a4542a0581b37c",
+      "compressed_bytes": 121071,
+      "xml_bytes": 1491160,
+      "is_spin": true,
+      "kpoints": 160,
+      "dos_points": 301,
+      "eigenvalue_shapes": {
+        "1": [
+          160,
+          13,
+          2
+        ],
+        "-1": [
+          160,
+          13,
+          2
+        ]
+      },
+      "compared_scalars": 21443,
+      "projected_dos_scalars": 10836,
+      "max_absolute_error": 0.0,
+      "efermi_ev": 5.85611255,
+      "warning_types": [],
+      "scope": "parser/reference agreement; not a validation of original calculation"
+    },
+    {
+      "sample": "vasprun.magmom_ldau.xml.gz",
+      "compressed_sha256": "6365f4efc3b2e2ea5ea6268045b7e8a168fcb19734c248ce8b6bd38a490ee01e",
+      "compressed_bytes": 452787,
+      "xml_bytes": 5109910,
+      "is_spin": true,
+      "kpoints": 32,
+      "dos_points": 301,
+      "eigenvalue_shapes": {
+        "1": [
+          32,
+          68,
+          2
+        ],
+        "-1": [
+          32,
+          68,
+          2
+        ]
+      },
+      "compared_scalars": 64787,
+      "projected_dos_scalars": 54180,
+      "max_absolute_error": 0.0,
+      "efermi_ev": 3.12362836,
+      "warning_types": [],
+      "scope": "parser/reference agreement; not a validation of original calculation"
+    },
+    {
+      "sample": "vasprun.LiF.xml.gz",
+      "compressed_sha256": "de84b8b85ea770ffd71ad2939f4b6e436d00b34f743897e0d37da8ebbd2a9cb6",
+      "compressed_bytes": 29290,
+      "xml_bytes": 337133,
+      "is_spin": true,
+      "kpoints": 20,
+      "dos_points": 301,
+      "eigenvalue_shapes": {
+        "1": [
+          20,
+          10,
+          2
+        ],
+        "-1": [
+          20,
+          10,
+          2
+        ]
+      },
+      "compared_scalars": 13503,
+      "projected_dos_scalars": 10836,
+      "max_absolute_error": 0.0,
+      "efermi_ev": -1.23130125,
+      "warning_types": [],
+      "scope": "parser/reference agreement; not a validation of original calculation"
+    },
+    {
+      "sample": "vasprun.static_silicon.xml.gz",
+      "compressed_sha256": "a9d74c3f928cd32880d77b81a1968a6abf2ca8b88a41516ecb8bdfe210e333fc",
+      "compressed_bytes": 29148,
+      "xml_bytes": 258732,
+      "is_spin": true,
+      "kpoints": 10,
+      "dos_points": 301,
+      "eigenvalue_shapes": {
+        "1": [
+          10,
+          9,
+          2
+        ],
+        "-1": [
+          10,
+          9,
+          2
+        ]
+      },
+      "compared_scalars": 13033,
+      "projected_dos_scalars": 10836,
+      "max_absolute_error": 0.0,
+      "efermi_ev": 5.46766285,
+      "warning_types": [],
+      "scope": "parser/reference agreement; not a validation of original calculation"
+    }
+  ],
+  "synthetic_probes": {
+    "unicode_path_eigenval": "passed",
+    "charge_grid_order_and_integral": "passed",
+    "same_grid_difference_arithmetic": "passed (synthetic only)",
+    "eigenval_truncation": {
+      "library_rejected": false,
+      "declared_kpoints": 2,
+      "actual_kpoints": 1,
+      "product_requirement": "explicit count/shape/finite validation required"
+    },
+    "charge_limit": "not real CHGCAR performance or PAW restart validation"
+  },
+  "local_probe": {
+    "id": "existing-local-test1-ok",
+    "not_redistributed": true,
+    "doscar_bytes": 11559561,
+    "ions": 168,
+    "dos_points": 301,
+    "dos_columns": 5,
+    "efermi_ev": 6.78144111,
+    "ispin": 2,
+    "kpoints_mode": "Gamma",
+    "nkpoints": 14,
+    "nbands": 936,
+    "dos_sha256": "0ca2051dc6a72b0fc8eee5ec4861200eb5f006ef3f8c14cd808e2c0cf40244e3",
+    "band_path_eligible": false,
+    "scope": "layout/metadata and Eigenval feasibility only; not a path-band reference"
+  }
+}

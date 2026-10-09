@@ -1,0 +1,108 @@
+{
+  "date": "2026-10-10",
+  "delivery": "uncommitted local candidate; no PR or release",
+  "frontend": {
+    "files": 49,
+    "total": 491,
+    "passed": 491,
+    "failed": 0,
+    "success": true,
+    "command": "npm run test -- --maxWorkers=2"
+  },
+  "backend": {
+    "passed": 66,
+    "skipped": 3,
+    "failed": 0,
+    "command": "python -B -X utf8 -m pytest backend/tests/test_postprocessing.py backend/tests/test_postprocessing_preferences.py backend/tests/test_toolbox_results.py -q",
+    "skipReason": "Windows-inapplicable original result tests"
+  },
+  "build": "passed",
+  "lint": "passed with Fast Refresh warnings",
+  "diffCheck": "passed",
+  "runtime": {
+    "python": "3.12.7",
+    "pymatgen": "2026.9.24",
+    "numpy": "2.5.3",
+    "pillow": "12.3.0",
+    "browser": "Microsoft Edge Chromium",
+    "productionDist": true,
+    "realBackend": true
+  },
+  "browser": {
+    "browser": "Edge Chromium",
+    "realBackend": true,
+    "publicAndExplicitSyntheticOnly": true,
+    "results": [
+      {
+        "case": "live legacy migration once",
+        "passed": true,
+        "id": "ds_76a7cea571b342069de4b8562e2e2302",
+        "revision": 3
+      },
+      {
+        "case": "wide six+N, expanded ten and 390px no overflow",
+        "passed": true,
+        "narrowTags": 4
+      },
+      {
+        "case": "stable axes, warning-only uncropped arrays, draft mirror/reference fit",
+        "passed": true,
+        "axes": {
+          "version": "pp.axes.v1",
+          "x_min": -13,
+          "x_max": -7,
+          "x_interval": 1,
+          "y_min": -6,
+          "y_max": 6,
+          "y_interval": 2
+        }
+      },
+      {
+        "case": "temporary export no default writes; lock/common ratio; pale warning; explicit custom default settings reload",
+        "passed": true,
+        "preferences": {
+          "schema_version": "pp.preferences.v1",
+          "revision": 3,
+          "palette": {
+            "preset": "custom",
+            "colors": [
+              "#112233",
+              "#334455",
+              "#009E73",
+              "#CC79A7",
+              "#333333",
+              "#8B5C00"
+            ]
+          }
+        }
+      },
+      {
+        "case": "public Al XML import and projection/mirror retains initialized axes",
+        "passed": true,
+        "id": "ds_3ebade4b04d74741b71678c2e9fb6e34"
+      },
+      {
+        "case": "public Si band segments/high-symmetry data, stable axes across band range/reference, no hover",
+        "passed": true,
+        "id": "ds_e2c3864dfc98468d88b5da2d9dfa1163",
+        "ticks": 11,
+        "curves": 60
+      },
+      {
+        "case": "fresh browser and backend restart restore custom default, saved band/reference and axes without remigration",
+        "passed": true,
+        "backendPid": 46800
+      }
+    ],
+    "errors": [],
+    "port": 7518
+  },
+  "limits": [
+    "Public Al DOS and Si band plus explicitly synthetic ten-atom normalized record only",
+    "No real VASP computation, model, MP, SSH, package replacement, or user scientific state modification",
+    "Single Windows/Edge device; remote CI not run; other browsers/platforms/DPI not claimed",
+    "Existing deferred PP scope remains deferred"
+  ],
+  "findings": [],
+  "reviewTools": "D:\\Documents\\VASP-Doctor\\.tmp\\pp-review-feedback"
+}

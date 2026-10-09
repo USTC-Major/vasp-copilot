@@ -1,0 +1,50 @@
+{
+  "date": "2026-10-10",
+  "status": "local-uncommitted-candidate-accepted",
+  "service": "http://127.0.0.1:13683/toolbox/postprocessing",
+  "pid": 57908,
+  "backend": {
+    "passed": 82,
+    "skipped": 3,
+    "failed": 0,
+    "seconds": 7.51
+  },
+  "frontend": {
+    "passed": 511,
+    "failed": 0,
+    "files": 52,
+    "seconds": 380.57,
+    "runs": 1
+  },
+  "final_build_exit_code": 0,
+  "lint_exit_code": 0,
+  "diff_check_exit_code": 0,
+  "browser_cases": 12,
+  "page_errors": 0,
+  "png_count": 4,
+  "scientific_synthetic_sources": [
+    {
+      "id": "ds_e4a41109fe9c44999e456b7e546eeeac",
+      "unchanged": true
+    },
+    {
+      "id": "ds_42f561cbf20c4da7915ad5a488c09f83",
+      "unchanged": true
+    },
+    {
+      "id": "ds_871b83514b174c328138463ca984e18a",
+      "unchanged": true
+    },
+    {
+      "id": "ds_34a3613fbb7847b7a04ee255ad062153",
+      "unchanged": true
+    }
+  ],
+  "limitations": [
+    "Windows localhost only",
+    "Public Al/Si XML and declared synthetic arrays",
+    "No new VASP calculation",
+    "No NCL/SOC, remote service, cross-platform or remote CI execution"
+  ],
+  "publication": "No commit, push, PR, or release"
+}

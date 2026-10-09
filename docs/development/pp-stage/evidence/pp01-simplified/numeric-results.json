@@ -1,0 +1,116 @@
+{
+  "results": [
+    {
+      "case": "legacy_custom_ef",
+      "passed": true,
+      "id": "ds_e4a41109fe9c44999e456b7e546eeeac",
+      "view": {
+        "reference": "custom",
+        "reference_ev": 3,
+        "mirror_down": true,
+        "atoms": [
+          1,
+          65
+        ],
+        "orbitals": [
+          "px"
+        ],
+        "band_start": 1,
+        "band_end": 20,
+        "axes": {
+          "version": "pp.axes.v1",
+          "x_min": -4,
+          "x_max": 4,
+          "y_min": -2000,
+          "y_max": 1500,
+          "x_interval": 2,
+          "y_interval": 1000
+        },
+        "version": "pp.view.v2",
+        "energy_min_ev": -4,
+        "energy_max_ev": 4,
+        "elements": [],
+        "projection_grouping": "combined"
+      }
+    },
+    {
+      "case": "legacy_custom_no_ef",
+      "passed": true,
+      "id": "ds_42f561cbf20c4da7915ad5a488c09f83",
+      "view": {
+        "reference": "legacy_absolute",
+        "reference_ev": 5,
+        "mirror_down": true,
+        "atoms": [
+          1,
+          65
+        ],
+        "orbitals": [
+          "px"
+        ],
+        "band_start": 1,
+        "band_end": 20,
+        "axes": {
+          "version": "pp.axes.v1",
+          "x_min": -4,
+          "x_max": 4,
+          "y_min": -2000,
+          "y_max": 1500,
+          "x_interval": 2,
+          "y_interval": 1000
+        },
+        "version": "pp.view.v2",
+        "energy_min_ev": -4,
+        "energy_max_ev": 4,
+        "elements": [],
+        "projection_grouping": "combined"
+      }
+    },
+    {
+      "case": "legacy_band",
+      "passed": true,
+      "id": "ds_871b83514b174c328138463ca984e18a",
+      "view": {
+        "reference": "custom",
+        "reference_ev": 3,
+        "mirror_down": false,
+        "atoms": [],
+        "orbitals": [],
+        "band_start": 1,
+        "band_end": 2,
+        "axes": {
+          "version": "pp.axes.v1",
+          "x_min": 0,
+          "x_max": 3,
+          "y_min": -1,
+          "y_max": 6,
+          "x_interval": 0.5,
+          "y_interval": 2
+        },
+        "version": "pp.view.v2",
+        "energy_min_ev": -1,
+        "energy_max_ev": 6,
+        "elements": [],
+        "projection_grouping": "combined"
+      }
+    },
+    {
+      "case": "no interior samples; DOS edge interpolation excludes outside high peaks",
+      "passed": true,
+      "axes": {
+        "version": "pp.axes.v1",
+        "x_min": -1.5,
+        "x_max": -0.5,
+        "y_min": -15,
+        "y_max": 10,
+        "x_interval": 0.2,
+        "y_interval": 5
+      }
+    },
+    {
+      "case": "PDOS sum per element/intersection; family components no double count; explicit none; offset 0/+1; missing EF rejected",
+      "passed": true
+    }
+  ],
+  "productionHelpersImported": false
+}

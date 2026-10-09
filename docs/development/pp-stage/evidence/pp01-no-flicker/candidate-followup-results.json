@@ -1,0 +1,50 @@
+{
+  "results": [
+    {
+      "case": "slow real PATCH acknowledgement keeps applied chart and disables every format until data matches",
+      "passed": true,
+      "frames": 83
+    },
+    {
+      "case": "real ECharts projection addition/removal retains instance and leaves no residual series",
+      "passed": true,
+      "series": [
+        2,
+        4,
+        2
+      ],
+      "frames": 41
+    },
+    {
+      "case": "curve error preserves old applied revision and instance, retries in place without blank frame",
+      "passed": true,
+      "frames": 65
+    },
+    {
+      "case": "rapid same-dataset changes ignore delayed older curve response, keep newest applied data",
+      "passed": true,
+      "frames": 74
+    },
+    {
+      "case": "rapid dataset navigation shows only current analysis; delayed other dataset never leaks retained graph",
+      "passed": true
+    },
+    {
+      "case": "band count shrink/restore updates same actual instance without stale series or blank frame",
+      "passed": true,
+      "series": [
+        260,
+        20,
+        260
+      ],
+      "frames": 152
+    },
+    {
+      "case": "ready exports equal current applied live JSON and full source numerical arrays; 11 band path labels retained",
+      "passed": true,
+      "dosSamples": 301
+    }
+  ],
+  "errors": [],
+  "origin": "http://127.0.0.1:8205"
+}

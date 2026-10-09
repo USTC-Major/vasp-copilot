@@ -1,0 +1,15 @@
+{
+  "cases": [
+    {
+      "case": "same dataset slow query keeps host/canvas/ECharts id, no empty frame or size change; exports disabled until applied",
+      "passed": true,
+      "frameCount": 180
+    }
+  ],
+  "errors": [],
+  "origin": "http://127.0.0.1:8205",
+  "ids": {
+    "dos": "ds_de0a840969c84a9eb4d7f50751cf4ad7",
+    "band": "ds_70ec00777c574f93b70945b0dfa477d6"
+  }
+}
