@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 from contextlib import contextmanager
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -45,10 +46,15 @@ def atomic_json(path: Path, value):
 
 
 def platform_spec():
-    if (sys.platform != "win32" or platform.python_implementation() != "CPython"
-            or struct.calcsize("P") != 8 or platform.machine().lower() not in {"amd64", "x86_64"}
-            or sys.version_info[:2] not in {(3, 11), (3, 12)}):
-        raise PreparationError("UNSUPPORTED_PYTHON", "自动准备需要 Windows x64 CPython 3.11 或 3.12；请选择已有受支持解释器。")
+    try:
+        spec = importlib.util.spec_from_file_location('launcher_python_support', Path(__file__).with_name('python_support.py'))
+        support = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(support)
+        compatible, reason = support.compatibility()
+    except (OSError, ImportError):
+        raise PreparationError("SUPPORT_POLICY_MISSING", "安装目录缺少 Python 兼容策略，请恢复完整应用目录。") from None
+    if not compatible:
+        raise PreparationError("UNSUPPORTED_PYTHON", reason)
     return "cp" + str(sys.version_info.major) + str(sys.version_info.minor)
 
 

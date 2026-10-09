@@ -12,11 +12,11 @@ permissions:
 jobs:
   desktop-windows:
     runs-on: windows-2022
-    timeout-minutes: 35
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        python: ['3.11', '3.12']
+        python: ['3.11', '3.12', '3.13', '3.14']
     defaults:
       run:
         shell: pwsh
@@ -43,7 +43,7 @@ jobs:
       - name: Verify exact build inputs, runtime files and production mock guard
         run: python desktop/tests/verify_build.py
       - name: Test dependency preparation logic without external services
-        run: python -m unittest discover -s launcher/tests -p test_environment.py -v
+        run: python -m unittest discover -s launcher/tests -p 'test_*.py' -v
       - name: Prepare locked runtime from base Python and verify reuse
         run: |
           $prepareState = "$env:RUNNER_TEMP/中文 自动依赖"
@@ -65,6 +65,15 @@ jobs:
           ENABLE_LLM: 'false'
         run: |
           ./desktop/test.ps1 -PythonExecutable "$env:VASP_DESKTOP_PREPARED_PYTHON" -OutputDirectory "$env:RUNNER_TEMP/desktop-results/controller"
+      - name: Verify actual auto-discovery and business services without credentials
+        run: |
+          python -I -X utf8 desktop/tests/actual_environment_integration.py --automatic --output "$env:RUNNER_TEMP/desktop-results/actual" --cache-source "$env:RUNNER_TEMP/中文 自动依赖/pip-cache"
+      - name: Validate workflow, diagnosis and synthetic POTCAR on the prepared Python
+        run: |
+          python -I -m pip --isolated install --index-url https://pypi.org/simple --only-binary=:all: --target "$env:RUNNER_TEMP/compat-test-tools" "pytest==8.4.2"
+          if ($LASTEXITCODE -ne 0) { throw 'Test tool installation failed' }
+          & "$env:VASP_DESKTOP_PREPARED_PYTHON" -I -X utf8 desktop/tests/runtime_regressions.py --tools "$env:RUNNER_TEMP/compat-test-tools" --output "$env:RUNNER_TEMP/desktop-results/scientific"
+          if ($LASTEXITCODE -ne 0) { throw 'Application regressions failed' }
       - name: Preserve small software-validation records
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -78,3 +87,6 @@ jobs:
             ${{ runner.temp }}/desktop-results/prepare-*.json
             ${{ runner.temp }}/中文 自动依赖/logs/*.local.log
             ${{ runner.temp }}/desktop-results/controller/**/results.json
+            ${{ runner.temp }}/desktop-results/actual/integration-results.json
+            ${{ runner.temp }}/desktop-results/scientific/results.xml
+            ${{ runner.temp }}/desktop-results/actual/state/runtime/full/logs/*.local.log

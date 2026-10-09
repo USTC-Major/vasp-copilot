@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "platform": "win32",
+  "architecture": "x64",
+  "implementation": "CPython",
+  "versions": [
+    {"version": "3.12", "status": "supported"},
+    {"version": "3.13", "status": "supported"},
+    {"version": "3.14", "status": "supported"},
+    {"version": "3.11", "status": "supported"},
+    {"version": "3.15", "status": "blocked", "reason": "完整运行依赖尚缺 Windows x64 安装包（PyYAML、pymatgen-core、spglib）；请使用已支持版本。"}
+  ]
+}

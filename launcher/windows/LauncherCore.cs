@@ -9,10 +9,41 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Web.Script.Serialization;
+using Microsoft.Win32;
 
 namespace VaspCopilot.Launcher
 {
     public class LauncherException : Exception { public LauncherException(string message) : base(message) {} }
+    public sealed class PythonRuntimePolicy
+    {
+        public sealed class Entry { public string version { get; set; } public string status { get; set; } public string reason { get; set; } }
+        public int schema { get; set; }
+        public string platform { get; set; }
+        public string architecture { get; set; }
+        public string implementation { get; set; }
+        public Entry[] versions { get; set; }
+        public string Supported { get { return String.Join(" / ", versions.Where(x => x.status == "supported").Select(x => x.version).OrderBy(x => new Version(x))); } }
+        public static PythonRuntimePolicy Load(string root)
+        {
+            try
+            {
+                var policy = new JavaScriptSerializer().Deserialize<PythonRuntimePolicy>(File.ReadAllText(Path.Combine(root, "launcher", "python-support.json"), Encoding.UTF8));
+                if (policy.schema != 1 || policy.platform != "win32" || policy.architecture != "x64" || policy.implementation != "CPython"
+                    || policy.versions == null || policy.versions.Length == 0 || policy.versions.Length > 16
+                    || policy.versions.Select(x => x.version).Distinct().Count() != policy.versions.Length
+                    || !policy.versions.Any(x => x.status == "supported")) throw new FormatException();
+                foreach (var entry in policy.versions)
+                {
+                    var parsed = new Version(entry.version);
+                    if (parsed.Major != 3 || parsed.Build != -1 || entry.version != "3." + parsed.Minor
+                        || (entry.status != "supported" && entry.status != "blocked")
+                        || (entry.status == "blocked" && String.IsNullOrWhiteSpace(entry.reason))) throw new FormatException();
+                }
+                return policy;
+            }
+            catch { throw new LauncherException("安装目录缺少或损坏 launcher/python-support.json，请恢复完整应用目录。"); }
+        }
+    }
     public sealed class LauncherOptions
     {
         public string RootDirectory { get; set; }
@@ -94,6 +125,14 @@ namespace VaspCopilot.Launcher
         public bool IsRunning { get { lock (sync) return services.Any(s => s.Process != null); } }
         private readonly string runtimeScript;
         public string SelectedPython { get; private set; }
+        public string SelectedPythonDescription { get; private set; }
+        private PythonRuntimePolicy pythonPolicy;
+        private readonly List<string> pythonProbeFailures = new List<string>();
+        private string ProbeFailed(string executable, string reason)
+        {
+            pythonProbeFailures.Add(executable + "：" + reason);
+            return null;
+        }
         public string EnvironmentFailureLogPath { get; private set; }
         public int StartupAttempts { get; private set; }
         public LauncherController(string runtimeScriptPath = null)
@@ -193,7 +232,7 @@ namespace VaspCopilot.Launcher
             if (!String.IsNullOrWhiteSpace(options.PythonExecutable))
             {
                 string selected = Path.GetFullPath(options.PythonExecutable);
-                if (!File.Exists(selected)) throw new LauncherException("找不到选择的 Python 可执行文件，请选择 python.exe。");
+                if (!File.Exists(selected)) throw new LauncherException("已保存的 Python 路径不存在。请在启动设置点击“自动检测”，或重新选择解释器：" + selected);
                 yield return selected;
                 yield break;
             }
@@ -206,12 +245,77 @@ namespace VaspCopilot.Launcher
             }
             if (options.FullFeatures && options.AutoPrepareEnvironment)
             {
+                candidates.AddRange(RegisteredPythons());
                 foreach (string parent in new [] { Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Python"), Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), @"C:\" })
-                    foreach (string name in new [] { "Python312", "Python311" }) candidates.Add(Path.Combine(parent, name, "python.exe"));
+                    try { foreach (string directory in Directory.EnumerateDirectories(parent, "Python*", SearchOption.TopDirectoryOnly).Take(32)) candidates.Add(Path.Combine(directory, "python.exe")); } catch (IOException) { } catch (UnauthorizedAccessException) { }
                 foreach (string name in new [] { "anaconda3", "miniconda3" })
                     candidates.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), name, "python.exe"));
+                candidates.AddRange(CondaPythons(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".conda", "environments.txt")));
             }
-            foreach (string candidate in candidates.Where(File.Exists).Select(Path.GetFullPath).Distinct(StringComparer.OrdinalIgnoreCase).Take(options.FullFeatures && options.AutoPrepareEnvironment ? 40 : 12)) yield return candidate;
+            foreach (string candidate in ExistingPythonPaths(candidates).Take(options.FullFeatures && options.AutoPrepareEnvironment ? 64 : 12)) yield return candidate;
+        }
+        private static IEnumerable<string> ExistingPythonPaths(IEnumerable<string> candidates)
+        {
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            string aliases = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Microsoft", "WindowsApps");
+            foreach (string candidate in candidates)
+            {
+                string path;
+                try
+                {
+                    if (String.IsNullOrWhiteSpace(candidate) || !Path.IsPathRooted(candidate)) continue;
+                    path = Path.GetFullPath(candidate);
+                    // Store execution aliases are not interpreters; the real registered
+                    // Store installation and py launcher remain eligible.
+                    if (String.Equals(Path.GetDirectoryName(path), aliases, StringComparison.OrdinalIgnoreCase) || !File.Exists(path)) continue;
+                }
+                catch { continue; }
+                if (seen.Add(path)) yield return path;
+            }
+        }
+        private static IEnumerable<string> CondaPythons(string file)
+        {
+            try
+            {
+                if (!File.Exists(file) || new FileInfo(file).Length > 128 * 1024) return new string[0];
+                return File.ReadAllLines(file, Encoding.UTF8).Take(256).Where(x => !String.IsNullOrWhiteSpace(x))
+                    .Select(x => Path.Combine(x.Trim(), "python.exe")).ToArray();
+            }
+            catch { return new string[0]; }
+        }
+        private static IEnumerable<string> RegistryPythons(RegistryKey python)
+        {
+            var paths = new List<string>();
+            if (python == null) return paths;
+            foreach (string company in python.GetSubKeyNames().Take(64))
+                try
+                {
+                    using (var provider = python.OpenSubKey(company))
+                        if (provider != null) foreach (string tag in provider.GetSubKeyNames().Take(64))
+                            using (var install = provider.OpenSubKey(tag + "\\InstallPath"))
+                                if (install != null)
+                                {
+                                    string executable = install.GetValue("ExecutablePath") as string;
+                                    string directory = install.GetValue("") as string;
+                                    if (!String.IsNullOrWhiteSpace(executable)) paths.Add(executable);
+                                    if (!String.IsNullOrWhiteSpace(directory)) paths.Add(Path.Combine(directory, "python.exe"));
+                                }
+                }
+                catch (System.Security.SecurityException) { } catch (UnauthorizedAccessException) { } catch (IOException) { } catch (ArgumentException) { }
+            return paths;
+        }
+        private static IEnumerable<string> RegisteredPythons()
+        {
+            var paths = new List<string>();
+            foreach (var hive in new [] { RegistryHive.CurrentUser, RegistryHive.LocalMachine })
+                foreach (var view in new [] { RegistryView.Registry64, RegistryView.Registry32 })
+                    try
+                    {
+                        using (var root = RegistryKey.OpenBaseKey(hive, view))
+                        using (var python = root.OpenSubKey(@"Software\Python")) paths.AddRange(RegistryPythons(python));
+                    }
+                    catch (System.Security.SecurityException) { } catch (UnauthorizedAccessException) { } catch (IOException) { }
+            return paths;
         }
         private static IDictionary<string, string> PreparationEnvironment()
         {
@@ -222,6 +326,7 @@ namespace VaspCopilot.Launcher
             foreach (System.Collections.DictionaryEntry entry in Environment.GetEnvironmentVariables())
                 if (!allowed.Contains((string)entry.Key)) overrides[(string)entry.Key] = null;
             overrides["PYTHONUTF8"] = "1";
+            overrides["PYTHON_MANAGER_AUTOMATIC_INSTALL"] = "false";
             return overrides;
         }
         private string ProbeBasePython(string executable, string prefix, string state)
@@ -229,26 +334,33 @@ namespace VaspCopilot.Launcher
             // The request directory is already unique; probes run sequentially.
             // Avoid adding another GUID to .NET Framework's legacy path budget.
             string result = Path.Combine(state, "probe.json");
-            string code = "import json,sys,struct,platform;json.dump(dict(python=sys.executable,major=sys.version_info[0],minor=sys.version_info[1],bits=struct.calcsize('P')*8,machine=platform.machine().lower(),implementation=platform.python_implementation(),platform=sys.platform),open(sys.argv[1],'w',encoding='utf-8'))";
+            string code = "import json,sys,struct,platform,sysconfig;json.dump(dict(python=sys.executable,major=sys.version_info[0],minor=sys.version_info[1],releaselevel=sys.version_info.releaselevel,free_threaded=bool(sysconfig.get_config_var('Py_GIL_DISABLED')),bits=struct.calcsize('P')*8,machine=platform.machine().lower(),implementation=platform.python_implementation(),platform=sys.platform),open(sys.argv[1],'w',encoding='utf-8'))";
             try
             {
                 using (var check = OwnedProcess.Start(executable, prefix + "-I -X utf8 -c " + OwnedProcess.Quote(code) + " " + OwnedProcess.Quote(result), state, PreparationEnvironment()))
                 {
                     DateTime deadline = DateTime.UtcNow.AddSeconds(10);
-                    while (!check.Wait(100)) { ThrowIfCancelled(); if (DateTime.UtcNow >= deadline) return null; }
+                    while (!check.Wait(100)) { ThrowIfCancelled(); if (DateTime.UtcNow >= deadline) return ProbeFailed(executable, "检测超时（10 秒）"); }
                     ThrowIfCancelled();
                 }
-                if (!File.Exists(result)) return null;
+                if (!File.Exists(result)) return ProbeFailed(executable, "未返回解释器信息，可能未安装该版本或无法启动");
                 var data = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(File.ReadAllText(result));
                 string python = Convert.ToString(data["python"]);
-                int minor = Convert.ToInt32(data["minor"]);
-                return Convert.ToInt32(data["major"]) == 3 && (minor == 11 || minor == 12)
-                    && Convert.ToInt32(data["bits"]) == 64 && Convert.ToString(data["implementation"]) == "CPython"
-                    && new [] { "amd64", "x86_64" }.Contains(Convert.ToString(data["machine"]))
-                    && Convert.ToString(data["platform"]) == "win32" && Path.IsPathRooted(python) && File.Exists(python) ? Path.GetFullPath(python) : null;
+                string version = Convert.ToString(data["major"]) + "." + Convert.ToString(data["minor"]);
+                var entry = pythonPolicy.versions.FirstOrDefault(x => x.version == version);
+                if (entry == null || entry.status != "supported")
+                    return ProbeFailed(executable, "发现 Python " + version + "，" + (entry == null ? "此版本尚未验证；当前支持 " + pythonPolicy.Supported : entry.reason));
+                if (Convert.ToInt32(data["bits"]) != 64 || Convert.ToString(data["implementation"]) != "CPython"
+                    || !new [] { "amd64", "x86_64" }.Contains(Convert.ToString(data["machine"])) || Convert.ToString(data["platform"]) != "win32")
+                    return ProbeFailed(executable, "发现 Python " + version + "，需要 Windows x64 CPython 标准版本");
+                if (Convert.ToBoolean(data["free_threaded"]) || Convert.ToString(data["releaselevel"]) != "final")
+                    return ProbeFailed(executable, "发现 Python " + version + "，自由线程或预发布版本尚未验证");
+                if (!Path.IsPathRooted(python) || !File.Exists(python)) return ProbeFailed(executable, "解释器返回的路径无效");
+                SelectedPythonDescription = "Python " + version + " x64 · " + Path.GetFullPath(python);
+                return Path.GetFullPath(python);
             }
             catch (StartupCancelledException) { throw; }
-            catch { return null; }
+            catch { return ProbeFailed(executable, "无法启动或解释器信息不完整"); }
             finally { try { File.Delete(result); } catch { } }
         }
         private IEnumerable<string> PythonLaunchers()
@@ -261,28 +373,45 @@ namespace VaspCopilot.Launcher
         private string PrepareEnvironment(LauncherOptions options)
         {
             EnvironmentFailureLogPath = null;
+            SelectedPythonDescription = null;
+            pythonProbeFailures.Clear();
+            pythonPolicy = PythonRuntimePolicy.Load(options.RootDirectory);
             string state = Path.GetFullPath(Path.Combine(LauncherPreferences.StateDirectory, "runtime", "full"));
             string request = Path.Combine(state, "requests", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(request);
             string result = Path.Combine(request, "result.json"), progress = Path.Combine(request, "progress.json");
-            SetStage("environment_validate", "正在寻找 Windows x64 CPython 3.11 / 3.12；环境准备日志目录：" + Path.Combine(state, "logs"));
+            SetStage("environment_validate", "正在自动检测 Windows x64 CPython " + pythonPolicy.Supported + "；环境准备日志目录：" + Path.Combine(state, "logs"));
             string python = null;
+            DateTime discoveryDeadline = DateTime.UtcNow.AddSeconds(60);
             foreach (string candidate in PythonCandidates(options))
             {
                 ThrowIfCancelled();
+                if (DateTime.UtcNow >= discoveryDeadline) break;
                 python = ProbeBasePython(candidate, "", request);
                 if (python != null) break;
             }
             if (python == null && String.IsNullOrWhiteSpace(options.PythonExecutable))
                 foreach (string launcher in PythonLaunchers())
                 {
-                    foreach (string selector in new [] { "-3.12 ", "-3.11 " })
+                    foreach (string selector in pythonPolicy.versions.OrderBy(x => x.status == "supported" ? 0 : 1).Select(x => "-" + x.version + " "))
                     {
+                        if (DateTime.UtcNow >= discoveryDeadline) break;
                         ThrowIfCancelled(); python = ProbeBasePython(launcher, selector, request); if (python != null) break;
                     }
-                    if (python != null) break;
+                    if (python != null || DateTime.UtcNow >= discoveryDeadline) break;
                 }
-            if (python == null) throw new LauncherException("未找到可启动的 Windows x64 CPython 3.11 / 3.12。请安装受支持的 Python，或在启动设置选择 python.exe；未下载任何依赖。");
+            if (python == null)
+            {
+                Directory.CreateDirectory(Path.Combine(state, "logs"));
+                if (DateTime.UtcNow >= discoveryDeadline) pythonProbeFailures.Add("自动检测达到时间上限，可手动指定解释器后重试");
+                string diagnostic = Path.Combine(state, "logs", "python-discovery-" + Guid.NewGuid().ToString("N") + ".local.log");
+                File.WriteAllLines(diagnostic, pythonProbeFailures, Encoding.UTF8);
+                EnvironmentFailureLogPath = diagnostic;
+                string meaningful = String.Join("；", pythonProbeFailures.Where(x => x.Contains("发现 Python")).Take(4));
+                if (meaningful.Length == 0) meaningful = String.Join("；", pythonProbeFailures.Take(2));
+                throw new LauncherException("未找到可用的 Windows x64 CPython " + pythonPolicy.Supported + "。" + meaningful
+                    + "。可在启动设置点击“自动检测”清除手动路径，或选择已有解释器；未安装依赖。检测记录：" + diagnostic);
+            }
             string helper = Path.Combine(options.RootDirectory, "launcher", "environment.py");
             if (!File.Exists(helper)) throw new LauncherException("安装目录缺少 launcher/environment.py，请恢复完整桌面目录。");
             // Proxy URLs may contain passwords: convey only their presence. The helper
@@ -290,7 +419,7 @@ namespace VaspCopilot.Launcher
             var preparationEnvironment = PreparationEnvironment();
             if (new [] { "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY" }.Any(name => !String.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(name))))
                 preparationEnvironment["VASP_INSTALLER_PROXY_CONFIGURED"] = "1";
-            SetStage("environment_create", "正在准备独立运行环境；日志目录：" + Path.Combine(state, "logs"));
+            SetStage("environment_create", "已选择 " + SelectedPythonDescription + "；正在准备独立运行环境；日志目录：" + Path.Combine(state, "logs"));
             string preparationLog = Path.Combine(state, "logs");
             try
             {
@@ -395,12 +524,13 @@ namespace VaspCopilot.Launcher
                     while (!check.Wait(100)) { ThrowIfCancelled(); if (DateTime.UtcNow >= deadline) throw new LauncherException("Python 环境检测超时，请检查所选解释器。"); }
                     ThrowIfCancelled();
                 }
-                if (!File.Exists(resultFile)) throw new LauncherException("无法执行所选 Python，需已有 Python 3.10+ 环境。");
+                if (!File.Exists(resultFile)) throw new LauncherException("无法执行所选 Python，请在启动设置自动检测或重新选择已有解释器。");
                 var data = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(File.ReadAllText(resultFile));
                 if (!data.ContainsKey("ok") || !(bool)data["ok"])
                 {
                     string missing = data.ContainsKey("missing") ? String.Join(", ", ((System.Collections.ArrayList)data["missing"]).Cast<object>()) : "";
-                    throw new LauncherException("Python 环境未就绪" + (missing.Length > 0 ? "，缺少：" + missing : "，需 Python 3.10+ 或有效依赖") + "。请按 Windows源码安装与基础使用.md 安装已有项目依赖。");
+                    string reason = data.ContainsKey("python_reason") ? Convert.ToString(data["python_reason"]) : "请检查解释器及运行依赖";
+                    throw new LauncherException("Python 环境未就绪：" + reason + (missing.Length > 0 ? "，缺少或无法导入：" + missing : "") + "。请按 Windows源码安装与基础使用.md 检查运行环境。");
                 }
             }
             catch (LauncherException) { throw; }
@@ -415,7 +545,7 @@ namespace VaspCopilot.Launcher
             Validate(options);
             string runtime = runtimeScript ?? Path.Combine(options.RootDirectory, "launcher", "runtime.py");
             if (!File.Exists(runtime)) throw new LauncherException("桌面程序缺少 launcher/runtime.py，请恢复完整桌面目录。");
-            string python = null, lastFailure = "未找到已有 Python 3.10+ 环境。";
+            string python = null, lastFailure = "未找到已有可用 Python 环境，请在启动设置自动检测或选择解释器。";
             int count = 0;
             if (options.FullFeatures && options.AutoPrepareEnvironment)
             {

@@ -107,7 +107,7 @@ namespace VaspCopilot.DesktopV3
     {
         private readonly TextBox root = new TextBox(), python = new TextBox();
         private readonly CheckBox ai = new CheckBox();
-        internal SettingsForm(LauncherOptions options)
+        internal SettingsForm(LauncherOptions options, string selectedPython)
         {
             SuspendLayout(); AutoScaleMode = AutoScaleMode.Dpi; ShellTheme.Apply(this);
             Text = "启动设置 · VASP-Copilot"; ClientSize = new Size(760, 340); AutoSize = true; AutoSizeMode = AutoSizeMode.GrowAndShrink; MinimumSize = new Size(780, 380); FormBorderStyle = FormBorderStyle.FixedDialog;
@@ -120,13 +120,19 @@ namespace VaspCopilot.DesktopV3
             var folder = ShellTheme.Button("选择目录");
             folder.Click += delegate { using (var dialog = new FolderBrowserDialog { Description = "选择已有 VASP-Copilot 安装目录（含 backend 与 frontend/dist）", SelectedPath = root.Text }) if (dialog.ShowDialog(this) == DialogResult.OK) root.Text = dialog.SelectedPath; };
             var executable = ShellTheme.Button("选择文件");
-            executable.Click += delegate { using (var dialog = new OpenFileDialog { Title = options.FullFeatures && options.AutoPrepareEnvironment ? "选择 Python 3.11/3.12 x64 基础解释器" : "选择已有 Python 3.10+ 环境", Filter = "Python|python.exe|可执行文件|*.exe", CheckFileExists = true }) if (dialog.ShowDialog(this) == DialogResult.OK) python.Text = dialog.FileName; };
+            executable.Click += delegate { using (var dialog = new OpenFileDialog { Title = "手动选择 Windows x64 CPython 解释器", Filter = "Python|python*.exe|可执行文件|*.exe", CheckFileExists = true }) if (dialog.ShowDialog(this) == DialogResult.OK) python.Text = dialog.FileName; };
+            var automatic = ShellTheme.Button("自动检测");
+            automatic.Click += delegate { python.Clear(); };
+            var pythonButtons = new FlowLayoutPanel { AutoSize = true, WrapContents = false };
+            pythonButtons.Controls.Add(automatic); pythonButtons.Controls.Add(executable);
             layout.Controls.Add(ShellTheme.Label("安装目录"), 0, 1); layout.Controls.Add(root, 1, 1); layout.Controls.Add(folder, 2, 1);
-            layout.Controls.Add(ShellTheme.Label("Python"), 0, 2); layout.Controls.Add(python, 1, 2); layout.Controls.Add(executable, 2, 2);
+            layout.Controls.Add(ShellTheme.Label("Python（留空自动）"), 0, 2); layout.Controls.Add(python, 1, 2); layout.Controls.Add(pythonButtons, 2, 2);
             ai.Text = "启用智能模式服务"; ai.AutoSize = true; ai.Checked = options.EnableAi && !options.IsolatedProfile; ai.Enabled = !options.IsolatedProfile; ai.Margin = new Padding(4, 12, 4, 8); layout.Controls.Add(ai, 1, 3);
             string pythonHint = options.FullFeatures && options.AutoPrepareEnvironment
-                ? "选择 Python 3.11/3.12 x64 基础解释器即可，无需预装项目依赖。首次启动会创建应用专用环境并安装运行依赖；首次需要联网，本地端口自动分配。"
+                ? "默认自动检测已有 Python，无需预装项目依赖。首次启动会创建应用专用环境并安装运行依赖；首次需要联网，本地端口自动分配。"
                 : "Python 留空时自动检查已有环境；本地端口自动分配。";
+            try { pythonHint += " 支持 Windows x64 CPython " + PythonRuntimePolicy.Load(options.RootDirectory).Supported + "。"; } catch (LauncherException) { }
+            if (!String.IsNullOrWhiteSpace(selectedPython)) pythonHint += "\n上次启动采用：" + selectedPython;
             var hint = ShellTheme.Label(pythonHint, 10F, true); hint.MaximumSize = new Size(650, 0); layout.Controls.Add(hint, 1, 4); layout.SetColumnSpan(hint, 2);
             if (options.IsolatedProfile) { var isolation = ShellTheme.Label("隔离候选：智能模式关闭，数据保存在独立测试目录。", 10F, true); layout.Controls.Add(isolation, 1, 5); layout.SetColumnSpan(isolation, 2); }
             var buttons = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.RightToLeft, Dock = DockStyle.Fill, Margin = new Padding(0, 16, 0, 0) };
@@ -303,7 +309,7 @@ namespace VaspCopilot.DesktopV3
         private async Task Configure()
         {
             if (closing || (startup != null && !startup.IsCompleted)) return;
-            using (var dialog = new SettingsForm(options))
+            using (var dialog = new SettingsForm(options, controller.SelectedPythonDescription))
             {
                 if (dialog.ShowDialog(this) != DialogResult.OK) return;
                 LauncherPreferences.Save(options); RunStartup();

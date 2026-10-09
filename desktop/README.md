@@ -1,17 +1,19 @@
-# Windows 桌面源码构建与0.4.0配套包
+# Windows 桌面源码构建与运行环境
 
 本目录承接已试用的 Desktop V3 原生壳和控制器。启动后准备本地服务并打开真实 `/workflow` 页面；其他业务页面的视觉主题保持当前实现。0.4.0提供配套包与源码构建说明；仍不包含安装器、签名、更新器或科学计算验证。整包本地验收见仓库根《0.4.0本地验收步骤》。
 
+当前源码包含 v0.4.1 Python 兼容修复候选；已发布 v0.4.0 的原包仍只支持 3.11/3.12。3.15 尚缺关键 Windows wheel，识别后明确提示原因。详见 [兼容计划与验收](../docs/development/v0.4.1/Python兼容与自动发现.md)。
+
 ## 完整功能入口
 
-0.4.0 使用包根目录的 `启动完整功能.cmd`（等价于 EXE 的 `--full-features`）。默认启用 AI 与真实功能入口，自动端口；沿用已有 Python 3.11/3.12 x64，不附带解释器；首次自动创建专用环境并联网安装锁定运行依赖。该模式与 `--test-profile` 互斥，使用独立桌面偏好和业务目录；系统凭据仍属于同一 Windows 用户。具体复测与开关范围见 [0.4.0完整功能复测](../0.4.0完整功能复测.md)。普通无参启动与隔离测试入口保持兼容。
+当前源码构建使用包根目录的 `启动完整功能.cmd`（等价于 EXE 的 `--full-features`）。默认启用 AI 与真实功能入口，自动端口；沿用已有标准 CPython 3.11/3.12/3.13/3.14 x64，不附带解释器；首次自动创建专用环境并联网安装锁定运行依赖。该模式与 `--test-profile` 互斥，使用独立桌面偏好和业务目录；系统凭据仍属于同一 Windows 用户。具体复测与开关范围见 [0.4.0完整功能复测](../0.4.0完整功能复测.md)。普通无参启动与隔离测试入口保持兼容。
 
 ## 前提
 
 - 64 位 Windows，已安装 .NET Framework 4.8 或更高版本及其 Framework64 C# 编译器。
 - Node.js 24 和 npm。前端依赖由既有 `frontend/package-lock.json` 固定；不新增或升级依赖。
 - 运行桌面时已有 WebView2 Runtime；SDK 是编译依赖，不能代替 Runtime。脚本不安装 Runtime。
-- 普通/隔离入口运行本地服务时需已有 Python 3.10+ 及后端依赖。完整功能入口自动准备独立依赖，支持 Windows x64 CPython 3.11/3.12；Windows CI 对这两个版本执行首次安装与复用检查。构建脚本仍不安装 Python 或后端依赖。
+- 普通/隔离入口运行本地服务时需已有受支持的标准 CPython 及后端依赖。完整功能入口自动准备独立依赖，支持 Windows x64 CPython 3.11/3.12/3.13/3.14；Windows CI 对这四个版本执行首次安装与复用检查。构建脚本仍不安装 Python 或后端依赖。
 
 从仓库根目录执行：
 
@@ -30,7 +32,7 @@
 
 ## 自动运行环境
 
-完整功能入口使用 `launcher/environment.py`，按 `backend/requirements-win-cp311-x64.lock` 或 `requirements-win-cp312-x64.lock` 安装完整闭包；每包精确版本及 wheel SHA256，禁止源码临时编译。运行依赖来自 `requirements-runtime.txt`，开发/测试仍用 `requirements.txt`。依赖变化必须重建相应锁并通过两版本 CI，不能只改宽泛运行清单。
+完整功能入口使用 `launcher/environment.py`，读取 `launcher/python-support.json`，按对应 `backend/requirements-win-cp3xx-x64.lock` 安装完整闭包；每包精确版本及 wheel SHA256，禁止源码临时编译。运行依赖来自 `requirements-runtime.txt`，开发/测试仍用 `requirements.txt`。依赖变化必须重建相应锁并通过两版本 CI，不能只改宽泛运行清单。
 
 环境和下载缓存位于完整功能偏好目录下的 runtime/full；按解释器版本/架构/锁摘要分开，未完成标记不能作为可用凭证，成功环境后续本地核验。取消仅停止所属安装进程树；旧环境及用户 Python 不修改。准备日志留本地，UI报告固定错误与日志位置。当前仅官方 PyPI 直连，不继承 pip 配置、额外源或带凭据代理；无网络时保留缓存并明确提示重试。
 

@@ -90,6 +90,7 @@ def run(name, mode='full', helper='success', python=sys.executable, extra_env=No
     for folder in ('backend/app','backend/ai_mode','frontend/dist','launcher'):(installation/folder).mkdir(parents=True)
     for file in ('backend/app/main.py','backend/ai_mode/server.py','frontend/dist/index.html'):(installation/file).write_text('synthetic fixture')
     (installation/'launcher/environment.py').write_text(HELPER,encoding='utf-8')
+    shutil.copyfile(ROOT/'launcher/python-support.json', installation/'launcher/python-support.json')
     runtime=installation/'launcher/stub-runtime.py';runtime.write_text(RUNTIME,encoding='utf-8')
     (installation/'helper-mode').write_text(helper)
     if check_fail:(installation/'check-fail').touch()
