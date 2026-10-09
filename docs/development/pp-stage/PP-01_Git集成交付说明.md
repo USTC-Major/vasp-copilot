@@ -21,7 +21,15 @@
 
 ## 状态与限制
 
-当前进行提交、PR 和满足仓库要求后的集成；实际提交、PR、CI 与合并结果以 GitHub 和本轮回执为准。此前回执的候选身份和失败记录保留，不改写历史。
+已创建 [PR #53](https://github.com/USTC-Major/vasp-copilot/pull/53)，首个交付提交为 `fcb2d6c24170fc2479d5768171032bfc04a98acd`。后续修复提交、必要 CI 与合并结果以该 PR 和本轮回执为准。此前回执的候选身份和失败记录保留，不改写历史。
+
+### 集成阶段发现与定向修复
+
+首轮 CI 的后端、容器及四组 Windows 桌面检查通过；前端 52 个文件、516 项断言通过，但测试环境收尾时出现一个 `ReferenceError: window is not defined`，因此前端检查实际失败，不能视作全绿。失败对应 `AiProjectExtraSettings.test.tsx` 的 React 异步回调；[原始失败检查](https://github.com/USTC-Major/vasp-copilot/actions/runs/38003796994/job/114067833848)保留。
+
+核对发现该测试触发的 Ant Design 静态消息使用 RTL 以外的 React 根，尚未清理；保存用例也只等到 MSW 收到请求，没有等完整保存结束。仅修复该测试文件：测试消息禁用动画，显式清理组件和静态消息并等待消息 DOM 移除，恢复测试配置，保存断言补等“已自动保存”。未修改产品组件、全局测试配置或 CI 策略，未删去原断言。
+
+最初直接等待消息消失的定向检查暴露 jsdom 不发出 CSS 动画完成事件；按项目现有方式禁用测试消息动画后，`frontend/` 中运行 `npm.cmd test -- src/components/ai/AiProjectExtraSettings.test.tsx`，4 项通过、退出码 0，无未处理异常。此次验证只跑受影响文件；没有再次本地全量。修后推送由既有 PR 配置自动检查新 SHA，不手动重启旧 CI。
 
 仅验证固定公开样例及标记的合成数据，不声称新的 VASP 计算、真实模型或 HPC 验证。已有任务结果接入、投影能带、NCL／SOC 及其余后处理计划未在本次实现。未打正式标签，未创建 Release，未替换用户安装包。
 

@@ -1,7 +1,8 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
+import { ConfigProvider, message } from 'antd';
 import AiProjectExtraSettings from './AiProjectExtraSettings';
 import { server } from '../../mocks/server';
 
@@ -20,7 +21,22 @@ function renderSettings(projectId: string) {
 }
 
 describe('AiProjectExtraSettings 内置模板', () => {
-  beforeEach(() => localStorage.clear());
+  beforeEach(() => {
+    localStorage.clear();
+    // JSDOM does not emit CSS animation completion events for static messages.
+    ConfigProvider.config({ holderRender: (children) => <ConfigProvider theme={{ token: { motion: false } }}>{children}</ConfigProvider> });
+  });
+
+  afterEach(async () => {
+    cleanup();
+    // Static messages own a React root outside RTL's render/cleanup lifecycle.
+    try {
+      await act(async () => { message.destroy(); });
+      await waitFor(() => expect(document.querySelector('.ant-message-notice')).not.toBeInTheDocument());
+    } finally {
+      await act(async () => { ConfigProvider.config({ holderRender: undefined }); });
+    }
+  });
 
   it('只有明确点击才追加，并保留用户已有条目', async () => {
     const user = userEvent.setup();
@@ -89,6 +105,7 @@ describe('AiProjectExtraSettings 内置模板', () => {
     await waitFor(() => expect(saved).toHaveLength(1));
     expect(saved[0][0]).toBe('服务端已有条目');
     expect(saved[0][1]).toContain('band 阶段不得使用 ISMEAR=-5');
+    await waitFor(() => expect(screen.getByText('已自动保存')).toBeInTheDocument());
   });
 
   it('加载失败时保持不可编辑，重试成功后开放编辑', async () => {
