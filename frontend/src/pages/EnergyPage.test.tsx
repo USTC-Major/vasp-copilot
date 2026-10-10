@@ -108,6 +108,32 @@ it('validates quantities on blur or submit, keeps an inline error and locates th
   await waitFor(() => expect(quantity).toHaveAttribute('aria-invalid', 'false'));
   expect(energyDraftSessions.get('ec_fixture')?.draft.groups[0].targets[0]).toMatchObject({ adsorbate_count: 1 });
   expect(screen.queryByText('请填写正整数，空值、零、负数或小数不能用于计算。', { selector: 'span.energy-field-error' })).not.toBeInTheDocument();
+  await waitFor(() => expect(screen.queryByText('当前操作未完成')).not.toBeInTheDocument());
+});
+
+it('retains unresolved notification fields and a fresh global failure until a successful retry', async () => {
+  mount();
+  const quantity = await screen.findByRole('spinbutton', { name: '吸附物数量 g_ads es_target' });
+  const units = screen.getByRole('spinbutton', { name: '参考单元数 g_ads' });
+  fireEvent.change(quantity, { target: { value: '0' } }); fireEvent.change(units, { target: { value: '0' } });
+  fireEvent.click(screen.getByRole('checkbox', { name: '接受当前卡风险 g_ads' }));
+  fireEvent.click(screen.getByRole('button', { name: '确认并锁定当前卡' }));
+  await screen.findByText(/共 2 项，请查看字段说明/);
+  fireEvent.change(units, { target: { value: '1' } }); fireEvent.blur(units);
+  await waitFor(() => expect(units).toHaveAttribute('aria-invalid', 'false'));
+  expect(quantity).toHaveAttribute('aria-invalid', 'true');
+  expect(screen.getByText('当前操作未完成')).toBeInTheDocument();
+  await waitFor(() => expect(screen.queryByText(/共 2 项，请查看字段说明/)).not.toBeInTheDocument());
+  fireEvent.change(quantity, { target: { value: '1' } }); fireEvent.blur(quantity);
+  await waitFor(() => expect(screen.queryByText('当前操作未完成')).not.toBeInTheDocument());
+  vi.mocked(energyApi.lockCard).mockRejectedValueOnce(new ApiError('ENERGY_INPUT_INVALID', '新的锁定失败', false, 422));
+  fireEvent.click(screen.getByRole('checkbox', { name: '接受当前卡风险 g_ads' }));
+  fireEvent.click(screen.getByRole('button', { name: '确认并锁定当前卡' }));
+  await screen.findByText('新的锁定失败', { selector: '.ant-notification-notice-description p' });
+  expect(screen.getByText('当前操作未完成')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: '确认并锁定当前卡' }));
+  await waitFor(() => expect(record.groups[0].locked).toBe(true));
+  await waitFor(() => expect(screen.queryByText('当前操作未完成')).not.toBeInTheDocument());
 });
 
 it('previews shared scientific edits, cancels without saving and clears even unconfirmed local risk acceptance on confirmed mutation', async () => {

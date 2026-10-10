@@ -16,6 +16,7 @@ import { energyDraftSessions as sessions, type EnergyEditor as Editor } from '..
 import './energy.css';
 
 type SharedReview = { collection: EnergyCollection; impact: EnergyImpact; patches?: EnergySamplePatch[]; title?: string; request?: EnergyRemovalRequest; removal?: EnergyRemoval; error?: string; draftKey: string };
+type ErrorNotice = { fields: Set<string>; show: (remaining: EnergyFieldError[]) => void };
 const rowKey = (row: EnergyRowDraft | undefined) => JSON.stringify({ name: row?.name, override: row?.override });
 const sharedKey = (draft: EnergyDraft) => JSON.stringify({ title: draft.title, rows: draft.rows.map(row => ({ id: row.sample_id, key: rowKey(row) })) });
 function serverDraft(collection: EnergyCollection): EnergyDraft { return { ...draftFromCollection(collection), groups: structuredClone(collectionCards(collection)) }; }
@@ -48,6 +49,7 @@ export default function EnergyPage() {
   const [review, setReview] = useState<SharedReview>();
   const [deleteCardId, setDeleteCardId] = useState<string>();
   const [notice, noticeHolder] = notification.useNotification();
+  const errorNotice = useRef<ErrorNotice | undefined>(undefined);
   const listing = useQuery({ queryKey: ['energy-collections'], queryFn: ({ signal }) => energyApi.list(signal), retry: false, refetchOnWindowFocus: false });
   const detail = useQuery({ queryKey: ['energy-collection', id], queryFn: ({ signal }) => energyApi.get(id, signal), enabled: !!id, retry: false, refetchOnWindowFocus: false });
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
@@ -91,6 +93,14 @@ export default function EnergyPage() {
     const handler = (event: BeforeUnloadEvent) => { event.preventDefault(); };
     window.addEventListener('beforeunload', handler); return () => window.removeEventListener('beforeunload', handler);
   }, [editor?.dirty]);
+  useEffect(() => {
+    const pending = errorNotice.current;
+    if (!pending?.fields.size) return;
+    const remaining = errors.filter(error => pending.fields.has(energyFieldKey(error.card_id, error.field)));
+    const fields = new Set(remaining.map(error => energyFieldKey(error.card_id, error.field)));
+    if (!fields.size) { errorNotice.current = undefined; notice.destroy('energy-operation-error'); }
+    else if (fields.size < pending.fields.size) { pending.fields = fields; pending.show(remaining); }
+  }, [errors, notice]);
   function selectCard(cardId: string) { const previous = current.current; if (previous) apply({ ...previous, activeCardId: cardId }); setMobileCardsOpen(false); setActionError(''); setStatus(''); }
   function locate(error: EnergyFieldError) {
     if (error.card_id && current.current?.draft.groups.some(card => card.id === error.card_id)) selectCard(error.card_id);
@@ -112,13 +122,17 @@ export default function EnergyPage() {
     const message = energyError(cause);
     if (cause instanceof ApiError && cause.code === 'ENERGY_REVISION_CONFLICT' && previous) { apply({ ...previous, conflict: true }); setActionError(`${message} 本地输入已保留；读取最新版本后明确选择重新保存。`); }
     else setActionError(message);
-    const first = mapped[0], card = previous?.draft.groups.find(item => item.id === first?.card_id), sample = previous?.draft.rows.find(item => item.sample_id === first?.sample_id);
-    notice.error({ key: 'energy-operation-error', title: '当前操作未完成', placement: 'bottomRight', duration: 8, description: <><p>{card ? `${card.name} · ` : ''}{sample ? `${sample.name}：` : ''}{first?.message ?? message}{mapped.length > 1 ? `（共 ${mapped.length} 项，请查看字段说明）` : ''}</p><Button size="small" onClick={() => first ? locate(first) : document.getElementById('energy-card-actions')?.scrollIntoView?.({ block: 'center' })}>{first ? '定位并修正' : '查看操作说明'}</Button></> });
+    const pending: ErrorNotice = { fields: new Set(mapped.map(error => energyFieldKey(error.card_id, error.field))), show: remaining => {
+      const first = remaining[0], card = current.current?.draft.groups.find(item => item.id === first?.card_id), sample = current.current?.draft.rows.find(item => item.sample_id === first?.sample_id);
+      notice.error({ key: 'energy-operation-error', title: '当前操作未完成', placement: 'bottomRight', duration: 8, onClose: () => { if (errorNotice.current === pending) errorNotice.current = undefined; }, description: <><p>{card ? `${card.name} · ` : ''}{sample ? `${sample.name}：` : ''}{first?.message ?? message}{remaining.length > 1 ? `（共 ${remaining.length} 项，请查看字段说明）` : ''}</p><Button size="small" onClick={() => first ? locate(first) : document.getElementById('energy-card-actions')?.scrollIntoView?.({ block: 'center' })}>{first ? '定位并修正' : '查看操作说明'}</Button></> });
+    } };
+    errorNotice.current = pending; pending.show(mapped);
   }
   async function run(work: () => Promise<void>) {
     if (working.current) return false;
+    const previousNotice = errorNotice.current;
     working.current = true; setBusy(true); setActionError(''); setStatus('');
-    try { await work(); return true; } catch (cause) { report(cause); return false; } finally { working.current = false; setBusy(false); }
+    try { await work(); if (previousNotice && errorNotice.current === previousNotice && !previousNotice.fields.size) { errorNotice.current = undefined; notice.destroy('energy-operation-error'); } return true; } catch (cause) { report(cause); return false; } finally { working.current = false; setBusy(false); }
   }
   function requireEditor() { const previous = current.current; if (!previous) throw new Error('先创建或打开一份分析。'); if (previous.conflict) throw new Error('存在修订冲突，请先读取最新版本；本地输入保留。'); return previous; }
   async function migrateForImport() {
