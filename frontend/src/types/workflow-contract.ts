@@ -69,6 +69,7 @@ export interface MaterialAssumptionsRequest {
 /** POST /api/v1/workflows/plan 的嵌套请求体（后端 WorkflowApiRequest.workflow）。 */
 export interface WorkflowPlanRequestBody {
   structure_id: string;
+  patches?: import('./generated-api').ParameterPatch[];
   workflow: {
     sample_name?: string;
     requested_tasks: string[];
@@ -84,6 +85,9 @@ export interface WorkflowPlanRequestBody {
 
 /** 最终确认摘要的不可变快照：Modal 展示与实际发送 payload 同源。 */
 export interface WorkflowConfirmSnapshot {
+  patches?: import('./generated-api').ParameterPatch[];
+  catalysis_binding?: import('./catalysis').CatalysisWorkflowBinding | null;
+  surface_policy?: import('./catalysis').CatalysisSurfacePolicy | null;
   structure: { formula: string; elements: string[] };
   sample_name: string;
   poscar_comment: string;

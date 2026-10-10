@@ -2,12 +2,15 @@ import { useState } from 'react';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ConfigProvider } from 'antd';
+import { MemoryRouter } from 'react-router-dom';
 import { catalysisApi } from '../api/catalysis';
 import { ApiError } from '../api/client';
 import type { AdsorptionCandidate, CatalysisDraft } from '../types/catalysis';
 import type { StructureGeometry } from '../types/structure-geometry';
 import AdsorptionBuilder from './AdsorptionBuilder';
 import { adsorptionEditorFor, parseXYZ, placementInput, siteInput, storeAdsorptionRecovery } from './adsorptionDraftState';
+import { catalysisWorkflowResponseFixture } from '../mocks/catalysisWorkflowFixture';
+import { getWorkflowDraft, resetWorkflowDraft } from '../stores/workflowDraft';
 
 vi.mock('../components/structure/CrystalViewer', () => ({ CrystalGeometryViewer: ({ data }: { data: StructureGeometry }) => <div>候选几何 {data.structure_id}</div> }));
 const snapshot = { snapshot_id: 'snap', coordinate_mode: 'cartesian' as const, lattice: [[4, 0, 0], [0, 4, 0], [0, 0, 20]] as StructureGeometry['basis_cartesian_angstrom'], sha256: 'a'.repeat(64), atoms: [{ atom_id: 'pt-1', element: 'Pt', fractional: [0, 0, .25] as [number, number, number], cartesian: [0, 0, 5] as [number, number, number], selective_dynamics: [false, false, false] as [boolean, boolean, boolean], provenance: {} }] };
@@ -20,10 +23,10 @@ let doc: CatalysisDraft, client: QueryClient;
 function mount(upstream = false) {
   client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
   function Harness() { const [current, setCurrent] = useState(doc); return <AdsorptionBuilder doc={current} upstreamDirty={upstream} parentBusy={false} parentConflict={false} onUpdate={setCurrent} onBusy={() => undefined} />; }
-  return render(<ConfigProvider theme={{ token: { motion: false } }}><QueryClientProvider client={client}><Harness /></QueryClientProvider></ConfigProvider>);
+  return render(<ConfigProvider theme={{ token: { motion: false } }}><QueryClientProvider client={client}><MemoryRouter><Harness /></MemoryRouter></QueryClientProvider></ConfigProvider>);
 }
 beforeEach(() => {
-  localStorage.clear(); doc = fixture();
+  localStorage.clear(); resetWorkflowDraft(); doc = fixture();
   vi.spyOn(catalysisApi, 'get').mockImplementation(async () => ({ draft: doc }));
   vi.spyOn(catalysisApi, 'adsorbate').mockImplementation(async (_base, source, anchor_index) => { doc = { ...doc, revision: doc.revision + 1, adsorption: { ...doc.adsorption!, adsorbate: { ...doc.adsorption!.adsorbate!, source, anchor_index }, sites: [], selected_site_ids: [], candidates: [], selected_candidate_ids: [] } }; return { draft: doc }; });
   vi.spyOn(catalysisApi, 'sites').mockImplementation(async (_base, settings) => { doc = { ...doc, revision: doc.revision + 1, adsorption: { ...doc.adsorption!, site_settings: settings, selected_site_ids: [] } }; return { draft: doc }; });
@@ -31,8 +34,26 @@ beforeEach(() => {
   vi.spyOn(catalysisApi, 'selection').mockImplementation(async (_base, selected_candidate_ids) => { doc = { ...doc, revision: doc.revision + 1, adsorption: { ...doc.adsorption!, selected_candidate_ids } }; return { draft: doc }; });
   vi.spyOn(catalysisApi, 'candidateGeometry').mockImplementation(async (_id, candidate_id, revision) => ({ revision, candidate_id, geometry: { structure_id: candidate_id } as StructureGeometry }));
   vi.spyOn(catalysisApi, 'exportCandidates').mockResolvedValue(new Blob(['zip']));
+  vi.spyOn(catalysisApi, 'workflowBinding').mockImplementation(async (_base, target) => catalysisWorkflowResponseFixture(doc, target.candidate_id));
 });
 afterEach(() => { cleanup(); client?.clear(); vi.restoreAllMocks(); });
+
+it('hands off only the explicitly previewed candidate while multi-selection remains a ZIP selection', async () => {
+  mount();
+  fireEvent.click(screen.getByRole('button', { name: '位点 S1 顶位' })); fireEvent.click(screen.getByRole('button', { name: '位点 S2 手动' }));
+  fireEvent.click(screen.getByRole('button', { name: '生成 2 个独立候选' }));
+  await screen.findByTestId('cat-candidate-geometry');
+  await waitFor(() => expect(screen.getByRole('button', { name: '将当前预览候选传入 Workflow' })).toBeEnabled());
+  fireEvent.click(screen.getByRole('button', { name: '预览候选 2' }));
+  await waitFor(() => expect(screen.getByTestId('cat-candidate-geometry')).toHaveAttribute('data-candidate-id', 'candidate-2'));
+  fireEvent.click(screen.getByRole('button', { name: '将当前预览候选传入 Workflow' }));
+  expect(catalysisApi.workflowBinding).not.toHaveBeenCalled();
+  fireEvent.click(await screen.findByRole('button', { name: '确认并进入 Workflow' }));
+  await waitFor(() => expect(getWorkflowDraft().catalysisBinding?.candidate_id).toBe('candidate-2'));
+  expect(catalysisApi.workflowBinding).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ revision: 5 }), { candidate_id: 'candidate-2' });
+  expect(doc.adsorption!.selected_candidate_ids).toEqual(['candidate-1', 'candidate-2']);
+  expect(catalysisApi.exportCandidates).not.toHaveBeenCalled();
+});
 
 it('selects spatial markers, creates independent candidates with a pinned revision, and persists multi-export selection', async () => {
   mount();

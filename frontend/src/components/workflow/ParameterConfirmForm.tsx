@@ -63,6 +63,7 @@ interface ParameterConfirmFormProps {
   isGenerating: boolean;
   bandWorkflowStatus?: 'loading' | 'error' | 'enabled' | 'disabled';
   onRetryBandCapability?: () => void;
+  surfaceContext?: boolean;
 }
 
 const TASK_OPTIONS: { label: string; value: WorkflowTask }[] = [
@@ -116,6 +117,7 @@ const ParameterConfirmForm: React.FC<ParameterConfirmFormProps> = ({
   isGenerating,
   bandWorkflowStatus = 'loading',
   onRetryBandCapability,
+  surfaceContext = false,
 }) => {
   const [form] = Form.useForm<ParameterConfirmFormData>();
   // AntD initialValues are a mount-time seed, not a stream of later draft edits.
@@ -135,7 +137,7 @@ const ParameterConfirmForm: React.FC<ParameterConfirmFormProps> = ({
     ...(!watchedTasks.includes('static') ? ['band 必须包含 static 上游任务，请同时选择 static，按 static → band 生成。'] : []),
   ];
   const bandSubmissionBlocked = bandSelected && (
-    bandWorkflowStatus !== 'enabled' || bandCompatibilityIssues.length > 0
+    surfaceContext || bandWorkflowStatus !== 'enabled' || bandCompatibilityIssues.length > 0
   );
 
   // 确认失效机制：记录每条条目被确认时的值指纹；字段变化后自动复位确认。
@@ -205,7 +207,7 @@ const ParameterConfirmForm: React.FC<ParameterConfirmFormProps> = ({
     if (values.dftu.enabled && (values.dftu.entries?.length ?? 0) === 0) return;
     // Form submit guard supplements the disabled submit button and page-level guard.
     if (values.tasks.includes('band') && (
-      bandWorkflowStatus !== 'enabled' ||
+      surfaceContext || bandWorkflowStatus !== 'enabled' ||
       values.tasks.includes('relax') ||
       !values.tasks.includes('static') ||
       values.soc
@@ -254,7 +256,8 @@ const ParameterConfirmForm: React.FC<ParameterConfirmFormProps> = ({
         />
       )}
 
-      {bandWorkflowStatus === 'loading' && (
+      {surfaceContext && <Alert type="info" showIcon message="表面场景支持 relax、static 和 DOS；当前不支持表面 band 路径。" style={{ marginBottom: 16 }} />}
+      {!surfaceContext && bandWorkflowStatus === 'loading' && (
         <Alert
           type="info"
           showIcon
@@ -262,7 +265,7 @@ const ParameterConfirmForm: React.FC<ParameterConfirmFormProps> = ({
           style={{ marginBottom: 16 }}
         />
       )}
-      {bandWorkflowStatus === 'error' && (
+      {!surfaceContext && bandWorkflowStatus === 'error' && (
         <Alert
           type="warning"
           showIcon
@@ -273,7 +276,7 @@ const ParameterConfirmForm: React.FC<ParameterConfirmFormProps> = ({
           style={{ marginBottom: 16 }}
         />
       )}
-      {bandWorkflowStatus === 'disabled' && (
+      {!surfaceContext && bandWorkflowStatus === 'disabled' && (
         <Alert
           type="info"
           showIcon
@@ -306,10 +309,10 @@ const ParameterConfirmForm: React.FC<ParameterConfirmFormProps> = ({
         onValuesChange={handleValuesChange}
         initialValues={{
           electronic_type: 'unknown',
-          magnetic: transitionMetals.length > 0,
+          magnetic: surfaceContext ? false : transitionMetals.length > 0,
           soc: false,
           precision: 'standard',
-          tasks: ['relax', 'static', 'dos'],
+          tasks: surfaceContext ? ['relax', 'static'] : ['relax', 'static', 'dos'],
           scheduler: {
             type: 'slurm',
             nodes: 1,
@@ -334,8 +337,8 @@ const ParameterConfirmForm: React.FC<ParameterConfirmFormProps> = ({
             options={TASK_OPTIONS.map((option) => option.value === 'band'
               ? {
                   ...option,
-                  disabled: bandWorkflowStatus !== 'enabled',
-                  title: bandWorkflowStatus === 'loading'
+                  disabled: surfaceContext || bandWorkflowStatus !== 'enabled',
+                  title: surfaceContext ? '表面场景当前不支持 band' : bandWorkflowStatus === 'loading'
                     ? '正在读取服务端功能配置'
                     : bandWorkflowStatus === 'error'
                       ? '功能配置读取失败，可重试'

@@ -1,5 +1,5 @@
 import { request } from './client';
-import type { AdsorbateSource, AdsorptionPlacement, AdsorptionSiteKind, AtomOverride, CatalysisDraft, CatalysisDraftSummary, CatalysisSource, SurfaceParams } from '../types/catalysis';
+import type { AdsorbateSource, AdsorptionPlacement, AdsorptionSiteKind, AtomOverride, CatalysisDraft, CatalysisDraftSummary, CatalysisSource, CatalysisWorkflowBindingResponse, CatalysisWorkflowTarget, SurfaceParams } from '../types/catalysis';
 import type { StructureGeometry } from '../types/structure-geometry';
 
 const base = '/toolbox/catalysis/drafts';
@@ -22,4 +22,5 @@ export const catalysisApi = {
   selection: (draft: CatalysisDraft, selected_candidate_ids: string[]) => request<{ draft: CatalysisDraft }>(`${path(draft.draft_id)}/adsorption/selection`, { method: 'PATCH', body: { revision: draft.revision, selected_candidate_ids } }),
   candidateGeometry: (id: string, candidateId: string, revision: number, signal?: AbortSignal) => request<{ revision: number; candidate_id: string; geometry: StructureGeometry }>(`${path(id)}/geometry`, { params: { revision, candidate_id: candidateId }, signal }),
   exportCandidates: (draft: CatalysisDraft, candidate_ids: string[]) => request<Blob>(`${path(draft.draft_id)}/adsorption/export`, { method: 'POST', body: { revision: draft.revision, candidate_ids }, responseType: 'blob' }),
+  workflowBinding: (draft: CatalysisDraft, target: CatalysisWorkflowTarget) => request<CatalysisWorkflowBindingResponse>(`${path(draft.draft_id)}/workflow-binding`, { method: 'POST', body: { revision: draft.revision, ...target } }),
 };

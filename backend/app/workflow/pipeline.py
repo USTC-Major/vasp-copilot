@@ -21,6 +21,7 @@ from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 from backend.input_validation import InputValidationError, validate_potcar
 from backend.app.schemas.structure import validated_structure_context
+from backend.app.services.surface_inputs import validate_surface_context, surface_grid
 from backend.app.generators.archive import FIXED_TIMESTAMP, BundleBuilder
 from backend.app.generators.incar import IncarGenerator
 from backend.app.generators.kpoints import KpointsGenerator
@@ -28,7 +29,7 @@ from backend.app.generators.poscar import PoscarGenerator, default_sample_name
 from backend.app.generators.script import ScriptGenerator
 from backend.app.recipes.composer import ComposeRequest, RecipeComposer
 from backend.app.recipes.derived import BAND_LINE_DIVISIONS, KPPA_TABLE, generate_kpoint_grid, generate_ldau_arrays
-from backend.app.recipes.errors import BeAError, DftuConfirmationRequired, RecipeConfirmationRequired
+from backend.app.recipes.errors import BeAError, DftuConfirmationRequired, RecipeConfirmationRequired, CompositionRevisionConflict
 from backend.app.recipes.registry import RecipeRegistry, default_registry
 from backend.app.recipes.selector import RecipeSelector
 from backend.app.reports.input_check.generator import InputCheckReportGenerator
@@ -37,6 +38,7 @@ from backend.app.schemas.generation import (
     KpointsSpec,
     StructureContext,
     WorkflowGenerateRequest,
+    ParameterProvenance, ProvenanceSourceType,
 )
 from backend.app.schemas.recipe import RecipePackManifest, SelectionContext, TaskType
 from backend.app.core.file_identity import generated_file_id
@@ -53,6 +55,7 @@ from backend.app.schemas.workflow import (
     WarningEntry,
     WorkflowPlanFile,
     WorkflowStep,
+    PendingConfirmation, RecipeCompositionStatus,
 )
 from backend.app.workflow.gating import StepGatingEvaluator
 from backend.app.workflow.models import ValidationResult, WorkflowGenerationResult
@@ -158,6 +161,7 @@ class WorkflowGenerationPipeline:
                 patch
                 for patch in request.patches
                 if patch.step_id in (None, step.step_id)
+                and not (request.structure.surface_policy and task == TaskType.RELAX and patch.parameter == 'ISIF')
             ]
             composition = self._composer.compose(
                 ComposeRequest(
@@ -169,6 +173,7 @@ class WorkflowGenerationPipeline:
                     derived_inputs=self._derived_inputs(request, task),
                 )
             )
+            self._apply_surface_policy(request, task, composition, preview=False)
             if composition.confirmations and not request.confirm:
                 raise RecipeConfirmationRequired(
                     f"composition for {step.step_id} has pending confirmations",
@@ -228,9 +233,16 @@ class WorkflowGenerationPipeline:
             potcar_state=potcar_state,
         )
         files["INPUT_CHECK_REPORT.md"] = report_markdown
+        if request.structure.catalysis_binding:
+            metadata = {'binding': request.structure.catalysis_binding.model_dump(mode='json'),
+                        'surface_policy': request.structure.surface_policy.model_dump(mode='json'),
+                        'final_poscar_sha256': hashlib.sha256(self.final_poscar(request).encode()).hexdigest(),
+                        'identity_restore_rule': 'Verify snapshot, metadata and POSCAR hashes before restoring atom IDs; external edits require fresh import.'}
+            files['catalysis_metadata.json'] = json.dumps(metadata, ensure_ascii=False, sort_keys=True, indent=2) + '\n'
 
         bundle = self._builder.build(
-            request.workflow_id, files, revision=revision, pack=self._pack, potcar=potcar_state
+            request.workflow_id, files, revision=revision, pack=self._pack, potcar=potcar_state,
+            catalysis_binding=request.structure.catalysis_binding, surface_policy=request.structure.surface_policy
         )
         # 内嵌 manifest 与最终 manifest 自洽：先对不含自身的文件集构建，
         # 再把真实 JSON 放回 files 后重新构建，保证 zip 内容与 manifest 逐文件对得上。
@@ -243,7 +255,8 @@ class WorkflowGenerationPipeline:
         )
         files["workflow_manifest.json"] = manifest_text
         bundle = self._builder.build(
-            request.workflow_id, files, revision=revision, pack=self._pack, potcar=potcar_state
+            request.workflow_id, files, revision=revision, pack=self._pack, potcar=potcar_state,
+            catalysis_binding=request.structure.catalysis_binding, surface_policy=request.structure.surface_policy
         )
 
         file_tree = self._build_file_tree(request.workflow_id, bundle.files)
@@ -301,6 +314,7 @@ class WorkflowGenerationPipeline:
                 patch
                 for patch in request.patches
                 if patch.step_id in (None, step.step_id)
+                and not (request.structure.surface_policy and task == TaskType.RELAX and patch.parameter == 'ISIF')
             ]
             composition = self._composer.compose(
                 ComposeRequest(
@@ -312,6 +326,7 @@ class WorkflowGenerationPipeline:
                     derived_inputs=self._derived_inputs(request, task),
                 )
             )
+            self._apply_surface_policy(request, task, composition, preview=True)
             compositions[step.step_id] = composition
             step.parameters = {
                 key: composition.resolved_parameters[key]
@@ -328,7 +343,7 @@ class WorkflowGenerationPipeline:
         self._validate_band_compositions(request, compositions)
         warnings = self._collect_warnings(compositions)
         warnings.extend(self._band_warnings(request))
-        return {
+        result = {
             "steps": [step.model_dump(mode="json") for step in steps],
             "file_inheritance_plan": inheritance.model_dump(mode="json"),
             "recipe_compositions": [
@@ -340,6 +355,10 @@ class WorkflowGenerationPipeline:
             "warnings": warnings,
             "needs_confirmation": bool(confirmations),
         }
+        if request.structure.catalysis_binding:
+            result.update(catalysis_binding=request.structure.catalysis_binding.model_dump(mode='json'),
+                          surface_policy=request.structure.surface_policy.model_dump(mode='json'))
+        return result
 
     def _validate_plan_input(self, request: WorkflowGenerateRequest) -> None:
         self._validate_structure(request)
@@ -392,6 +411,23 @@ class WorkflowGenerationPipeline:
     def _validate_structure(request: WorkflowGenerateRequest) -> None:
         try:
             request.structure = validated_structure_context(request.structure)
+            validate_surface_context(request.structure)
+            if request.structure.surface_policy and TaskType.RELAX in request.requested_tasks:
+                for patch in request.patches:
+                    if patch.parameter == 'ISIF' and patch.step_id in (None, '01_relax'):
+                        if patch.expected_revision != 1:
+                            raise CompositionRevisionConflict('ISIF 补丁版本与当前 composition 不一致',
+                                details={'expected_revision': patch.expected_revision, 'current_revision': 1})
+                        if patch.operation.value == 'remove' or type(patch.value) is not int or patch.value != 2:
+                            raise BeAError('当前表面策略固定整个晶胞（ISIF=2）；该 ISIF 补丁冲突，请移除补丁或人工准备其他晶胞策略',
+                                           code='CAT_SURFACE_CELL_PATCH_CONFLICT',
+                                           details={'patch_id': patch.patch_id, 'ISIF': patch.value})
+                        if not patch.confirmed_by_user:
+                            raise BeAError('ISIF 补丁须显式 confirmed_by_user=true，表面策略仍需在当前计划确认',
+                                           code='CAT_SURFACE_CELL_PATCH_UNCONFIRMED', details={'patch_id': patch.patch_id})
+            if request.structure.surface_policy and TaskType.BAND in request.requested_tasks:
+                raise BeAError('表面 Workflow 不支持通用体相高对称 band 路径；请使用 relax/static/dos 或人工准备二维路径',
+                               code='CAT_SURFACE_BAND_UNSUPPORTED', details={'task': 'band'})
         except InputValidationError as exc:
             raise BeAError(str(exc), code=exc.code) from exc
 
@@ -574,6 +610,11 @@ class WorkflowGenerationPipeline:
         if task == TaskType.BAND:
             return KpointsSpec(mode="line_mode", line_density=BAND_LINE_DIVISIONS[request.precision.value])
         kppa = KPPA_TABLE[task.value][request.precision.value]
+        if request.structure.surface_policy:
+            policy = request.structure.surface_policy
+            return KpointsSpec(mode='surface_explicit' if policy.kpoint_mode == 'explicit_gamma_2d' else 'automatic_density',
+                kppa=kppa, grid=surface_grid(request.structure.lattice.matrix, policy.normal, kppa,
+                                            request.structure.atom_count), centering='Gamma')
         derived_inputs = self._derived_inputs(request, task)
         grid_info = generate_kpoint_grid({
             "kppa": kppa,
@@ -590,6 +631,10 @@ class WorkflowGenerationPipeline:
     def _render_kpoints(
         self, request: WorkflowGenerateRequest, step: WorkflowStep, spec: KpointsSpec
     ) -> str:
+        if spec.mode == 'surface_explicit':
+            return self._kpoints.surface_explicit(request.structure.lattice.matrix,
+                request.structure.surface_policy.normal, spec.grid,
+                comment=f'KPOINTS for {step.step_id}; explicit planar Gamma mesh; unchanged POSCAR cell')
         if spec.mode == "line_mode":
             return self._kpoints.line_mode(
                 request.structure.poscar_text,
@@ -597,6 +642,43 @@ class WorkflowGenerationPipeline:
                 comment=f"Line-mode {spec.line_density} points/segment; Setyawan-Curtarolo path in POSCAR reciprocal basis; generated by VASP-Copilot",
             )
         return self._kpoints.generate(spec, comment=f"KPOINTS for {step.step_id} generated by VASP-Copilot")
+
+    def _apply_surface_policy(self, request, task, composition, *, preview):
+        policy = request.structure.surface_policy
+        if policy is None:
+            return
+        if task == TaskType.BAND:
+            raise BeAError('表面 Workflow 不支持通用体相高对称 band 路径；请使用 relax/static/dos 或人工准备二维路径',
+                           code='CAT_SURFACE_BAND_UNSUPPORTED', details={'task': task.value})
+        is_mear = composition.resolved_parameters.get('ISMEAR')
+        if policy.kpoint_mode == 'explicit_gamma_2d' and is_mear in {-4, -5, -14, -15}:
+            raise BeAError(f'步骤 {composition.step_id}（{task.value}）的 ISMEAR={is_mear} 使用四面体积分，倾斜 c 的显式二维采样未提供四面体表；'
+                           '请在规划前显式确认适用的非四面体 ISMEAR 参数，或人工准备对应 KPOINTS/晶胞后重新导入',
+                           code='CAT_SURFACE_TETRAHEDRON_UNSUPPORTED',
+                           details={'step_id': composition.step_id, 'task': task.value, 'ISMEAR': is_mear})
+        if task == TaskType.RELAX:
+            previous = composition.resolved_parameters.get('ISIF')
+            previous_source = next((p for p in composition.provenance if p['parameter'] == 'ISIF'), None)
+            composition.resolved_parameters['ISIF'] = policy.relax_isif
+            composition.provenance = [p for p in composition.provenance if p['parameter'] != 'ISIF']
+            composition.provenance.append(ParameterProvenance(parameter='ISIF', value=policy.relax_isif,
+                source_type=ProvenanceSourceType.SURFACE_POLICY, source_id=policy.policy_id,
+                overrode={'value': previous, 'provenance': previous_source},
+                requires_confirmation=True, confirmed=not preview and request.confirm).model_dump(mode='json'))
+            composition.patches.extend(patch.model_dump(mode='json') for patch in request.patches
+                if patch.parameter == 'ISIF' and patch.step_id in (None, composition.step_id))
+        spec = self._kpoints_spec(request, task, composition)
+        composition.derived_outputs['surface_kpoints'] = spec.model_dump(mode='json')
+        composition.provenance.append(ParameterProvenance(parameter='KPOINTS', value=spec.model_dump(mode='json'),
+            source_type=ProvenanceSourceType.SURFACE_POLICY, source_id=policy.policy_id,
+            requires_confirmation=True, confirmed=not preview and request.confirm).model_dump(mode='json'))
+        if preview or not request.confirm:
+            composition.confirmations.append(PendingConfirmation(key='CAT_SURFACE_POLICY', recipe_id=policy.policy_id,
+                prompt='确认表面固定晶胞（relax ISIF=2）和面内二维 Gamma 采样；磁性、带电、偶极及收敛参数需另行人工核对。'))
+            composition.composition_status = RecipeCompositionStatus.NEEDS_CONFIRMATION
+        composition.warnings.extend({'code': 'CAT_SURFACE_INPUT_REVIEW', 'message': warning, 'severity': 'medium'}
+                                    for warning in policy.warnings)
+        composition.composition_sha256 = self._composer._composition_hash(composition)
 
     # --- 根目录文件 ---
 
@@ -668,6 +750,8 @@ class WorkflowGenerationPipeline:
                 source_material_id=structure.source_material_id,
                 sample_name=(request.sample_name or
                              (default_sample_name(structure) if structure.source_material_id else None)),
+                catalysis_binding=structure.catalysis_binding,
+                surface_policy=structure.surface_policy,
             ),
             goal=GoalBlock(
                 original_text=request.goal_text,

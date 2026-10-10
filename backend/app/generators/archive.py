@@ -46,6 +46,8 @@ class BundleBuilder:
         revision: int = 1,
         pack: Optional[RecipePackManifest] = None,
         potcar: Optional[dict] = None,
+        catalysis_binding=None,
+        surface_policy=None,
     ) -> BundleResult:
         normalized: Dict[str, bytes] = {}
         for relative_path, content in files.items():
@@ -73,6 +75,8 @@ class BundleBuilder:
             files=file_entries,
             created_at=FIXED_TIMESTAMP,
             potcar=potcar or {},
+            catalysis_binding=catalysis_binding,
+            surface_policy=surface_policy,
         )
         return BundleResult(manifest=manifest, zip_bytes=zip_bytes, files=normalized)
 

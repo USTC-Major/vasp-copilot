@@ -8,6 +8,7 @@
 import React from 'react';
 import { Modal, Descriptions, Tag } from 'antd';
 import type { WorkflowConfirmSnapshot } from '../../types/workflow-contract';
+import CatalysisWorkflowContext from './CatalysisWorkflowContext';
 
 interface WorkflowConfirmSummaryModalProps {
   open: boolean;
@@ -51,6 +52,8 @@ const WorkflowConfirmSummaryModal: React.FC<WorkflowConfirmSummaryModalProps> = 
       cancelButtonProps={{ disabled: isPending }}
     >
       {snapshot && (
+        <>
+        {snapshot.catalysis_binding && snapshot.surface_policy && <CatalysisWorkflowContext binding={snapshot.catalysis_binding} policy={snapshot.surface_policy} />}
         <Descriptions column={1} size="small" bordered>
           <Descriptions.Item label="结构">
             {snapshot.structure.formula}（{snapshot.structure.elements.join('、')}）
@@ -64,6 +67,7 @@ const WorkflowConfirmSummaryModal: React.FC<WorkflowConfirmSummaryModalProps> = 
           <Descriptions.Item label="磁性">{snapshot.magnetic ? '是' : '否'}</Descriptions.Item>
           <Descriptions.Item label="SOC">{snapshot.soc ? '是' : '否'}</Descriptions.Item>
           <Descriptions.Item label="精度">{snapshot.precision}</Descriptions.Item>
+          {snapshot.patches?.map(patch => <Descriptions.Item key={patch.patch_id} label="用户确认的步骤补丁">{patch.step_id} · {patch.parameter} = {String(patch.value)}；{patch.reason}</Descriptions.Item>)}
           <Descriptions.Item label="DFT+U">
             {snapshot.dftu.enabled ? (
               <>
@@ -100,6 +104,7 @@ const WorkflowConfirmSummaryModal: React.FC<WorkflowConfirmSummaryModalProps> = 
           <Descriptions.Item label="Walltime">{snapshot.scheduler.walltime}</Descriptions.Item>
           <Descriptions.Item label="VASP 可执行文件">{snapshot.scheduler.vasp_binary_hint}</Descriptions.Item>
         </Descriptions>
+        </>
       )}
     </Modal>
   );

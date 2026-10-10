@@ -32,6 +32,7 @@ AI 是可选功能。不配置模型，也可以使用基础工作流、确定�
 
 ## 文档与功能范围
 
+- 主线源码新增表面切面、固定层约束、吸附位点与单模型 Workflow 接入；这些催化预处理能力尚未包含在上方 v0.5.0 安装包中。使用与边界见 [催化预处理说明](docs/development/cat-stage/README.md) 和 [接入 Workflow](docs/development/cat-stage/WORKFLOW.md)。
 - [结果后处理、桌面启动与升级](0.5.0快速开始.md)
 - [源码安装指南](Windows源码安装与基础使用.md) · [桌面构建说明](desktop/README.md)
 - [基础计算与结果取回](首版基础计算与结果取回.md)

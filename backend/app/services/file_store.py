@@ -209,6 +209,7 @@ class FileStore:
         normalized_poscar_file_id: Optional[str] = None,
     ) -> StructureRecord:
         sid = self._new_id("str")
+        summary = summary.model_copy(update={"structure_id": sid}, deep=True)
         record = StructureRecord(
             structure_id=sid,
             file_id=file_id,

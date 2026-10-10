@@ -9,7 +9,8 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_serializer
+from backend.app.schemas.surface import CatalysisBinding, SurfacePolicy
 
 
 # IR-04: reuse the single CheckStatus definition from backend.app.schemas.status.
@@ -171,6 +172,16 @@ class StructureBlock(_StrictModel):
     source_sha256: Optional[str] = None
     source_material_id: Optional[str] = None
     sample_name: Optional[str] = None
+    catalysis_binding: Optional[CatalysisBinding] = None
+    surface_policy: Optional[SurfacePolicy] = None
+
+    @model_serializer(mode='wrap')
+    def _omit_absent_cat(self, handler):
+        value = handler(self)
+        if self.catalysis_binding is None:
+            value.pop('catalysis_binding', None)
+            value.pop('surface_policy', None)
+        return value
 
 
 class GoalBlock(_StrictModel):

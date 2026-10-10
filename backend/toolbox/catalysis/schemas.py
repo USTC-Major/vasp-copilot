@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, model_validator
+from backend.app.schemas.surface import CatalysisBinding, SurfacePolicy
 
 
 class StrictModel(BaseModel):
@@ -52,6 +53,17 @@ class SurfaceParams(StrictModel):
 
 class RevisionRequest(StrictModel):
     revision: StrictInt = Field(ge=1)
+
+
+class BindWorkflow(RevisionRequest):
+    surface_id: str | None = Field(default=None, min_length=1, max_length=80)
+    candidate_id: str | None = Field(default=None, min_length=1, max_length=80)
+
+    @model_validator(mode='after')
+    def single_model(self):
+        if (self.surface_id is None) == (self.candidate_id is None):
+            raise ValueError('须选择一个当前清洁表面或一个有效吸附候选')
+        return self
 
 
 class BuildSurfaces(SurfaceParams, RevisionRequest):
@@ -341,3 +353,11 @@ class DraftResponse(BaseModel):
 class DraftListResponse(BaseModel):
     mode: Literal['toolbox'] = 'toolbox'
     drafts: list[DraftSummary]
+
+
+class WorkflowBindingResponse(StrictModel):
+    mode: Literal['toolbox'] = 'toolbox'
+    structure_id: str
+    summary: dict
+    binding: CatalysisBinding
+    surface_policy: SurfacePolicy

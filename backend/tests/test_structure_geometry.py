@@ -138,6 +138,12 @@ def test_atom_limit_only_affects_view_and_bad_data_recovers(isolated_store):
     assert response.json()["error"]["code"] == "STRUCTURE_VIEW_ATOM_LIMIT"
     assert saved.model_dump() == before
     saved.poscar_text = "corrupt"
+    # FileStore owns a deep snapshot; changing the caller cannot corrupt it.
+    assert record.summary is not saved and record.summary.poscar_text == text
+    response = client.get(f"/api/v1/structure/{record.structure_id}/geometry")
+    assert response.status_code == 422 and response.json()["error"]["code"] == "STRUCTURE_VIEW_ATOM_LIMIT"
+    # Corrupt the authoritative saved record to exercise the failure/recovery.
+    record.summary.poscar_text = "corrupt"
     response = client.get(f"/api/v1/structure/{record.structure_id}/geometry")
     assert response.status_code == 422 and response.json()["error"]["code"] == "STRUCTURE_VIEW_INVALID"
     good = isolated_store.store_structure("source", summary(poscar()))

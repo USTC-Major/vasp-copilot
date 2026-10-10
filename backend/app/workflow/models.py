@@ -47,7 +47,7 @@ class WorkflowGenerationResult:
     def to_response_body(self) -> Dict[str, Any]:
         """对齐 6.5 节 response 的库级 JSON（不含 request_id/download_url）。"""
 
-        return {
+        body = {
             "workflow_id": self.workflow_id,
             "workflow_status": self.workflow_status,
             "revision": self.revision,
@@ -61,3 +61,7 @@ class WorkflowGenerationResult:
             "manifest": self.bundle.manifest.model_dump(mode="json"),
             "potcar": self.potcar,
         }
+        if self.plan_file.structure.catalysis_binding:
+            body.update(catalysis_binding=self.plan_file.structure.catalysis_binding.model_dump(mode='json'),
+                        surface_policy=self.plan_file.structure.surface_policy.model_dump(mode='json'))
+        return body

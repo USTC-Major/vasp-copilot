@@ -4055,6 +4055,59 @@
           }
         }
       }
+    },
+    "/api/v1/toolbox/catalysis/drafts/{draft_id}/workflow-binding": {
+      "post": {
+        "tags": [
+          "Toolbox execution",
+          "Catalysis preparation"
+        ],
+        "summary": "Bind Workflow",
+        "operationId": "bind_workflow_api_v1_toolbox_catalysis_drafts__draft_id__workflow_binding_post",
+        "parameters": [
+          {
+            "name": "draft_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Draft Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BindWorkflow"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowBindingResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -6562,6 +6615,11 @@
             "title": "Coordinate Mode",
             "default": "direct"
           },
+          "selective_dynamics": {
+            "type": "boolean",
+            "title": "Selective Dynamics",
+            "default": false
+          },
           "poscar_text": {
             "anyOf": [
               {
@@ -6602,10 +6660,25 @@
             "type": "array",
             "title": "Transition Metals"
           },
-          "selective_dynamics": {
-            "type": "boolean",
-            "title": "Selective Dynamics",
-            "default": false
+          "catalysis_binding": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CatalysisBinding"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "surface_policy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SurfacePolicy"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "additionalProperties": false,
@@ -7244,6 +7317,367 @@
         "type": "object",
         "title": "WorkflowConfig",
         "description": "WorkflowGenerateRequest relaxed request mirror.\n\n``structure`` is optional so clients may rely on ``structure_id`` /\n``diagnosis_id``; the resolver fills it in before building the strict\nrequest."
+      },
+      "BindWorkflow": {
+        "properties": {
+          "revision": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Revision"
+          },
+          "surface_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 80,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Surface Id"
+          },
+          "candidate_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 80,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidate Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "revision"
+        ],
+        "title": "BindWorkflow"
+      },
+      "WorkflowBindingResponse": {
+        "properties": {
+          "mode": {
+            "type": "string",
+            "const": "toolbox",
+            "title": "Mode",
+            "default": "toolbox"
+          },
+          "structure_id": {
+            "type": "string",
+            "title": "Structure Id"
+          },
+          "summary": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Summary"
+          },
+          "binding": {
+            "$ref": "#/components/schemas/CatalysisBinding"
+          },
+          "surface_policy": {
+            "$ref": "#/components/schemas/SurfacePolicy"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "structure_id",
+          "summary",
+          "binding",
+          "surface_policy"
+        ],
+        "title": "WorkflowBindingResponse"
+      },
+      "CatalysisBinding": {
+        "properties": {
+          "schema_version": {
+            "type": "integer",
+            "const": 1,
+            "title": "Schema Version",
+            "default": 1
+          },
+          "binding_id": {
+            "type": "string",
+            "title": "Binding Id"
+          },
+          "draft_id": {
+            "type": "string",
+            "title": "Draft Id"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Revision"
+          },
+          "model_kind": {
+            "type": "string",
+            "enum": [
+              "clean_surface",
+              "adsorption_candidate"
+            ],
+            "title": "Model Kind"
+          },
+          "surface_id": {
+            "type": "string",
+            "title": "Surface Id"
+          },
+          "candidate_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidate Id"
+          },
+          "snapshot_id": {
+            "type": "string",
+            "title": "Snapshot Id"
+          },
+          "snapshot_sha256": {
+            "type": "string",
+            "title": "Snapshot Sha256"
+          },
+          "parent_clean_snapshot_id": {
+            "type": "string",
+            "title": "Parent Clean Snapshot Id"
+          },
+          "parent_clean_snapshot_sha256": {
+            "type": "string",
+            "title": "Parent Clean Snapshot Sha256"
+          },
+          "poscar_sha256": {
+            "type": "string",
+            "title": "Poscar Sha256"
+          },
+          "poscar_row_mapping": {
+            "items": {
+              "$ref": "#/components/schemas/PoscarRowMapping"
+            },
+            "type": "array",
+            "title": "Poscar Row Mapping"
+          },
+          "selective_flags_basis": {
+            "type": "string",
+            "const": "direct_lattice_vectors",
+            "title": "Selective Flags Basis",
+            "default": "direct_lattice_vectors"
+          },
+          "source": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Source"
+          },
+          "parameters": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parameters"
+          },
+          "surface": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Surface"
+          },
+          "transform": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Transform"
+          },
+          "adsorbate": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Adsorbate"
+          },
+          "candidate": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidate"
+          },
+          "snapshot": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Snapshot"
+          },
+          "parent_clean_snapshot": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Parent Clean Snapshot"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Warnings"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "binding_id",
+          "draft_id",
+          "revision",
+          "model_kind",
+          "surface_id",
+          "candidate_id",
+          "snapshot_id",
+          "snapshot_sha256",
+          "parent_clean_snapshot_id",
+          "parent_clean_snapshot_sha256",
+          "poscar_sha256",
+          "poscar_row_mapping",
+          "source",
+          "parameters",
+          "surface",
+          "transform",
+          "adsorbate",
+          "candidate",
+          "snapshot",
+          "parent_clean_snapshot",
+          "warnings"
+        ],
+        "title": "CatalysisBinding"
+      },
+      "PoscarRowMapping": {
+        "properties": {
+          "poscar_row": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Poscar Row"
+          },
+          "snapshot_index": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Snapshot Index"
+          },
+          "atom_id": {
+            "type": "string",
+            "title": "Atom Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "poscar_row",
+          "snapshot_index",
+          "atom_id"
+        ],
+        "title": "PoscarRowMapping"
+      },
+      "SurfacePolicy": {
+        "properties": {
+          "policy_id": {
+            "type": "string",
+            "const": "cat_surface_fixed_cell_2d_v1",
+            "title": "Policy Id",
+            "default": "cat_surface_fixed_cell_2d_v1"
+          },
+          "cell_relaxation": {
+            "type": "string",
+            "const": "fixed",
+            "title": "Cell Relaxation",
+            "default": "fixed"
+          },
+          "relax_isif": {
+            "type": "integer",
+            "const": 2,
+            "title": "Relax Isif",
+            "default": 2
+          },
+          "kpoint_mode": {
+            "type": "string",
+            "enum": [
+              "gamma_2d",
+              "explicit_gamma_2d"
+            ],
+            "title": "Kpoint Mode",
+            "default": "gamma_2d"
+          },
+          "vacuum_axis": {
+            "type": "integer",
+            "const": 2,
+            "title": "Vacuum Axis",
+            "default": 2
+          },
+          "normal_sampling_count": {
+            "type": "integer",
+            "const": 1,
+            "title": "Normal Sampling Count",
+            "default": 1
+          },
+          "c_parallel_to_normal": {
+            "type": "boolean",
+            "title": "C Parallel To Normal"
+          },
+          "normal": {
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "type": "array",
+            "maxItems": 3,
+            "minItems": 3,
+            "title": "Normal"
+          },
+          "sources": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Sources"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Warnings"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "c_parallel_to_normal",
+          "normal",
+          "sources",
+          "warnings"
+        ],
+        "title": "SurfacePolicy"
       }
     }
   }

@@ -55,6 +55,7 @@ it('preserves invalid and cleared numeric text across a page reopen, and blocks 
   fireEvent.change(screen.getByLabelText('最小真空 (Å)'), { target: { value: '' } });
   expect(screen.getByRole('button', { name: '重新生成表面' })).toBeDisabled();
   expect(screen.getByRole('button', { name: '导出 POSCAR + metadata ZIP' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: '将当前清洁表面传入 Workflow' })).toBeDisabled();
   expect(screen.queryByTestId('cat-geometry')).not.toBeInTheDocument();
   cleanup(); mount();
   expect(await screen.findByLabelText('最小真空 (Å)')).toHaveValue('');
@@ -71,6 +72,7 @@ it('saves valid pending surface parameters with the parent revision and removes 
   expect(screen.queryByLabelText('终止面')).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: '生成表面' })).toBeEnabled();
   expect(screen.getByRole('button', { name: '导出 POSCAR + metadata ZIP' })).toBeDisabled();
+  expect(screen.queryByRole('button', { name: '将当前清洁表面传入 Workflow' })).not.toBeInTheDocument();
   cleanup(); mount(); expect(await screen.findByLabelText('最小真空 (Å)')).toHaveValue('20');
 });
 

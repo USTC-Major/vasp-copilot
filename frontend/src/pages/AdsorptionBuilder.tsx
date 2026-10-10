@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { catalysisApi } from '../api/catalysis';
 import { ApiError } from '../api/client';
 import { CrystalGeometryViewer } from '../components/structure/CrystalViewer';
+import CatalysisWorkflowHandoff from '../components/workflow/CatalysisWorkflowHandoff';
 import type { AdsorptionSite, CatalysisDraft, SurfaceOption } from '../types/catalysis';
 import type { StructureGeometry, Vec3 } from '../types/structure-geometry';
 import { activeSurface, same } from './surfaceDraftState';
@@ -162,6 +163,9 @@ export default function AdsorptionBuilder({ doc, upstreamDirty, parentBusy, pare
       <Space wrap><Button disabled={blocked || !candidatesCurrent || !selectionDirty} onClick={() => void action('保存候选选择', 'selection', () => catalysisApi.selection(doc, editor.candidateIds))}>保存候选导出选择</Button><Button type="primary" disabled={!canExport} onClick={() => void exportZip()}>导出所选 {editor.candidateIds.length} 个候选 ZIP</Button></Space>
       {selectionDirty && <p className="cat-note">候选导出选择尚未保存。保存后可导出所选结构。</p>}
       <p className="cat-note">ZIP 包含各候选 POSCAR、元数据和来源清单；表面原有约束保留，新增吸附物自由。几何构建与筛查不代表吸附稳定、松弛或能量验证。</p>
+      {chosen && <><CatalysisWorkflowHandoff doc={doc} target={{ candidate_id: chosen.candidate_id }} snapshot={chosen.snapshot}
+        identity={`${doc.draft_id}:${doc.revision}:${chosen.candidate_id}:${version.current}`} disabled={!visiblePreview || geometry.isFetching || !!geometry.error || selectionDirty}
+        label="将当前预览候选传入 Workflow" onConflict={() => { setConflict(true); setError('草稿 revision 或候选已变化，请读取最新草稿后重新预览并确认。'); }} /><p className="cat-note">仅传入当前预览的一个候选；上方多选用于 ZIP 导出。</p></>}
     </Card>
   </div>;
 }

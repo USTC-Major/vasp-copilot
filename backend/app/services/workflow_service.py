@@ -115,6 +115,8 @@ class WorkflowService:
                 "scheduler": scheduler_block,
                 "potcar": potcar,
                 "revision": plan_revision,
+                **({key: copy.deepcopy(preview[key]) for key in ('catalysis_binding', 'surface_policy')}
+                   if request.structure.catalysis_binding else {}),
             },
             confirmations=preview.get("confirmations", []),
             conflicts=preview.get("conflicts", []),
@@ -208,6 +210,11 @@ class WorkflowService:
         attempt = object()
         with self._guard:
             record = self._plans.get(request.workflow_id)
+            if record and record.request and (
+                    request.structure.catalysis_binding != record.request.structure.catalysis_binding or
+                    request.structure.surface_policy != record.request.structure.surface_policy):
+                raise ConflictError('CAT_WORKFLOW_BINDING_MISMATCH',
+                    '传入的 CAT 模型与当前已确认计划不同；请重新规划并确认结构、参数和 POTCAR', True)
             current_revision = record.revision if record else 1
             self._attempts[request.workflow_id] = attempt
             if request.potcar.mode == 'include':
@@ -324,6 +331,8 @@ class WorkflowService:
                 "needs_confirmation": plan.needs_confirmation,
                 "revision": plan.revision,
                 "potcar": copy.deepcopy(plan.potcar),
+                **({key: copy.deepcopy(plan.plan[key]) for key in ('catalysis_binding', 'surface_policy')}
+                   if plan.request and plan.request.structure.catalysis_binding else {}),
             }
         raise NotFoundError("WORKFLOW_NOT_FOUND",
                             "unknown or expired workflow id")

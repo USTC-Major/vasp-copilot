@@ -253,6 +253,63 @@ class CatalysisService:
             raise CatalysisError('CAT_SURFACE_NOT_FOUND', '请先生成并选择表面，旧终止面不可继续使用', 409)
         return selected
 
+    def bind_workflow(self, draft_id, body, *, file_store):
+        """Copy exactly one current model into the existing persistent FileStore.
+
+        The CAT draft is unchanged. Future edits do not mutate this independent
+        structure; another explicit handoff creates another structure identity.
+        """
+        from backend.input_validation import InputValidationError, validate_poscar
+        from backend.app.schemas.structure import build_structure_summary, to_structure_context
+        from backend.app.schemas.surface import CatalysisBinding
+        from backend.app.services.surface_inputs import surface_policy, validate_surface_context
+        with self.lock:
+            draft = self._read(draft_id)
+            self._check_revision(draft, body.revision)
+            parent = self.selected(draft)
+            candidate = None
+            if body.candidate_id:
+                candidate = self._candidate(draft, body.candidate_id)
+                if not candidate['validation']['screening_passed']:
+                    raise CatalysisError('CAT_CANDIDATE_INVALID', '候选未通过已保存的距离筛查，请调整并重新生成', 409)
+                snap = candidate['snapshot']
+            else:
+                if body.surface_id != parent['surface_id']:
+                    raise CatalysisError('CAT_SURFACE_STALE', '须传入当前已选择的清洁表面，请先应用终止面选择', 409)
+                snap = parent['snapshot']
+            text, rows = science.poscar_export(snap)
+            binding = CatalysisBinding(
+                binding_id='catbind_' + uuid.uuid4().hex, draft_id=draft_id, revision=body.revision,
+                model_kind='adsorption_candidate' if candidate else 'clean_surface',
+                surface_id=parent['surface_id'], candidate_id=body.candidate_id,
+                snapshot_id=snap['snapshot_id'], snapshot_sha256=snap['sha256'],
+                parent_clean_snapshot_id=parent['snapshot']['snapshot_id'],
+                parent_clean_snapshot_sha256=parent['snapshot']['sha256'],
+                poscar_sha256=science.sha(text.encode()), poscar_row_mapping=rows,
+                source=copy.deepcopy(draft['source']), parameters=copy.deepcopy(draft['parameters']),
+                surface=copy.deepcopy(parent['surface']), transform=copy.deepcopy(parent['transform']),
+                adsorbate=copy.deepcopy(draft['adsorption']['adsorbate']) if candidate else None,
+                candidate=copy.deepcopy(candidate), snapshot=copy.deepcopy(snap),
+                parent_clean_snapshot=copy.deepcopy(parent['snapshot']),
+                warnings=list(draft['warnings']) + (candidate['validation']['warnings'] if candidate else []))
+            # Occupied span/gap of an adsorbed model cannot inherit clean values.
+            if candidate:
+                binding.surface['model_geometry'] = science.surface_geometry(snap, parent['surface']['layer_tolerance'])
+            try:
+                policy = surface_policy(snap['lattice'], parent['surface']['normal'])
+                info = validate_poscar(text)
+                summary = build_structure_summary(poscar_text=text, elements=list(info.elements),
+                    counts=list(info.counts), source_file='CAT snapshot POSCAR', validated=info)
+                summary.catalysis_binding = binding
+                summary.surface_policy = policy
+                validate_surface_context(to_structure_context(summary))
+            except InputValidationError as exc:
+                raise CatalysisError(exc.code, str(exc)) from exc
+            # No writes occur until all mapping/science checks have succeeded.
+            stored = file_store.store_file('POSCAR', 'poscar', text.encode())
+            record = file_store.store_structure(stored.file_id, summary)
+            return record.summary
+
     def constraints(self, draft_id, body):
         with self.lock:
             draft = self._read(draft_id)

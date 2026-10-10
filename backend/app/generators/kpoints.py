@@ -200,6 +200,31 @@ class KpointsGenerator:
         mapped = SimpleNamespace(kpath={"path": segments, "kpoints": converted})
         return self._render_line_mode(mapped, divisions, comment)
 
+    def surface_explicit(self, matrix, normal, grid, comment='Surface Gamma 2D mesh') -> str:
+        """Full planar mesh in the unchanged POSCAR reciprocal basis (skew c)."""
+        import numpy as np
+        from backend.app.services.surface_inputs import surface_basis
+        if (not isinstance(grid, (list, tuple)) or len(grid) != 3 or
+                any(type(n) is not int or n < 1 for n in grid) or grid[2] != 1 or
+                grid[0] * grid[1] > 65536):
+            raise KpointsGenerationFailed('显式二维采样须为正整数 N1/N2/1 且不超过 65536 点',
+                                          details={'grid': grid})
+        cell, _, dual, _ = surface_basis(matrix, normal)
+        lines = [comment, str(grid[0] * grid[1]), 'Reciprocal']
+        for i in range(grid[0]):
+            u = i / grid[0]
+            if u >= .5:
+                u -= 1
+            for j in range(grid[1]):
+                v = j / grid[1]
+                if v >= .5:
+                    v -= 1
+                planar_k = u * dual[0] + v * dual[1]
+                q3 = float(np.dot(planar_k, cell[2]))
+                coordinates = [u, v, q3]
+                lines.append(' '.join('0' if abs(q) < 1e-15 else f'{q:.16g}' for q in coordinates) + ' 1')
+        return '\n'.join(lines) + '\n'
+
     def _extract_kpath(self, kpath: Any) -> Tuple[List[List[str]], Dict[str, Any]]:
         """从 pymatgen HighSymmKpath 的三种历史形态提取 (segments, 坐标映射)。
 
