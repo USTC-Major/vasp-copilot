@@ -28,3 +28,44 @@ it('propagates raw-upload revision conflicts with their API code and status', as
   const error = await energyApi.upload(energyFixture(), new File(['fixture'], 'OUTCAR'), '').catch(cause => cause);
   expect(error).toBeInstanceOf(ApiError); expect(error.code).toBe('ENERGY_REVISION_CONFLICT'); expect(error.status).toBe(409);
 });
+it('sends explicit analysis types and revisions for create, lock, unlock and per-group legacy copy', async () => {
+  const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response('{}', { status: 200 }));
+  await energyApi.create('形成能分析', 'formation');
+  expect(fetch).toHaveBeenLastCalledWith('/api/v1/toolbox/postprocessing/energy/collections', expect.objectContaining({ body: JSON.stringify({ title: '形成能分析', analysis_kind: 'formation' }) }));
+  await energyApi.lock(energyFixture());
+  expect(fetch).toHaveBeenLastCalledWith('/api/v1/toolbox/postprocessing/energy/collections/ec_fixture/lock', expect.objectContaining({ body: JSON.stringify({ expected_revision: 4 }) }));
+  await energyApi.unlock(energyFixture());
+  expect(fetch).toHaveBeenLastCalledWith('/api/v1/toolbox/postprocessing/energy/collections/ec_fixture/unlock', expect.objectContaining({ body: JSON.stringify({ expected_revision: 4 }) }));
+  await energyApi.copy(energyFixture(), 'adsorption', 'g_ads');
+  expect(fetch).toHaveBeenLastCalledWith('/api/v1/toolbox/postprocessing/energy/collections/ec_fixture/copy', expect.objectContaining({ body: JSON.stringify({ expected_revision: 4, analysis_kind: 'adsorption', group_id: 'g_ads' }) }));
+});
+it('revises batch assignment and keeps removal preview separate from atomic removal', async () => {
+  const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response('{}', { status: 200 }));
+  await energyApi.autofill(energyFixture());
+  expect(fetch).toHaveBeenLastCalledWith('/api/v1/toolbox/postprocessing/energy/collections/ec_fixture/autofill', expect.objectContaining({ body: JSON.stringify({ expected_revision: 4 }) }));
+  await energyApi.previewRemoval(energyFixture(), { sample_ids: ['es_clean'] });
+  expect(fetch).toHaveBeenLastCalledWith('/api/v1/toolbox/postprocessing/energy/collections/ec_fixture/samples/removal-preview', expect.objectContaining({ body: JSON.stringify({ expected_revision: 4, sample_ids: ['es_clean'] }) }));
+  await energyApi.removeSamples({ ...energyFixture(), revision: 5 }, { clear_all: true });
+  expect(fetch).toHaveBeenLastCalledWith('/api/v1/toolbox/postprocessing/energy/collections/ec_fixture/samples/remove', expect.objectContaining({ body: JSON.stringify({ expected_revision: 5, clear_all: true }) }));
+});
+it('keeps file-declared CSV basis optional and sends identical raw bytes and basis through preview and import', async () => {
+  const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response('{}', { status: 200 }));
+  const file = new File(['name,composition,energy_basis,energy_ev\n合成样本,Pt:4,sigma_to_zero_ev,-100'], '中文样本.csv');
+  await energyApi.previewCsv(energyFixture(), file);
+  expect(fetch).toHaveBeenLastCalledWith('/api/v1/toolbox/postprocessing/energy/collections/ec_fixture/csv/preview?expected_revision=4', expect.objectContaining({ body: file, headers: { 'Content-Type': 'application/octet-stream' } }));
+  await energyApi.previewCsv(energyFixture(), file, 'without_entropy_ev');
+  expect(fetch).toHaveBeenLastCalledWith('/api/v1/toolbox/postprocessing/energy/collections/ec_fixture/csv/preview?expected_revision=4&energy_basis=without_entropy_ev', expect.objectContaining({ body: file }));
+  await energyApi.importCsv(energyFixture(), file, 'without_entropy_ev');
+  expect(fetch).toHaveBeenLastCalledWith('/api/v1/toolbox/postprocessing/energy/collections/ec_fixture/csv?expected_revision=4&energy_basis=without_entropy_ev', expect.objectContaining({ body: file }));
+});
+it('downloads a blank template and saved sample values independently of result export', async () => {
+  const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response('name,composition,energy_basis,energy_ev,unit,relative_path,reference_note\r\n', { status: 200, headers: { 'Content-Type': 'text/csv' } }));
+  expect(await energyApi.template()).toBeInstanceOf(Blob);
+  expect(fetch).toHaveBeenLastCalledWith('/api/v1/toolbox/postprocessing/energy/csv-template', expect.objectContaining({ method: 'GET' }));
+  await energyApi.template('free_energy_toten_ev');
+  expect(fetch).toHaveBeenLastCalledWith('/api/v1/toolbox/postprocessing/energy/csv-template?energy_basis=free_energy_toten_ev', expect.objectContaining({ method: 'GET' }));
+  expect(await energyApi.downloadSamples(energyFixture(), 'sigma_to_zero_ev', 'effective')).toBeInstanceOf(Blob);
+  expect(fetch).toHaveBeenLastCalledWith('/api/v1/toolbox/postprocessing/energy/collections/ec_fixture/samples.csv?energy_basis=sigma_to_zero_ev&value_source=effective', expect.objectContaining({ method: 'GET' }));
+  await energyApi.downloadSamples(energyFixture(), 'without_entropy_ev', 'original');
+  expect(fetch).toHaveBeenLastCalledWith('/api/v1/toolbox/postprocessing/energy/collections/ec_fixture/samples.csv?energy_basis=without_entropy_ev&value_source=original', expect.objectContaining({ method: 'GET' }));
+});

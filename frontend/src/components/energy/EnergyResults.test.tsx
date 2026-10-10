@@ -19,9 +19,9 @@ it('keeps warning inheritance visible as one collapsed, deduplicated summary', (
   expect(screen.getByText('-2 eV', { selector: 'strong' })).toBeVisible();
 });
 it('withholds stale results and export while an input draft has changed', () => {
-  render(<ConfigProvider><EnergyResults collection={energyFixture(true)} valid={false} /></ConfigProvider>);
+  render(<ConfigProvider><EnergyResults collection={energyFixture(true)} valid={false} expired /></ConfigProvider>);
   expect(screen.queryByText('-2 eV', { selector: 'strong' })).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: '导出能量 CSV' })).toBeDisabled();
   expect(screen.getByRole('button', { name: '导出能量 JSON' })).toBeDisabled();
-  expect(screen.getByText('输入已修改，旧结果已失效。保存并重新确认计算后可查看及导出。')).toBeInTheDocument();
+  expect(screen.getByText('旧结果已过期。重新确认锁定并计算后可查看及导出当前结果。')).toBeInTheDocument();
 });

@@ -128,7 +128,7 @@ def test_group_change_invalidates_confirmations_results_and_revision(energy_api)
     group['energy_basis'] = 'without_entropy_ev'
     doc = configure(client, calculated, [group], [])
     assert doc['result'] is None
-    assert all(not s['confirmed'] and not s['accepted_warnings'] for s in doc['samples'])
+    assert all(not s['confirmed'] and s['accepted_warnings'] for s in doc['samples'])
     assert calculate(client, doc).status_code == 409
     assert calculate(client, calculated).json()['error']['code'] == 'ENERGY_REVISION_CONFLICT'
     # Copying an old result cannot bypass input-fingerprint validity.

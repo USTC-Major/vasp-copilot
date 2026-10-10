@@ -55,10 +55,62 @@ def groups_for(sample_id, groups):
             | set(g.get('element_references', {}).values()))]
 
 
-def confirmation(sample, groups):
+def legacy_confirmation(sample, groups):
     return fingerprint({'source': sample['source'], 'parsed': sample['parsed'], 'override': sample.get('override'),
                         'role': sample['role'], 'included': sample['included'],
                         'groups': groups_for(sample['id'], groups)})
+
+
+def scientific_sample(sample):
+    override = sample.get('override') or {}
+    return {'source': sample['source'], 'parsed': sample['parsed'],
+            'override': {key: override.get(key) for key in ('composition', 'energy_fields', 'energy_basis', 'unit')},
+            'energy_basis': sample.get('energy_basis'), 'role': sample['role'], 'included': sample['included']}
+
+
+def group_definition(group):
+    return {key: group.get(key) for key in ('kind', 'energy_basis', 'clean_sample_id', 'adsorbate_sample_id',
+                                           'reference_units', 'element_references', 'reference_note')}
+
+
+def reference_ids(group):
+    if group['kind'] == 'adsorption':
+        return {group.get('clean_sample_id'), group.get('adsorbate_sample_id')} - {None}
+    return set((group.get('element_references') or {}).values())
+
+
+def group_confirmation(group, samples):
+    by_id = {sample['id']: sample for sample in samples}
+    return fingerprint({'definition': group_definition(group),
+                        'references': {sid: scientific_sample(by_id[sid]) if sid in by_id else None
+                                       for sid in reference_ids(group)}})
+
+
+def confirmation(sample, groups, samples=None):
+    """Review the row and its actual reference dependencies, never sibling targets."""
+    by_id = {row['id']: row for row in (samples or [sample])}
+    uses = []
+    for group in groups_for(sample['id'], groups):
+        definition = group_definition(group)
+        target = next((t for t in group['targets'] if t['sample_id'] == sample['id']), None)
+        if target is not None:
+            refs = reference_ids(group)
+            # Formation targets depend only on references for their own elements.
+            if group['kind'] == 'formation':
+                elements = set(effective(sample)['composition'] or {})
+                definition['element_references'] = {e: sid for e, sid in
+                    (group.get('element_references') or {}).items() if e in elements}
+                refs = set(definition['element_references'].values())
+            uses.append({'definition': definition, 'target': target,
+                         'references': {sid: scientific_sample(by_id[sid]) if sid in by_id else None for sid in refs}})
+        else:
+            # A reference row does not lose review when another target is added.
+            uses.append({'kind': group['kind'], 'energy_basis': group['energy_basis'],
+                         'reference_units': group.get('reference_units') if group['kind'] == 'adsorption' else None,
+                         'elements': sorted(e for e, sid in (group.get('element_references') or {}).items()
+                                            if sid == sample['id'])})
+    unique = {fingerprint(use): use for use in uses}
+    return fingerprint({'sample': scientific_sample(sample), 'uses': [unique[key] for key in sorted(unique)]})
 
 
 def status_warnings(sample):
@@ -73,10 +125,14 @@ def status_warnings(sample):
     return list(dict.fromkeys(warnings))
 
 
-def validate_source(sample, basis, groups, expected_role):
+def warning_acceptance(sample):
+    return fingerprint({'source': sample['source'], 'parsed': sample['parsed'], 'warnings': status_warnings(sample)})
+
+
+def validate_source(sample, basis, groups, expected_role, samples=None):
     if not sample['included'] or not sample['confirmed'] or sample['role'] != expected_role:
         fail(sample['name'] + ' 尚未纳入并确认正确角色', 'ENERGY_CONFIRMATION_REQUIRED', 409)
-    if sample.get('confirmation_fingerprint') != confirmation(sample, groups):
+    if sample.get('confirmation_fingerprint') != confirmation(sample, groups, samples):
         fail(sample['name'] + ' 的来源或计算定义已改变，请重新确认', 'ENERGY_CONFIRMATION_STALE', 409)
     parsed = sample['parsed']
     eff = effective(sample)
@@ -100,6 +156,8 @@ def validate_source(sample, basis, groups, expected_role):
     warnings = status_warnings(sample)
     if warnings and not sample['accepted_warnings']:
         fail(sample['name'] + ' 的未完成或未确认状态需要明确纳入', 'ENERGY_WARNING_ACCEPTANCE_REQUIRED', 409)
+    if warnings and sample.get('warning_acceptance_fingerprint') != warning_acceptance(sample):
+        fail(sample['name'] + ' 的来源或风险已改变，请重新接受当前风险', 'ENERGY_WARNING_ACCEPTANCE_STALE', 409)
     return eff, [sample['name'] + '：' + w for w in warnings]
 
 
@@ -167,7 +225,7 @@ def calculate(doc):
             if ident not in by_id:
                 fail('必需参考或目标样本不存在', 'ENERGY_REFERENCE_REQUIRED')
             sample = by_id[ident]
-            eff, risk = validate_source(sample, basis, doc['groups'], role)
+            eff, risk = validate_source(sample, basis, doc['groups'], role, doc['samples'])
             used[ident] = sample
             warnings.extend(risk)
             return sample, eff['composition'], eff['energy_fields'][basis], eff
@@ -238,4 +296,7 @@ def term(sample, energy, coefficient):
 
 
 def input_fingerprint(doc):
-    return fingerprint({'samples': doc['samples'], 'groups': doc['groups']})
+    value = {'samples': doc['samples'], 'groups': doc['groups']}
+    if doc.get('analysis_kind') is not None and not doc.get('legacy_mode', True):
+        value['analysis_kind'] = doc['analysis_kind']
+    return fingerprint(value)

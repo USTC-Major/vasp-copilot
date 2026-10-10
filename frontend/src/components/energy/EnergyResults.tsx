@@ -3,7 +3,7 @@ import { Alert, Button, Space, Tag, Typography } from 'antd';
 import { energyApi, type EnergyCollection } from '../../api/energy';
 import { basisLabel, energyError, energyNumber, saveEnergyBlob } from './energyDraft';
 
-export default function EnergyResults({ collection, valid }: { collection: EnergyCollection; valid: boolean }) {
+export default function EnergyResults({ collection, valid, expired }: { collection: EnergyCollection; valid: boolean; expired?: boolean }) {
   const [error, setError] = useState('');
   const [downloading, setDownloading] = useState(false);
   const warnings = collection.result ? [...new Set([...collection.result.warnings, ...collection.result.groups.flatMap(group => [...group.warnings, ...group.rows.flatMap(row => row.warnings)])])] : [];
@@ -27,7 +27,7 @@ export default function EnergyResults({ collection, valid }: { collection: Energ
           <details className="energy-details"><summary>公式、原始取值与逐项明细</summary><p>{row.formula}</p><ul className="energy-result-terms">{row.terms.map((term, index) => <li key={`${term.sample_id}/${index}`}>{collection.samples.find(sample => sample.id === term.sample_id)?.name ?? term.sample_id}{term.element ? `（${term.element}）` : ''}：{energyNumber(term.coefficient)} × {energyNumber(term.energy_ev)} eV = {energyNumber(term.contribution_ev)} eV</li>)}</ul></details>
         </article>)}
       </section>)}</div>
-    </> : <p className="energy-note">{collection.result ? '输入已修改，旧结果已失效。保存并重新确认计算后可查看及导出。' : '尚未计算。完成确认表与参考绑定后，保存并计算以生成可追溯结果。'}</p>}
+    </> : <p className="energy-note">{expired ? '旧结果已过期。重新确认锁定并计算后可查看及导出当前结果。' : collection.result ? '当前输入尚未保存、存在修订冲突或分析尚未锁定，结果导出已暂停。' : '尚未计算。完成样本、参考与风险核对，确认并锁定后计算以生成可追溯结果。'}</p>}
     {error && <Alert type="error" title={error} />}
   </>;
 }

@@ -3315,6 +3315,53 @@
         }
       }
     },
+    "/api/v1/toolbox/postprocessing/energy/csv-template": {
+      "get": {
+        "tags": [
+          "Toolbox execution",
+          "Energy post-processing"
+        ],
+        "summary": "Csv Template",
+        "operationId": "csv_template_api_v1_toolbox_postprocessing_energy_csv_template_get",
+        "parameters": [
+          {
+            "name": "energy_basis",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "sigma_to_zero_ev",
+                "without_entropy_ev",
+                "free_energy_toten_ev"
+              ],
+              "type": "string",
+              "default": "sigma_to_zero_ev",
+              "title": "Energy Basis"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/toolbox/postprocessing/energy/collections": {
       "get": {
         "tags": [
@@ -3608,10 +3655,172 @@
               "minimum": 0,
               "title": "Expected Revision"
             }
+          },
+          {
+            "name": "energy_basis",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "sigma_to_zero_ev",
+                    "without_entropy_ev",
+                    "free_energy_toten_ev"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Energy Basis"
+            }
           }
         ],
         "responses": {
           "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/postprocessing/energy/collections/{ident}/csv/preview": {
+      "post": {
+        "tags": [
+          "Toolbox execution",
+          "Energy post-processing"
+        ],
+        "summary": "Csv Preview",
+        "operationId": "csv_preview_api_v1_toolbox_postprocessing_energy_collections__ident__csv_preview_post",
+        "parameters": [
+          {
+            "name": "ident",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ident"
+            }
+          },
+          {
+            "name": "expected_revision",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "title": "Expected Revision"
+            }
+          },
+          {
+            "name": "energy_basis",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "sigma_to_zero_ev",
+                    "without_entropy_ev",
+                    "free_energy_toten_ev"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Energy Basis"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/postprocessing/energy/collections/{ident}/samples.csv": {
+      "get": {
+        "tags": [
+          "Toolbox execution",
+          "Energy post-processing"
+        ],
+        "summary": "Samples Csv",
+        "operationId": "samples_csv_api_v1_toolbox_postprocessing_energy_collections__ident__samples_csv_get",
+        "parameters": [
+          {
+            "name": "ident",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ident"
+            }
+          },
+          {
+            "name": "energy_basis",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "enum": [
+                "sigma_to_zero_ev",
+                "without_entropy_ev",
+                "free_energy_toten_ev"
+              ],
+              "type": "string",
+              "title": "Energy Basis"
+            }
+          },
+          {
+            "name": "value_source",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "original",
+                "effective"
+              ],
+              "type": "string",
+              "default": "effective",
+              "title": "Value Source"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
@@ -3708,6 +3917,312 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/Revision"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/postprocessing/energy/collections/{ident}/lock": {
+      "post": {
+        "tags": [
+          "Toolbox execution",
+          "Energy post-processing"
+        ],
+        "summary": "Lock",
+        "operationId": "lock_api_v1_toolbox_postprocessing_energy_collections__ident__lock_post",
+        "parameters": [
+          {
+            "name": "ident",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ident"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Revision"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/postprocessing/energy/collections/{ident}/unlock": {
+      "post": {
+        "tags": [
+          "Toolbox execution",
+          "Energy post-processing"
+        ],
+        "summary": "Unlock",
+        "operationId": "unlock_api_v1_toolbox_postprocessing_energy_collections__ident__unlock_post",
+        "parameters": [
+          {
+            "name": "ident",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ident"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Revision"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/postprocessing/energy/collections/{ident}/copy": {
+      "post": {
+        "tags": [
+          "Toolbox execution",
+          "Energy post-processing"
+        ],
+        "summary": "Copy Analysis",
+        "operationId": "copy_analysis_api_v1_toolbox_postprocessing_energy_collections__ident__copy_post",
+        "parameters": [
+          {
+            "name": "ident",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ident"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CopyAnalysis"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/postprocessing/energy/collections/{ident}/autofill": {
+      "post": {
+        "tags": [
+          "Toolbox execution",
+          "Energy post-processing"
+        ],
+        "summary": "Autofill",
+        "operationId": "autofill_api_v1_toolbox_postprocessing_energy_collections__ident__autofill_post",
+        "parameters": [
+          {
+            "name": "ident",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ident"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Revision"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/postprocessing/energy/collections/{ident}/samples/removal-preview": {
+      "post": {
+        "tags": [
+          "Toolbox execution",
+          "Energy post-processing"
+        ],
+        "summary": "Removal Preview",
+        "operationId": "removal_preview_api_v1_toolbox_postprocessing_energy_collections__ident__samples_removal_preview_post",
+        "parameters": [
+          {
+            "name": "ident",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ident"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RemoveSamples"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/postprocessing/energy/collections/{ident}/samples/remove": {
+      "post": {
+        "tags": [
+          "Toolbox execution",
+          "Energy post-processing"
+        ],
+        "summary": "Remove Samples",
+        "operationId": "remove_samples_api_v1_toolbox_postprocessing_energy_collections__ident__samples_remove_post",
+        "parameters": [
+          {
+            "name": "ident",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ident"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RemoveSamples"
               }
             }
           }
@@ -7533,6 +8048,54 @@
         ],
         "title": "Configuration"
       },
+      "CopyAnalysis": {
+        "properties": {
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Expected Revision"
+          },
+          "analysis_kind": {
+            "type": "string",
+            "enum": [
+              "adsorption",
+              "formation"
+            ],
+            "title": "Analysis Kind"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 120
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "group_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 80
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "expected_revision",
+          "analysis_kind"
+        ],
+        "title": "CopyAnalysis"
+      },
       "CreateDraft": {
         "properties": {
           "name": {
@@ -8116,6 +8679,17 @@
             "maxLength": 2000,
             "title": "Reference Note",
             "default": ""
+          },
+          "reference_origins": {
+            "additionalProperties": {
+              "type": "string",
+              "enum": [
+                "manual",
+                "auto"
+              ]
+            },
+            "type": "object",
+            "title": "Reference Origins"
           }
         },
         "additionalProperties": false,
@@ -8419,7 +8993,7 @@
           },
           "reference_note": {
             "type": "string",
-            "maxLength": 2000,
+            "maxLength": 6000,
             "title": "Reference Note",
             "default": ""
           }
@@ -8949,6 +9523,34 @@
         ],
         "title": "PrecisionLevel"
       },
+      "RemoveSamples": {
+        "properties": {
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Expected Revision"
+          },
+          "sample_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 100,
+            "title": "Sample Ids"
+          },
+          "clear_all": {
+            "type": "boolean",
+            "title": "Clear All",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "expected_revision"
+        ],
+        "title": "RemoveSamples"
+      },
       "Reuse": {
         "properties": {
           "expected_revision": {
@@ -9107,6 +9709,36 @@
                 "type": "null"
               }
             ]
+          },
+          "role_origin": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "manual",
+                  "auto"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Role Origin"
+          },
+          "included_origin": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "manual",
+                  "auto"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Included Origin"
           }
         },
         "additionalProperties": false,
@@ -10701,6 +11333,21 @@
             "maxLength": 120,
             "title": "Title",
             "default": ""
+          },
+          "analysis_kind": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "adsorption",
+                  "formation"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Analysis Kind"
           }
         },
         "additionalProperties": false,

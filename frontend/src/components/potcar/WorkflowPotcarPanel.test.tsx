@@ -88,7 +88,8 @@ it('自身replan尚未消费时切换另一同revision工作流，晚到旧响�
   await waitFor(() => expect(screen.getByRole('button', { name: '读取 / 刷新工作流 POTCAR 预览' })).toBeEnabled());
   fireEvent.click(screen.getByRole('button', { name: '读取 / 刷新工作流 POTCAR 预览' }));
   await waitFor(() => expect(potcarApi.workflowPreview).toHaveBeenCalledTimes(1));
-  expect(signal?.aborted).toBe(true);
+  // The preview request starts before React commits the prepared plan's identity change.
+  await waitFor(() => expect(signal?.aborted).toBe(true));
   await act(async () => resolve(preview()));
   expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
   expect(screen.queryByText('一次确认关联步骤：static → band')).not.toBeInTheDocument();
