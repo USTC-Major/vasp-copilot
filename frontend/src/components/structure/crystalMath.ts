@@ -42,6 +42,28 @@ export function alongAxis(basis: Matrix3, axis: 0 | 1 | 2): Matrix3 {
 }
 export const cellCorners = (basis: Matrix3): Vec3[] => Array.from({length:8}, (_,mask) => [0,1,2].map(j => basis.reduce((sum,row,i) => sum + ((mask>>i)&1)*row[j],0)) as Vec3);
 export const CELL_EDGES: [number,number][] = Array.from({length:8}, (_,mask) => [0,1,2].filter(i => !(mask&(1<<i))).map(i => [mask, mask|(1<<i)] as [number,number])).flat();
+export type ProjectionExtent = [number, number];
+/** Symmetric bounds keep the crystal's fixed rotation center at the plot center. */
+export function projectionExtent(points: Vec3[]): ProjectionExtent {
+  return points.reduce<ProjectionExtent>((extent,p)=>[Math.max(extent[0],Math.abs(p[0])),Math.max(extent[1],Math.abs(p[1]))],[1e-9,1e-9]);
+}
+/** The extent is captured on fit; rotating the scene must not recompute it. */
+export function centeredProjectionLayout(extent: ProjectionExtent, width: number, height: number, zoom=1) {
+  const top=65, areaHeight=Math.max(1,height-top-110);
+  const scale=Math.min(Math.max(1,width-54)/(extent[0]*2),areaHeight/(extent[1]*2))*zoom;
+  return (p: Vec3): [number,number] => [p[0]*scale+width/2,-p[1]*scale+top+areaHeight/2];
+}
+export const MIN_CRYSTAL_ZOOM=.6, MAX_CRYSTAL_ZOOM=2.5;
+export function zoomByFactor(zoom: number, factor: number) {
+  return Number.isFinite(factor)&&factor>0 ? Math.max(MIN_CRYSTAL_ZOOM,Math.min(MAX_CRYSTAL_ZOOM,zoom*factor)) : zoom;
+}
+/** Normalize mouse/trackpad units and cap one event without losing tiny deltas. */
+export function wheelZoomFactor(deltaY: number, deltaMode: number, pageHeight: number) {
+  if(!Number.isFinite(deltaY))return 1;
+  const unit=deltaMode===1?16:deltaMode===2&&Number.isFinite(pageHeight)?Math.max(1,pageHeight):1;
+  const pixels=Math.max(-240,Math.min(240,deltaY*unit));
+  return Math.exp(-pixels*.0015);
+}
 export function projectionLayout(points: Vec3[], width: number, height: number, compact: boolean, zoom=1) {
   const xs=points.map(p=>p[0]), ys=points.map(p=>p[1]);
   const lo=[Math.min(...xs),Math.min(...ys)], hi=[Math.max(...xs),Math.max(...ys)];

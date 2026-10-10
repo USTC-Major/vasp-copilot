@@ -3,7 +3,8 @@ import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
 import { Alert, Button, Checkbox, Modal, Spin, theme } from 'antd';
 import { useStructureGeometry } from '../../hooks/useApi';
 import type { Matrix3, StructureGeometry, Vec3 } from '../../types/structure-geometry';
-import { alongAxis, cellCorners, CELL_EDGES, norm, project, projectionLayout, rotate, standardCrystalOrientation, unit } from './crystalMath';
+import { alongAxis, cellCorners, CELL_EDGES, centeredProjectionLayout, MAX_CRYSTAL_ZOOM, MIN_CRYSTAL_ZOOM, norm, project, projectionExtent, projectionLayout, rotate, standardCrystalOrientation, unit, wheelZoomFactor, zoomByFactor } from './crystalMath';
+import type { ProjectionExtent } from './crystalMath';
 import './crystal-viewer.css';
 
 type Mode = 'cell' | 'a' | 'b' | 'c' | 'custom';
@@ -13,8 +14,9 @@ const elementColor = (element: string) => element === 'Fe' ? '#82AAF4' : element
 const format = (n: number) => n.toFixed(6);
 export type CrystalMarker = { id: string; label: string; cartesian: Vec3; selected?: boolean };
 
-function CrystalScene({data, matrix, compact=false, zoom=1, selected=null, showCell=true, showNumbers=false, onSelect, onRotate, onReset, onZoom, markers=[]}: {
+function CrystalScene({data, matrix, compact=false, zoom=1, fitExtent, selected=null, showCell=true, showNumbers=false, onSelect, onRotate, onReset, onZoom, markers=[]}: {
   data: StructureGeometry; matrix: Matrix3; compact?: boolean; zoom?: number; selected?: number|null;
+  fitExtent?: ProjectionExtent;
   showCell?: boolean; showNumbers?: boolean; onSelect?: (id: number)=>void;
   onRotate?: (matrix: Matrix3)=>void; onReset?: ()=>void; onZoom?: (factor: number)=>void;
   markers?: CrystalMarker[];
@@ -29,6 +31,17 @@ function CrystalScene({data, matrix, compact=false, zoom=1, selected=null, showC
     const update=()=>{const r=element.getBoundingClientRect(); if(r.width>0&&r.height>0) setSize([r.width,r.height]);};
     update(); const observer=new ResizeObserver(update); observer.observe(element); return ()=>observer.disconnect();
   },[compact]);
+  useEffect(()=>{
+    if(compact||!svg.current)return;
+    const element=svg.current;
+    // React's delegated wheel listener is passive; a local listener can consume scroll.
+    const wheel=(event: WheelEvent)=>{
+      event.preventDefault();event.stopPropagation();
+      onZoom?.(wheelZoomFactor(event.deltaY,event.deltaMode,element.getBoundingClientRect().height));
+    };
+    element.addEventListener('wheel',wheel,{passive:false});
+    return ()=>element.removeEventListener('wheel',wheel);
+  },[compact,onZoom]);
   const [width,height] = compact ? [120,120] : size;
   const corners=cellCorners(data.basis_cartesian_angstrom);
   const center=corners[7].map(v=>v/2) as Vec3;
@@ -36,7 +49,7 @@ function CrystalScene({data, matrix, compact=false, zoom=1, selected=null, showC
   const projectedCorners=corners.map(view);
   const atoms=data.sites.map(site=>({...site,view:view(site.cartesian_angstrom)}));
   const projectedMarkers=markers.filter(marker=>marker.cartesian.length===3&&marker.cartesian.every(Number.isFinite)).map(marker=>({...marker,view:view(marker.cartesian)}));
-  const xy=projectionLayout([...projectedCorners,...atoms.map(site=>site.view),...projectedMarkers.map(marker=>marker.view)],width,height,compact,zoom);
+  const xy=compact ? projectionLayout([...projectedCorners,...atoms.map(site=>site.view),...projectedMarkers.map(marker=>marker.view)],width,height,true) : centeredProjectionLayout(fitExtent!,width,height,zoom);
   const selectedSite=atoms.find(site=>site.id===selected);
   const down=(event: ReactPointerEvent<SVGSVGElement>)=>{
     if(compact||event.button!==0)return;
@@ -70,7 +83,7 @@ function CrystalScene({data, matrix, compact=false, zoom=1, selected=null, showC
     {!compact&&showNumbers&&<g className="cv-numbers">{atoms.map(site=>{const p=xy(site.view);return <text key={site.id} x={p[0]+8} y={p[1]-7} data-atom-id={site.id}>{site.id}</text>;})}</g>}
     {!compact&&selectedSite&&<circle cx={xy(selectedSite.view)[0]} cy={xy(selectedSite.view)[1]} r={10} className="cv-selected" data-atom-id={selectedSite.id} />}
   </>;
-  return <svg ref={svg} className={compact?'cv-thumbnail':'cv-detail-plot'} viewBox={`0 0 ${width} ${height}`} role="img" aria-label={compact?`${data.formula} 实际晶胞固定缩略图，a 红色、b 绿色、c 蓝色`:'实际晶胞与原子。拖动旋转、点击原子；方向键旋转，Home复位，加减键缩放。'} tabIndex={compact?undefined:0}
+  return <svg ref={svg} className={compact?'cv-thumbnail':'cv-detail-plot'} viewBox={`0 0 ${width} ${height}`} role="img" aria-label={compact?`${data.formula} 实际晶胞固定缩略图，a 红色、b 绿色、c 蓝色`:'实际晶胞与原子。拖动旋转、点击原子；滚轮缩放，方向键旋转，Home复位，加减键缩放。'} tabIndex={compact?undefined:0}
     onPointerDown={compact?undefined:down} onPointerMove={compact?undefined:move} onPointerUp={compact?undefined:finish} onPointerCancel={compact?undefined:finish} onLostPointerCapture={compact?undefined:()=>{gesture.current=null;}}
     onKeyDown={compact?undefined:event=>{
       const angles: Record<string,[number,number]>={ArrowLeft:[-.14,0],ArrowRight:[.14,0],ArrowUp:[0,-.14],ArrowDown:[0,.14]};
@@ -94,28 +107,38 @@ function LoadedViewer({data,cameras,markers=[]}: {data:StructureGeometry;cameras
   const {token}=theme.useToken();
   const standard=cameras.standard;
   const [matrix,setMatrix]=useState(standard),[mode,setMode]=useState<Mode>('cell'),[zoom,setZoom]=useState(1);
+  const fit=(camera:Matrix3)=>{
+    const corners=cellCorners(data.basis_cartesian_angstrom),center=corners[7].map(v=>v/2) as Vec3;
+    const points=[...corners,...data.sites.map(site=>site.cartesian_angstrom),...markers.filter(marker=>marker.cartesian.length===3&&marker.cartesian.every(Number.isFinite)).map(marker=>marker.cartesian)];
+    return projectionExtent(points.map(point=>project(camera,point.map((value,i)=>value-center[i]) as Vec3)));
+  };
+  const [fitExtent,setFitExtent]=useState(()=>fit(standard));
   const [selected,setSelected]=useState<number|null>(null),[showCell,setShowCell]=useState(true),[showNumbers,setShowNumbers]=useState(false),[open,setOpen]=useState(false);
   const opener=useRef<HTMLButtonElement>(null);
+  const hasOpened=useRef(false);
   const dark=token.colorBgContainer.toLowerCase()!=='#ffffff'&&token.colorBgContainer.toLowerCase()!=='#fff';
   const variables={'--cv-bg':token.colorBgContainer,'--cv-raised':token.colorBgElevated,'--cv-text':token.colorText,'--cv-muted':token.colorTextSecondary,'--cv-border':token.colorBorder,'--cv-primary':token.colorPrimary,
     '--cv-a':dark?'#E69A94':'#A5443F','--cv-b':dark?'#8BBC9F':'#267451','--cv-c':dark?'#8FB9F3':'#356EBD'} as CSSProperties;
   const elements=Array.from(new Set(data.sites.map(site=>site.element)));
   const chosen=data.sites.find(site=>site.id===selected);
-  const preset=(next:'cell'|'a'|'b'|'c')=>{setMode(next);setMatrix(next==='cell'?standard:cameras.axes['abc'.indexOf(next)]);setZoom(1);};
-  const changeZoom=(factor:number)=>setZoom(value=>Math.max(.6,Math.min(2.5,Math.round(value*factor*1000)/1000)));
+  const preset=(next:'cell'|'a'|'b'|'c')=>{setMode(next);setMatrix(next==='cell'?standard:cameras.axes['abc'.indexOf(next)]);};
+  const reset=()=>{preset('cell');setFitExtent(fit(standard));setZoom(1);};
+  const fitCurrent=()=>{setFitExtent(fit(matrix));setZoom(1);};
+  const changeZoom=(factor:number)=>setZoom(value=>zoomByFactor(value,factor));
+  const openDetail=()=>{if(!hasOpened.current){setFitExtent(fit(standard));hasOpened.current=true;}setOpen(true);};
   const elementLegend=<div className="cv-element-legend" aria-label="元素颜色">{elements.map(element=><span key={element}><i style={{background:elementColor(element)}}/>{element}</span>)}</div>;
   const outside=data.sites.some(site=>site.fractional.some(value=>value<0||value>=1));
   return <div className="crystal-viewer" style={variables}>
     <div className="cv-card"><CrystalScene data={data} matrix={standard} compact markers={markers}/><div><strong>实际晶胞</strong><span>{data.atom_count} 个原子 · 只读{markers.length?` · ${markers.length} 个几何位点`:''}</span><span className="cv-axis-legend"><b className="cv-axis-a">a</b><b className="cv-axis-b">b</b><b className="cv-axis-c">c</b> 晶胞棱</span></div></div>
-    <Button ref={opener} block onClick={()=>setOpen(true)}>{markers.length?'查看结构与位点':'查看结构'}</Button>
+    <Button ref={opener} block onClick={openDetail}>{markers.length?'查看结构与位点':'查看结构'}</Button>
     <Modal open={open} onCancel={()=>setOpen(false)} afterClose={()=>opener.current?.focus()} title={`${data.formula} · 结构检查`} width={1040} style={{top:24,maxWidth:'calc(100vw - 32px)'}} className="crystal-dialog" footer={null} keyboard destroyOnHidden>
       <div className="crystal-viewer cv-inspector" style={variables}>
         <div className="cv-visual-column">
-          <div className="cv-controls" aria-label="结构视角">{(['cell','a','b','c'] as const).map(value=><Button key={value} size="small" aria-pressed={mode===value} onClick={()=>preset(value)}>{value==='cell'?'标准视角':`沿 ${value}`}</Button>)}<Button size="small" onClick={()=>preset('cell')}>复位</Button></div>
-          <div className="cv-plot-wrap">{elementLegend}<CrystalScene data={data} matrix={matrix} zoom={zoom} selected={selected} showCell={showCell} showNumbers={showNumbers} markers={markers} onSelect={setSelected} onRotate={next=>{setMatrix(next);setMode('custom');}} onReset={()=>preset('cell')} onZoom={changeZoom}/></div>
-          <div className="cv-controls"><Button aria-label="缩小结构" size="small" disabled={zoom<=.6} onClick={()=>changeZoom(1/1.2)}>−</Button><span aria-label="结构缩放">{Math.round(zoom*100)}%</span><Button aria-label="放大结构" size="small" disabled={zoom>=2.5} onClick={()=>changeZoom(1.2)}>+</Button><Button size="small" onClick={()=>setZoom(1)}>适应</Button><Checkbox checked={showCell} onChange={event=>setShowCell(event.target.checked)}>显示晶胞</Checkbox><Checkbox checked={showNumbers} onChange={event=>setShowNumbers(event.target.checked)}>原子编号</Checkbox></div>
+          <div className="cv-controls" aria-label="结构视角">{(['cell','a','b','c'] as const).map(value=><Button key={value} size="small" aria-pressed={mode===value} onClick={()=>preset(value)}>{value==='cell'?'标准视角':`沿 ${value}`}</Button>)}<Button size="small" onClick={reset}>复位</Button></div>
+          <div className="cv-plot-wrap">{elementLegend}<CrystalScene data={data} matrix={matrix} zoom={zoom} fitExtent={fitExtent} selected={selected} showCell={showCell} showNumbers={showNumbers} markers={markers} onSelect={setSelected} onRotate={next=>{setMatrix(next);setMode('custom');}} onReset={reset} onZoom={changeZoom}/></div>
+          <div className="cv-controls"><Button aria-label="缩小结构" size="small" disabled={zoom<=MIN_CRYSTAL_ZOOM} onClick={()=>changeZoom(1/1.2)}>−</Button><span aria-label="结构缩放">{Math.round(zoom*100)}%</span><Button aria-label="放大结构" size="small" disabled={zoom>=MAX_CRYSTAL_ZOOM} onClick={()=>changeZoom(1.2)}>+</Button><Button size="small" onClick={fitCurrent}>适应</Button><Checkbox checked={showCell} onChange={event=>setShowCell(event.target.checked)}>显示晶胞</Checkbox><Checkbox checked={showNumbers} onChange={event=>setShowNumbers(event.target.checked)}>原子编号</Checkbox></div>
           <p className="cv-note">{descriptions[mode]} · {mode==='cell'?'依据实际晶格，c 向上、b 向右。':mode==='custom'?'原子、晶胞和轴同步旋转。':`从 +${mode} 端看向原点；沿轴投影中原子可能重叠。`} ⊙ 正轴朝向观察者，⊗ 背向。</p>
-          <p className="cv-note">拖动或方向键旋转；Home 复位。原子圆点为标记，不代表真实半径；未判断化学键。{outside?'原始分数坐标含晶胞外位置，按原值显示并纳入适应范围。':''}</p>
+          <p className="cv-note">拖动或方向键旋转；滚轮或加减键缩放；适应保留当前朝向，Home 复位。原子圆点为标记，不代表真实半径；未判断化学键。{outside?'原始分数坐标含晶胞外位置，按原值显示并纳入适应范围。':''}</p>
         </div>
         <aside className="cv-info-column" aria-label="原子与晶胞信息">
           <h4>晶胞与来源</h4><p>{data.atom_count} 原子 · {data.coordinate_mode==='direct'?'Direct':'Cartesian'} 输入</p>
@@ -141,7 +164,8 @@ export function CrystalGeometryViewer({data,markers=[]}: {data:StructureGeometry
     } catch { return null; }
   },[data]);
   if(!cameras)return <Alert type="warning" showIcon title="当前晶格无法可靠显示" description="晶格方向或坐标无法可靠投影。"/>;
-  return <LoadedViewer key={data.structure_id} data={data} cameras={cameras} markers={markers}/>;
+  const geometryKey=JSON.stringify([data.structure_id,data.basis_cartesian_angstrom,data.sites.map(site=>[site.id,site.element,site.cartesian_angstrom])]);
+  return <LoadedViewer key={geometryKey} data={data} cameras={cameras} markers={markers}/>;
 }
 
 export default function CrystalViewer({structureId}: {structureId:string}) {
