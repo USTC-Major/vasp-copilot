@@ -157,6 +157,7 @@ namespace VaspCopilot.DesktopV3
     }
     internal sealed class SettingsForm : Form
     {
+        internal bool ConfirmRestart;
         private readonly TextBox root = new TextBox(), python = new TextBox();
         private readonly CheckBox ai = new CheckBox();
         internal SettingsForm(LauncherOptions options, string selectedPython, string packageRoot = null)
@@ -203,6 +204,8 @@ namespace VaspCopilot.DesktopV3
                     if (!String.IsNullOrWhiteSpace(packageRoot) && !options.IsolatedProfile
                         && !String.Equals(Path.GetFullPath(candidate.RootDirectory).TrimEnd(Path.DirectorySeparatorChar), packageRoot.TrimEnd(Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase))
                         throw new LauncherException("所选安装目录与当前 EXE 所在包不同。请选择当前完整包目录，或退出后打开所选目录内的 VASP-Copilot.exe；不会混用旧包资源。");
+                    if (ConfirmRestart && (candidate.RootDirectory != options.RootDirectory || candidate.PythonExecutable != options.PythonExecutable || candidate.EnableAi != options.EnableAi)
+                        && MessageBox.Show(this, "保存这些启动修改将停止本次所属服务并重新加载工作空间。未保存的工作流草稿和设置修改会丢失，请先保留需要的内容。\n是否保存并重启？", "确认重启工作空间", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
                     LauncherPreferences.Save(candidate);
                     LauncherPreferencesStore.Assign(options, candidate); DialogResult = DialogResult.OK;
                 }
@@ -236,7 +239,7 @@ namespace VaspCopilot.DesktopV3
         private readonly WebView2 web = new WebView2();
         private readonly Label status = new Label(), launchTitle = new Label(), launchMessage = new Label();
         private readonly Label[] steps = new Label[4];
-        private readonly Button retry = ShellTheme.Button("重试启动", true), advanced = ShellTheme.Button("启动设置"), evidence = ShellTheme.Button("记录当前页面"), workflow = ShellTheme.Button("工作流");
+        private readonly Button retry = ShellTheme.Button("重试启动", true), advanced = ShellTheme.Button("设置"), evidence = ShellTheme.Button("记录当前页面");
         private readonly Button launchRetry = ShellTheme.Button("重试启动", true), launchSettings = ShellTheme.Button("启动设置"), launchLog = ShellTheme.Button("查看安装日志");
         private readonly Panel launch = new Panel();
         private readonly System.Windows.Forms.Timer timer = new System.Windows.Forms.Timer();
@@ -244,6 +247,8 @@ namespace VaspCopilot.DesktopV3
         private Task startup;
         private string origin = "", lastStage = "";
         private ulong navigationId;
+        private string settingsNonce = "";
+        private bool settingsBridgeReady, settingsDialogOpen;
         private int evidenceNumber;
         internal DesktopForm(LauncherController controller, LauncherOptions options, string state, bool isolated, EventWaitHandle activation, string packageRoot = null)
         {
@@ -251,12 +256,11 @@ namespace VaspCopilot.DesktopV3
             AutoScaleMode = AutoScaleMode.Dpi; ShellTheme.Apply(this); Text = "VASP-Copilot" + (isolated ? " · V3 隔离候选" : options.FullFeatures ? " · 完整功能" : ""); Width = 1280; Height = 900; MinimumSize = new Size(960, 700); StartPosition = FormStartPosition.CenterScreen;
             var bar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 54, Padding = new Padding(14, 5, 8, 5), BackColor = ShellTheme.Surface, WrapContents = false };
             var brand = ShellTheme.Label("VASP-Copilot", 12F); brand.Margin = new Padding(0, 8, 24, 0); bar.Controls.Add(brand);
-            workflow.Enabled = false; workflow.Click += delegate { if (initialized && servicesReady && origin.Length > 0) web.CoreWebView2.Navigate(origin + "/workflow"); };
-            retry.Click += delegate { RunStartup(); }; advanced.Click += async delegate { await Configure(); };
+            retry.Click += delegate { RunStartup(); }; advanced.Name = "globalSettings"; advanced.AccessibleName = "设置"; advanced.Click += async delegate { await OpenSettings(); };
             var about = ShellTheme.Button("关于"); about.Click += delegate { using (var dialog = new AboutForm(isolated, options.FullFeatures)) dialog.ShowDialog(this); };
             var exit = ShellTheme.Button("退出"); exit.Click += delegate { Close(); };
             evidence.Visible = isolated; evidence.Enabled = false; evidence.Click += async delegate { await CaptureEvidence(); };
-            bar.Controls.Add(workflow); bar.Controls.Add(advanced); bar.Controls.Add(about); bar.Controls.Add(retry); bar.Controls.Add(exit); if (isolated) bar.Controls.Add(evidence);
+            bar.Controls.Add(advanced); bar.Controls.Add(about); bar.Controls.Add(retry); bar.Controls.Add(exit); if (isolated) bar.Controls.Add(evidence);
             status.Dock = DockStyle.Bottom; status.Height = 38; status.Padding = new Padding(16, 8, 8, 8); status.ForeColor = ShellTheme.Muted; status.BackColor = ShellTheme.Surface; status.Text = "准备桌面工作空间";
             web.Dock = DockStyle.Fill; web.DefaultBackgroundColor = ShellTheme.Background; web.Visible = false;
             BuildLaunch(); Controls.Add(web); Controls.Add(launch); Controls.Add(bar); Controls.Add(status);
@@ -291,7 +295,7 @@ namespace VaspCopilot.DesktopV3
             // A confirmed interruption hides the page without destroying its document.
             if (servicesReady && snapshot.Services.Exists(s => s.State == "error"))
                 {
-                    servicesReady = false; serviceInterrupted = true; serviceDegraded = false; workflow.Enabled = evidence.Enabled = false;
+                    servicesReady = false; serviceInterrupted = true; serviceDegraded = false; evidence.Enabled = false;
                     ShowLaunch("本地服务中断", "本地服务暂不可用。正在等待恢复，当前页面已保留；也可重试启动。", true);
                     steps[2].Text = "3. 本地服务  ·  已中断"; steps[3].Text = "4. 真实工作流界面  ·  等待恢复";
                     status.Text = "本地服务状态异常"; Log("service-failed", new { snapshot });
@@ -301,7 +305,7 @@ namespace VaspCopilot.DesktopV3
                 Uri current;
                 if (!Uri.TryCreate(web.CoreWebView2.Source, UriKind.Absolute, out current) || !IsLocal(current)) return;
                 serviceInterrupted = serviceDegraded = false; servicesReady = true; launch.Visible = false; web.Visible = true;
-                workflow.Enabled = evidence.Enabled = true; status.Text = "工作空间已恢复，当前页面已保留";
+                evidence.Enabled = true; status.Text = "工作空间已恢复，当前页面已保留";
                 UpdateSteps("ready"); Log("service-recovered", new { snapshot, documentPreserved = true });
             }
             else if (servicesReady && pageReady)
@@ -375,18 +379,63 @@ namespace VaspCopilot.DesktopV3
         {
             if (closing || (startup != null && !startup.IsCompleted)) return;
             if (!CompatiblePackage()) { ShowLaunch("安装目录不匹配", "请在启动设置核对当前完整包目录；不会使用另一旧包。", true); return; }
-            servicesReady = pageReady = startupFailed = serviceInterrupted = serviceDegraded = false; workflow.Enabled = evidence.Enabled = false;
+            servicesReady = pageReady = startupFailed = serviceInterrupted = serviceDegraded = settingsBridgeReady = false; settingsNonce = ""; evidence.Enabled = false;
             ShowLaunch("正在准备工作空间", "正在检查桌面运行时与启动信息…", false); SetActions(false); UpdateSteps(""); startup = StartAsync();
         }
         private async Task Configure()
         {
-            if (closing || (startup != null && !startup.IsCompleted)) return;
-            using (var dialog = new SettingsForm(options, controller.SelectedPythonDescription, packageRoot))
+            if (closing || settingsDialogOpen || (startup != null && !startup.IsCompleted)) return;
+            settingsDialogOpen = true;
+            try { using (var dialog = new SettingsForm(options, controller.SelectedPythonDescription, packageRoot))
             {
+                string before = options.RootDirectory + "\n" + options.PythonExecutable + "\n" + options.EnableAi;
+                dialog.ConfirmRestart = pageReady;
                 if (dialog.ShowDialog(this) != DialogResult.OK) return;
-                status.Text = "启动设置已写入并重新读取核验：" + LauncherPreferences.Store.Target; RunStartup();
-            }
+                status.Text = "启动设置已写入并重新读取核验：" + LauncherPreferences.Store.Target;
+                if (!pageReady || before != options.RootDirectory + "\n" + options.PythonExecutable + "\n" + options.EnableAi) RunStartup();
+            } } finally { settingsDialogOpen = false; }
             await Task.FromResult(0);
+        }
+        private async Task OpenSettings()
+        {
+            Uri current;
+            if (!closing && initialized && servicesReady && pageReady && settingsBridgeReady
+                && Uri.TryCreate(web.CoreWebView2.Source, UriKind.Absolute, out current) && IsSettingsPage(current))
+                PostSettings("open-settings");
+            else await Configure();
+        }
+        private void PostSettings(string action)
+        {
+            if (!initialized || closing || settingsNonce.Length == 0) return;
+            web.CoreWebView2.PostWebMessageAsJson(new JavaScriptSerializer().Serialize(new { type = "vasp-desktop-settings", version = 1, action, nonce = settingsNonce }));
+        }
+        private bool IsSettingsPage(Uri uri)
+        {
+            if (!IsLocal(uri)) return false;
+            string p = uri.AbsolutePath.TrimEnd('/').ToLowerInvariant();
+            return p == "" || p == "/settings" || p == "/workflow" || p == "/ai" || p == "/toolbox" || p == "/toolbox/projects"
+                || p == "/toolbox/potcar" || p == "/toolbox/potcar/assemble" || p == "/toolbox/postprocessing" || p == "/hpc/deploy"
+                || p == "/ai/settings" || p == "/toolbox/settings" || p.StartsWith("/ai/projects/") || p.StartsWith("/toolbox/projects/")
+                || p.StartsWith("/workflow/history/") || p.StartsWith("/diagnosis/") || p.StartsWith("/hpc/jobs/");
+        }
+        private bool ValidSettingsMessage(string source, string json, out string action)
+        {
+            action = ""; Uri sent, current;
+            if (closing || !initialized || !servicesReady || !pageReady || settingsNonce.Length == 0 || json.Length > 512
+                || !Uri.TryCreate(source, UriKind.Absolute, out sent) || !IsSettingsPage(sent)
+                || !Uri.TryCreate(web.CoreWebView2.Source, UriKind.Absolute, out current) || sent.AbsoluteUri != current.AbsoluteUri) return false;
+            try
+            {
+                var data = new JavaScriptSerializer().DeserializeObject(json) as System.Collections.Generic.Dictionary<string, object>;
+                if (data == null || !data.ContainsKey("type") || !data.ContainsKey("version") || !data.ContainsKey("action")
+                    || !(data["type"] is string) || (string)data["type"] != "vasp-desktop-settings" || !(data["version"] is int) || (int)data["version"] != 1 || !(data["action"] is string)) return false;
+                string requested = (string)data["action"];
+                if (requested == "query-capabilities" && data.Count == 3) { action = requested; return true; }
+                if (data.Count != 4 || !data.ContainsKey("nonce") || !(data["nonce"] is string) || (string)data["nonce"] != settingsNonce) return false;
+                if (requested == "ready" || (requested == "open-launch-settings" && current.AbsolutePath.TrimEnd('/').Equals("/settings", StringComparison.OrdinalIgnoreCase))) { action = requested; return true; }
+                return false;
+            }
+            catch { return false; }
         }
         private bool CompatiblePackage()
         {
@@ -412,7 +461,15 @@ namespace VaspCopilot.DesktopV3
                         e.Response = environment.CreateWebResourceResponse(new MemoryStream(new byte[0]), 403, "Isolated profile: local resources only", "Content-Type: text/plain");
                 };
             }
-            web.CoreWebView2.NavigationStarting += delegate(object sender, CoreWebView2NavigationStartingEventArgs e) { Uri uri; if (!Uri.TryCreate(e.Uri, UriKind.Absolute, out uri) || !IsLocal(uri)) e.Cancel = true; else navigationId = e.NavigationId; };
+            web.CoreWebView2.NavigationStarting += delegate(object sender, CoreWebView2NavigationStartingEventArgs e) { Uri uri; if (!Uri.TryCreate(e.Uri, UriKind.Absolute, out uri) || !IsLocal(uri)) e.Cancel = true; else { navigationId = e.NavigationId; pageReady = settingsBridgeReady = false; settingsNonce = Guid.NewGuid().ToString("N"); } };
+            web.CoreWebView2.WebMessageReceived += async delegate(object sender, CoreWebView2WebMessageReceivedEventArgs e)
+            {
+                string action;
+                if (!ValidSettingsMessage(e.Source, e.WebMessageAsJson, out action)) return;
+                if (action == "query-capabilities") PostSettings("capabilities");
+                else if (action == "ready") settingsBridgeReady = true;
+                else if (action == "open-launch-settings") await Configure();
+            };
             web.CoreWebView2.NewWindowRequested += delegate(object sender, CoreWebView2NewWindowRequestedEventArgs e) { e.Handled = true; };
             web.CoreWebView2.NavigationCompleted += async delegate(object sender, CoreWebView2NavigationCompletedEventArgs e)
             {
@@ -422,7 +479,7 @@ namespace VaspCopilot.DesktopV3
                 pageReady = e.IsSuccess && local;
                 if (e.IsSuccess && local && servicesReady)
                 {
-                    pageReady = true; launch.Visible = false; web.Visible = true; workflow.Enabled = evidence.Enabled = true;
+                    pageReady = true; launch.Visible = false; web.Visible = true; evidence.Enabled = true; PostSettings("capabilities");
                     status.Text = "工作空间已就绪" + (isolated ? " · 隔离候选" : ""); UpdateSteps("ready"); Log("workspace-ready", new { page = "/workflow" }); await RecordDisplay("navigation");
                 }
                 else if (!e.IsSuccess && servicesReady)

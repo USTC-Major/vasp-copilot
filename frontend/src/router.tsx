@@ -9,10 +9,9 @@ import App from './App';
 import HomePage from './pages/HomePage';
 import AiProjectsPage from './pages/AiProjectsPage';
 import AiProjectPage from './pages/AiProjectPage';
-import AiSettingsPage from './pages/AiSettingsPage';
+import SettingsCenterPage from './pages/SettingsCenterPage';
 import ToolboxProjectsPage from './pages/ToolboxProjectsPage';
 import ToolboxTaskPage from './pages/ToolboxTaskPage';
-import ToolboxSettingsPage from './pages/ToolboxSettingsPage';
 import PageLoading from './components/common/PageLoading';
 
 const WorkflowBuilderPage = lazy(() => import('./pages/WorkflowBuilderPage'));
@@ -43,11 +42,12 @@ export const routes: RouteObject[] = [
       { path: 'ai', element: <AiProjectsPage /> },
       { path: 'ai/projects/:projectId', element: <AiProjectPage /> },
       { path: 'ai/projects/:projectId/progress/:taskId', element: <LegacyAiProgressRedirect /> },
-      { path: 'ai/settings', element: <AiSettingsPage /> },
+      { path: 'settings', element: <SettingsCenterPage /> },
+      { path: 'ai/settings', element: <Navigate replace to="/settings#settings-models" /> },
       { path: 'toolbox', element: <Navigate replace to="/toolbox/projects" /> },
       { path: 'toolbox/projects', element: <ToolboxProjectsPage /> },
       { path: 'toolbox/projects/:projectId/tasks/:taskId', element: <ToolboxTaskPage /> },
-      { path: 'toolbox/settings', element: <ToolboxSettingsPage /> },
+      { path: 'toolbox/settings', element: <Navigate replace to="/settings#settings-execution" /> },
       { path: 'toolbox/potcar', element: withSuspense(<PotcarLibraryPage />) },
       { path: 'toolbox/potcar/assemble', element: withSuspense(<PotcarAssemblyPage />) },
       { path: 'toolbox/postprocessing', element: withSuspense(<PostprocessingPage />) },

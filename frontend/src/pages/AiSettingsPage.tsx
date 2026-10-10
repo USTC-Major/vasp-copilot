@@ -1,5 +1,5 @@
 // 全局设置页 — secrets are write-only: status + replace/clear, never reveal.
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Card, Typography, Space, Button, Input, Col, Row, Spin, Switch, Select, message, Alert, Modal } from "antd";
 import { Link } from "react-router-dom";
 import { LinkOutlined, SafetyCertificateOutlined, RocketOutlined } from "@ant-design/icons";
@@ -8,6 +8,7 @@ import SecretInput from "../components/ai/SecretInput";
 import type { AiSecretState, AiSettingsOut } from "../types/ai";
 import { useAiSettings, useAiSettingsSave, useAiSettingsTest, useAiSecretStatus, useAiSecretUpdate } from "../hooks/useApi";
 import PlotPreferencesSettings from "../components/postprocessing/PlotPreferencesSettings";
+import ToolboxSettingsPage from "./ToolboxSettingsPage";
 import "./scientific-settings.css";
 
 const { Title, Text, Paragraph } = Typography;
@@ -80,7 +81,7 @@ const toForm = (settings: AiSettingsOut): Form => ({
   ssh_password: "",
 });
 
-const AiSettingsPage: React.FC = () => {
+const AiSettingsPage: React.FC<{ embedded?: boolean; onDirtyChange?: (dirty: boolean) => void }> = ({ embedded = false, onDirtyChange }) => {
   const [modal, contextHolder] = Modal.useModal();
   const settingsQuery = useAiSettings(true);
   const secretQuery = useAiSecretStatus(true);
@@ -101,6 +102,13 @@ const AiSettingsPage: React.FC = () => {
   const [testNotice, setTestNotice] = useState<string | null>(null);
   // 页面加载时服务端给过的值；保存前与最新值比对，避免用旧表单覆盖他处的改动。
   const loadedRef = useRef<Form | null>(null);
+  const [fallbackPinned, setFallbackPinned] = useState(false);
+  const fallbackDirty = useRef(false);
+  const reportFallbackDirty = useCallback((dirty: boolean) => {
+    fallbackDirty.current = dirty;
+    if (dirty) setFallbackPinned(true);
+    onDirtyChange?.(dirty);
+  }, [onDirtyChange]);
 
   useEffect(() => {
     if (settings) {
@@ -189,12 +197,15 @@ const AiSettingsPage: React.FC = () => {
     }
   };
 
-  const hasUnsavedChanges = () => {
+  const hasUnsavedChanges = useCallback(() => {
     const loaded = loadedRef.current;
     if (!loaded) return false;
     if (form.llm_api_key || form.mp_api_key || form.ssh_password) return true;
     return FORM_FIELDS.some((key) => String(form[key]) !== String(loaded[key]));
-  };
+  }, [form]);
+  useEffect(() => {
+    if (!embedded || (settings && rawSecrets && !fallbackPinned)) onDirtyChange?.(hasUnsavedChanges());
+  }, [hasUnsavedChanges, onDirtyChange, embedded, settings, rawSecrets, fallbackPinned]);
 
   const test = async (provider: TestProvider) => {
     if (hasUnsavedChanges()) {
@@ -223,6 +234,17 @@ const AiSettingsPage: React.FC = () => {
     }
   };
 
+  if (embedded && (settingsQuery.isLoading || secretQuery.isLoading || settingsQuery.error || secretQuery.error || !settings || !rawSecrets || fallbackPinned)) {
+    return <>{contextHolder}<ToolboxSettingsPage embedded onDirtyChange={reportFallbackDirty} modelNotice={<>
+      <Alert type="info" showIcon message={settings && rawSecrets && !settingsQuery.error && !secretQuery.error ? "模型配置已可读取" : "模型配置尚未就绪"}
+        description="基础材料密钥、超算与执行设置仍可使用。不会等待模型服务才开放基础设置。" />
+      <Button onClick={async () => {
+        if (fallbackDirty.current) { message.warning("请先保存或放弃当前执行设置修改，再读取模型配置。"); return; }
+        const [latest, latestSecrets] = await Promise.all([settingsQuery.refetch(), secretQuery.refetch()]);
+        if (!latest.isError && !latestSecrets.isError) setFallbackPinned(false);
+      }}>重试读取模型配置</Button>
+    </>} /></>;
+  }
   if (settingsQuery.isLoading || secretQuery.isLoading) return <div className="scientific-settings settings-loading" role="status">{contextHolder}<Spin aria-label="智能设置加载中" /><Text type="secondary">正在读取智能设置与凭据状态…</Text></div>;
   if (settingsQuery.error || secretQuery.error || !settings || !rawSecrets) {
     return <div className="scientific-settings settings-unavailable">
@@ -278,7 +300,7 @@ const AiSettingsPage: React.FC = () => {
       {contextHolder}
       <div className="settings-heading settings-heading-actions">
         <div className="settings-heading-copy">
-          <Title level={1}>智能体设置</Title>
+          {!embedded && <Title level={1}>智能体设置</Title>}
           <Paragraph type="secondary" style={{ margin: 0 }}>
             所有私人信息仅本地保存。已保存密钥不可查看或复制，只能整体替换或清除。
           </Paragraph>
@@ -287,6 +309,7 @@ const AiSettingsPage: React.FC = () => {
       </div>
 
       <Paragraph><Link to="/toolbox/potcar">管理本地 POTCAR 赝势库</Link>（独立于模型配置，同一登记供工具复用）</Paragraph>
+      {embedded && <Title level={2} id="settings-models" tabIndex={-1}>模型与材料</Title>}
       {section("LLM", <LinkOutlined />, (
         <Row gutter={[16, 16]}>
           <Col span={24}><label htmlFor="settings-llm_base_url"><Text strong>接口地址</Text></label><Input id="settings-llm_base_url" value={form.llm_base_url} onChange={set("llm_base_url")} placeholder="https://api.openai.com/v1" /></Col>
@@ -299,6 +322,14 @@ const AiSettingsPage: React.FC = () => {
         </Row>
       ))}
 
+      {section("Materials Project", <SafetyCertificateOutlined />, (
+        <Row gutter={[16, 16]}>
+          <Col span={24} role="group" aria-labelledby="mp-key-label" aria-describedby="mp-key-help"><Text id="mp-key-label" strong>MP API Key</Text><SecretInput hasSecret={secrets.mp.configured} manageable={secrets.mp.manageable} source={secrets.mp.source} value={form.mp_api_key} onChange={(v) => { setForm((p) => ({ ...p, mp_api_key: v })); setTestResults({}); setTestNotice(null); }} onClear={clearSecret("mp")} placeholder={secrets.mp.configured ? "输入新值以整体替换" : "未配置，填写后保存" } /><Text id="mp-key-help" type="secondary" style={{ display: "block", fontSize: 12, marginTop: 4 }}>用于 Materials Project 材料搜索与结构导入；密钥可替换或清除。</Text></Col>
+          <Col span={24}>{testButton("mp", "测试已保存的 Materials Project 配置")}{testResult("mp")}</Col>
+        </Row>
+      ))}
+
+      {embedded && <Title level={2} id="settings-execution" tabIndex={-1}>超算与执行</Title>}
       {section("超算 SSH 直连", <RocketOutlined />, (
         <Row gutter={[16, 16]}>
           <Col xs={24} md={8}><label htmlFor="settings-ssh_name"><Text strong>连接名称</Text></label><Input id="settings-ssh_name" value={form.ssh_name} onChange={set("ssh_name")} placeholder="如：超算A" /></Col>
@@ -310,13 +341,6 @@ const AiSettingsPage: React.FC = () => {
           <Col span={24}><label htmlFor="settings-ssh_identity_file"><Text strong>SSH 密钥文件路径（可选）</Text></label><Input id="settings-ssh_identity_file" aria-label="SSH 密钥文件路径" value={form.ssh_identity_file} onChange={set("ssh_identity_file")} aria-describedby="identity-file-help" placeholder="后端所在电脑上的绝对路径；只填路径，不粘贴私钥" /><Text id="identity-file-help" type="secondary" style={{ display: "block", fontSize: 12, marginTop: 4 }}>后端所在电脑上的绝对路径；只填路径，不粘贴私钥。填写密钥路径时仅使用该密钥，不回退密码或自动寻找其他密钥。当前不支持需口令解锁的密钥；换电脑需重新配置当地路径。</Text></Col>
           <Col span={24}><label htmlFor="settings-scheduler"><Text strong>调度平台</Text></label><Select id="settings-scheduler" aria-label="调度平台" aria-describedby="scheduler-help" style={{ width: "100%" }} value={form.scheduler_backend} onChange={(v) => { setForm(p => ({ ...p, scheduler_backend: v })); setTestResults({}); setTestNotice(null); }} options={[{ value: "slurm", label: "标准 Slurm（sbatch / squeue）" }, { value: "paracloud", label: "ParaCloud 云超算（cbatch / cqueue）" }]} /><Text id="scheduler-help" type="secondary" style={{ display: "block", fontSize: 12, marginTop: 4 }}>按实际平台选择，不能仅凭命令存在判断。更换平台或SSH身份后必须重新预检和确认；已有作业应保持原连接配置。</Text></Col>
           <Col span={24}>{testButton("ssh", "测试已保存的 SSH 配置")}{testResult("ssh")}</Col>
-        </Row>
-      ))}
-
-      {section("Materials Project", <SafetyCertificateOutlined />, (
-        <Row gutter={[16, 16]}>
-          <Col span={24} role="group" aria-labelledby="mp-key-label" aria-describedby="mp-key-help"><Text id="mp-key-label" strong>MP API Key</Text><SecretInput hasSecret={secrets.mp.configured} manageable={secrets.mp.manageable} source={secrets.mp.source} value={form.mp_api_key} onChange={(v) => { setForm((p) => ({ ...p, mp_api_key: v })); setTestResults({}); setTestNotice(null); }} onClear={clearSecret("mp")} placeholder={secrets.mp.configured ? "输入新值以整体替换" : "未配置，填写后保存" } /><Text id="mp-key-help" type="secondary" style={{ display: "block", fontSize: 12, marginTop: 4 }}>用于 Materials Project 材料搜索与结构导入；密钥可替换或清除。</Text></Col>
-          <Col span={24}>{testButton("mp", "测试已保存的 Materials Project 配置")}{testResult("mp")}</Col>
         </Row>
       ))}
 
@@ -338,7 +362,7 @@ const AiSettingsPage: React.FC = () => {
         </Row>
       ))}
 
-      <PlotPreferencesSettings />
+      {!embedded && <PlotPreferencesSettings />}
       {testNotice && <Alert type="warning" showIcon message={testNotice} style={{ marginBottom: 16 }} />}
     </div>
   );

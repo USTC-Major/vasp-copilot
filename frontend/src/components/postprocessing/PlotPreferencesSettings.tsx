@@ -1,14 +1,15 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Alert, Button, Card, Space, Typography } from 'antd';
 import { paletteError, type PlotPalette } from '../../api/plotPreferences';
 import { usePlotPalette } from '../../hooks/usePlotPreferences';
 import PlotPaletteEditor from './PlotPaletteEditor';
 
-export default function PlotPreferencesSettings() {
+export default function PlotPreferencesSettings({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => void }) {
   const defaults = usePlotPalette();
   const [draftPalette, setDraftPalette] = useState<PlotPalette | null>(null);
   const palette = draftPalette ?? defaults.preferences.palette;
   const dirty = draftPalette !== null;
+  useEffect(() => { onDirtyChange?.(dirty); }, [dirty, onDirtyChange]);
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<{ kind: 'error' | 'success'; text: string } | null>(null);
   const save = async () => {

@@ -39,7 +39,8 @@ describe('shared scientific navigation and isolated content', () => {
     expect(document.querySelector('.scientific-shell')).toHaveAttribute('data-workflow-theme', 'light');
     expect(screen.getByTestId('theme-token')).toHaveTextContent('#FFFFFF');
     expect(screen.getByTestId('theme-token').closest('.scientific-workflow')).not.toBeNull();
-    fireEvent.click(screen.getByRole('link', { name: '执行设置' }));
+    expect(screen.queryByRole('link', { name: '执行设置' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('link', { name: '设置' }));
     expect(screen.getByTestId('theme-token')).toHaveTextContent('#FFFFFF');
     expect(screen.getByTestId('theme-token').closest('.scientific-workflow')).not.toBeNull();
     fireEvent.click(screen.getByRole('button', { name: '切换深色主题' }));
@@ -72,16 +73,17 @@ describe('shared scientific navigation and isolated content', () => {
     ['/diagnosis/result-id', '诊断计算', '诊断结果'],
     ['/toolbox/projects', '计算任务', '计算任务'],
     ['/toolbox/projects/p/tasks/t', '计算任务', '任务详情'],
-    ['/toolbox/settings', '执行设置', '执行设置'],
+    ['/settings', '设置', '设置'],
+    ['/toolbox/settings', '设置', '设置'],
     ['/ai', '智能模式', '智能模式'],
     ['/ai/projects/p', '智能模式', '项目详情'],
-    ['/ai/settings', '智能设置', '智能设置'],
+    ['/ai/settings', '设置', '设置'],
     ['/hpc/deploy', '远程部署（离线演示）', '远程部署（离线演示）'],
     ['/hpc/jobs/job', '远程部署（离线演示）', '远程作业'],
     ['/ai/', '智能模式', '智能模式'],
-    ['/toolbox/settings/', '执行设置', '执行设置'],
+    ['/toolbox/settings/', '设置', '设置'],
     ['/workflow/history/CaseSensitiveId/', '生成工作流', '工作流详情'],
-    ['/AI/Settings/', '智能设置', '智能设置'],
+    ['/AI/Settings/', '设置', '设置'],
   ])('marks exactly one current entry for %s', (path, name, title) => {
     flags.data = { ENABLE_FAKE_HPC: true };
     setup(path);

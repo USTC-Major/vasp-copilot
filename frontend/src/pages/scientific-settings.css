@@ -12,6 +12,7 @@
 .scientific-settings .settings-heading-actions { display:flex; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; gap:16px; margin-bottom:24px; }
 .scientific-settings .settings-heading-copy { flex:1 1 280px; min-width:0; }
 .scientific-settings .settings-section { margin-bottom:20px; }
+#settings-center [id^="settings-"] { scroll-margin-top:20px; }
 .scientific-settings.settings-toolbox>.settings-heading,.scientific-settings.settings-toolbox>form { margin-bottom:24px; }
 .scientific-settings .ant-card-head-title { min-width:0; white-space:normal; overflow-wrap:anywhere; padding-block:12px; }
 .scientific-settings .ant-card-head .ant-space { gap:8px; }
