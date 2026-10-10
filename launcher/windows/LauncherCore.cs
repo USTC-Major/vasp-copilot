@@ -7,6 +7,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Web.Script.Serialization;
 using Microsoft.Win32;
@@ -147,11 +148,14 @@ namespace VaspCopilot.Launcher
             catch (Exception error) { Record("read", "failed", error); throw; }
         }
         public LauncherOptions LoadFormal(string appDirectory, string packageRoot, Func<List<PreferencesSource>, PreferencesSource> select)
+        { return LoadFormal(appDirectory, packageRoot, select, Environment.GetEnvironmentVariable); }
+        // The environment is injectable so migration tests never read real user settings.
+        public LauncherOptions LoadFormal(string appDirectory, string packageRoot, Func<List<PreferencesSource>, PreferencesSource> select, Func<string, string> environment)
         {
-            try { return LoadFormalCore(appDirectory, packageRoot, select); }
+            try { return LoadFormalCore(appDirectory, packageRoot, select, environment); }
             catch (Exception error) { Record("read", "failed", error); throw; }
         }
-        private LauncherOptions LoadFormalCore(string appDirectory, string packageRoot, Func<List<PreferencesSource>, PreferencesSource> select)
+        private LauncherOptions LoadFormalCore(string appDirectory, string packageRoot, Func<List<PreferencesSource>, PreferencesSource> select, Func<string, string> environment)
         {
             var current = Read(Target);
             if (current != null)
@@ -179,12 +183,12 @@ namespace VaspCopilot.Launcher
                 var old = Read(file);
                 if (old == null) continue;
                 // Full mode previously supplied these defaults outside preferences.json.
-                // Normal mode's blanks deliberately retain its existing backend priority.
                 if (oldName == "desktop-v040-full")
                 {
                     if (String.IsNullOrWhiteSpace(old.VaspAiHome)) old.VaspAiHome = Path.Combine(directory, "home");
                     if (String.IsNullOrWhiteSpace(old.DataDirectory)) old.DataDirectory = Path.Combine(directory, "data");
                 }
+                PreserveLegacyDirectories(old, file, environment);
                 sources.Add(new PreferencesSource { Path = file, Options = old });
             }
             if (sources.Count == 0)
@@ -200,6 +204,117 @@ namespace VaspCopilot.Launcher
             BrowserStateDirectory = Path.GetDirectoryName(chosen.Path);
             Save(chosen.Options); Record("migration", "ok", null);
             return Copy(chosen.Options);
+        }
+        private static LauncherException LegacyPathError(string source, string reason)
+        {
+            return new LauncherException("无法可靠确认旧启动设置的数据路径：" + source + "\n" + reason
+                + "\n迁移已停止，原配置和业务数据未改动。请先在旧环境确认实际绝对路径，并在旧 preferences.json 明确填写 VaspAiHome / DataDirectory 后重试；不要删除旧目录。");
+        }
+        private static Dictionary<string, string> LegacyEnvironment(string backend, string source)
+        {
+            string file = Path.Combine(backend, ".env"), text;
+            try
+            {
+                using (var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read))
+                {
+                    if (stream.Length > 1024 * 1024) throw LegacyPathError(source, "旧 backend/.env 过大，未读取其内容。");
+                    using (var reader = new StreamReader(stream, new UTF8Encoding(false, true))) text = reader.ReadToEnd();
+                }
+            }
+            catch (FileNotFoundException) { return new Dictionary<string, string>(); }
+            catch (LauncherException) { throw; }
+            catch (Exception error) { throw new PreferencesException("read", file, error); }
+            var result = new Dictionary<string, string>();
+            var spellings = new Dictionary<string, string>();
+            // runtime.py reads this exact file, not a parent/repository .env. Only
+            // path fields are retained; credentials are never imported or logged.
+            foreach (string row in Regex.Split(text, "\\r?\\n"))
+            {
+                var match = Regex.Match(row, @"^\s*(?:export\s+)?(?<key>'[^']+'|[A-Za-z_][A-Za-z0-9_]*)\s*(?:=\s*(?<value>.*))?$");
+                if (!match.Success || !match.Groups["value"].Success) continue;
+                string spelling = match.Groups["key"].Value.Trim('\''), key = spelling.ToUpperInvariant(), value = match.Groups["value"].Value.Trim();
+                bool relevant = new[] { "VASP_AI_HOME", "DATA_DIR", "USERPROFILE", "HOMEDRIVE", "HOMEPATH" }.Contains(key);
+                if (value.Length > 0 && (value[0] == '\'' || value[0] == '"'))
+                {
+                    char quote = value[0]; int end = 1;
+                    for (; end < value.Length; end++) { if (value[end] == '\\') { end++; continue; } if (value[end] == quote) break; }
+                    // Do not interpret path assignments inside an unrelated multiline value.
+                    if (end >= value.Length) throw LegacyPathError(source, "旧 backend/.env 含多行或未闭合引号，不能安全解释路径。");
+                    string tail = value.Substring(end + 1).TrimStart();
+                    if (tail.Length > 0 && tail[0] != '#') { if (relevant) throw LegacyPathError(source, "旧 backend/.env 的路径赋值格式不明确。"); continue; }
+                    value = value.Substring(1, end - 1);
+                    if (relevant)
+                        value = Regex.Replace(value, quote == '\'' ? @"\\[\\']" : @"\\[\\'""abfnrtv]", m => {
+                            char escaped = m.Value[1];
+                            const string codes = "abfnrtv", decoded = "\a\b\f\n\r\t\v";
+                            int index = codes.IndexOf(escaped); return index < 0 ? escaped.ToString() : decoded[index].ToString();
+                        });
+                }
+                else value = Regex.Replace(value, @"\s+#.*$", "").TrimEnd();
+                if (relevant)
+                {
+                    if (spellings.ContainsKey(key) && spellings[key] != spelling)
+                        throw LegacyPathError(source, "旧 backend/.env 同时包含大小写不同的路径键，优先级不明确。");
+                    spellings[key] = spelling; result[key] = value;
+                }
+            }
+            return result;
+        }
+        private static string LegacyValue(string key, Dictionary<string, string> values, Func<string, string> environment, string source)
+        {
+            string inherited = environment(key);
+            if (inherited != null) return inherited; // runtime.py uses os.environ.setdefault.
+            string value;
+            if (!values.TryGetValue(key, out value)) return null;
+            if (value.Contains("${")) throw LegacyPathError(source, "旧 backend/.env 的 " + key + " 含动态插值；未猜测展开结果。");
+            return value;
+        }
+        private static string LegacyAbsolutePath(string value, string backend, string source)
+        {
+            try
+            {
+                if (value.Length >= 2 && value[1] == ':' && (value.Length == 2 || (value[2] != '\\' && value[2] != '/')))
+                    throw LegacyPathError(source, "路径为依赖驱动器当前目录的相对形式，无法可靠保留。");
+                if (Path.IsPathRooted(value) && Path.GetPathRoot(value).Length == 1)
+                    value = Path.Combine(Path.GetPathRoot(backend), value.TrimStart('\\', '/'));
+                return Path.GetFullPath(Path.IsPathRooted(value) ? value : Path.Combine(backend, value));
+            }
+            catch (LauncherException) { throw; }
+            catch { throw LegacyPathError(source, "旧数据路径无效，无法转换为明确的绝对路径。"); }
+        }
+        private static void PreserveLegacyDirectories(LauncherOptions options, string source, Func<string, string> environment)
+        {
+            bool homeDefault = String.IsNullOrWhiteSpace(options.VaspAiHome), dataDefault = String.IsNullOrWhiteSpace(options.DataDirectory);
+            bool expandHome = !homeDefault && options.VaspAiHome.StartsWith("~", StringComparison.Ordinal);
+            bool needsBackend = homeDefault || dataDefault || expandHome
+                || !Path.IsPathRooted(options.VaspAiHome) || !Path.IsPathRooted(options.DataDirectory)
+                || Path.GetPathRoot(options.VaspAiHome).Length < 3 || Path.GetPathRoot(options.DataDirectory).Length < 3;
+            string backend = null;
+            if (needsBackend)
+            {
+                if (String.IsNullOrWhiteSpace(options.RootDirectory) || !Path.IsPathRooted(options.RootDirectory) || Path.GetPathRoot(options.RootDirectory).Length < 3)
+                    throw LegacyPathError(source, "旧安装目录不是可确认的绝对路径。");
+                backend = Path.GetFullPath(Path.Combine(options.RootDirectory, "backend"));
+                if (!Directory.Exists(backend)) throw LegacyPathError(source, "旧安装目录的 backend 不存在或不可访问，无法确认旧默认路径及 .env。");
+            }
+            var values = homeDefault || dataDefault || expandHome ? LegacyEnvironment(backend, source) : new Dictionary<string, string>();
+            string home = homeDefault ? LegacyValue("VASP_AI_HOME", values, environment, source) : options.VaspAiHome;
+            if (String.IsNullOrEmpty(home) || home.StartsWith("~", StringComparison.Ordinal))
+            {
+                string userHome = LegacyValue("USERPROFILE", values, environment, source);
+                if (userHome == null)
+                {
+                    string homePath = LegacyValue("HOMEPATH", values, environment, source);
+                    if (homePath == null) throw LegacyPathError(source, "旧 Windows 用户 home 无法确认。");
+                    userHome = (LegacyValue("HOMEDRIVE", values, environment, source) ?? "") + homePath;
+                }
+                if (String.IsNullOrEmpty(home)) home = Path.Combine(userHome, ".vasp-ai");
+                else if (home == "~" || home.StartsWith("~/", StringComparison.Ordinal) || home.StartsWith("~\\", StringComparison.Ordinal)) home = Path.Combine(userHome, home.Length == 1 ? "" : home.Substring(2));
+                else throw LegacyPathError(source, "旧 home 使用了无法可靠解释的 ~用户 路径。");
+            }
+            string data = dataDefault ? LegacyValue("DATA_DIR", values, environment, source) ?? "data" : options.DataDirectory;
+            options.VaspAiHome = LegacyAbsolutePath(home, backend, source);
+            options.DataDirectory = LegacyAbsolutePath(data, backend, source);
         }
         private void Record(string stage, string result, Exception error)
         {
