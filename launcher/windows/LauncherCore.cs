@@ -71,25 +71,212 @@ namespace VaspCopilot.Launcher
         public string Version { get; set; } public string WebUrl { get; set; }
         public List<ServiceSnapshot> Services { get; set; }
     }
+    public sealed class PreferencesException : LauncherException
+    {
+        public string Stage { get; private set; }
+        public string Category { get; private set; }
+        private static string Kind(Exception error) { var known = error as PreferencesException; return known == null ? error.GetType().Name : known.Category; }
+        public PreferencesException(string stage, string path, Exception error)
+            : base("启动设置" + (stage == "read" ? "读取" : "保存") + "失败（" + Kind(error) + "，阶段 " + stage + "）。\n文件：" + path
+                + "\n未确认保存成功，请检查文件权限、占用或 JSON 内容后重试；不要删除原有配置和业务数据。") { Stage = stage; Category = Kind(error); }
+    }
+    public sealed class PreferencesSource
+    {
+        public string Path { get; set; }
+        public LauncherOptions Options { get; set; }
+    }
+    // One explicitly initialized context is shared by the form and controller.
+    // The facade below also preserves isolated controller harness compatibility.
+    public sealed class LauncherPreferencesStore
+    {
+        public string DirectoryPath { get; private set; }
+        public string Target { get { return Path.Combine(DirectoryPath, "preferences.json"); } }
+        public string RuntimeStateDirectory { get; private set; }
+        public string BrowserStateDirectory { get; private set; }
+        public string Source { get; private set; }
+        public LauncherPreferencesStore(string directory, string runtimeStateDirectory = null)
+        {
+            DirectoryPath = Path.GetFullPath(directory);
+            RuntimeStateDirectory = Path.GetFullPath(runtimeStateDirectory ?? directory);
+            BrowserStateDirectory = RuntimeStateDirectory;
+            Source = Target;
+        }
+        public static LauncherOptions Copy(LauncherOptions o)
+        {
+            return new LauncherOptions { RootDirectory = o.RootDirectory, PythonExecutable = o.PythonExecutable,
+                VaspAiHome = o.VaspAiHome, DataDirectory = o.DataDirectory, EnableAi = o.EnableAi,
+                FullFeatures = o.FullFeatures, AutoPrepareEnvironment = o.AutoPrepareEnvironment, IsolatedProfile = o.IsolatedProfile };
+        }
+        public static void Assign(LauncherOptions destination, LauncherOptions o)
+        {
+            destination.RootDirectory = o.RootDirectory; destination.PythonExecutable = o.PythonExecutable;
+            destination.VaspAiHome = o.VaspAiHome; destination.DataDirectory = o.DataDirectory; destination.EnableAi = o.EnableAi;
+        }
+        private static string Content(LauncherOptions o)
+        {
+            return new JavaScriptSerializer().Serialize(new { o.RootDirectory, o.PythonExecutable, o.VaspAiHome, o.DataDirectory, o.EnableAi });
+        }
+        private static LauncherOptions Read(string path)
+        {
+            try
+            {
+                string text;
+                using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
+                {
+                    if (stream.Length > 1024 * 1024) throw new FormatException("Oversized preferences");
+                    using (var reader = new StreamReader(stream, Encoding.UTF8)) text = reader.ReadToEnd();
+                }
+                var fields = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(text);
+                if (fields == null || !fields.ContainsKey("RootDirectory")) throw new FormatException("Missing preferences fields");
+                foreach (string key in new[] { "RootDirectory", "PythonExecutable", "VaspAiHome", "DataDirectory" })
+                    if (fields.ContainsKey(key) && !(fields[key] is string)) throw new FormatException("Invalid preferences field");
+                if (fields.ContainsKey("EnableAi") && !(fields["EnableAi"] is bool)) throw new FormatException("Invalid AI choice");
+                var o = new JavaScriptSerializer().Deserialize<LauncherOptions>(text);
+                o.RootDirectory = o.RootDirectory ?? ""; o.PythonExecutable = o.PythonExecutable ?? "";
+                o.VaspAiHome = o.VaspAiHome ?? ""; o.DataDirectory = o.DataDirectory ?? "";
+                o.ToolboxPort = 8000; o.AiPort = 8500; o.WebPort = 5173;
+                return o;
+            }
+            catch (FileNotFoundException) { return null; }
+            catch (DirectoryNotFoundException) { return null; }
+            catch (Exception error) { throw new PreferencesException("read", path, error); }
+        }
+        public LauncherOptions Load()
+        {
+            try { return Read(Target) ?? new LauncherOptions(); }
+            catch (Exception error) { Record("read", "failed", error); throw; }
+        }
+        public LauncherOptions LoadFormal(string appDirectory, string packageRoot, Func<List<PreferencesSource>, PreferencesSource> select)
+        {
+            try { return LoadFormalCore(appDirectory, packageRoot, select); }
+            catch (Exception error) { Record("read", "failed", error); throw; }
+        }
+        private LauncherOptions LoadFormalCore(string appDirectory, string packageRoot, Func<List<PreferencesSource>, PreferencesSource> select)
+        {
+            var current = Read(Target);
+            if (current != null)
+            {
+                try
+                {
+                    var metadata = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(File.ReadAllText(Target, Encoding.UTF8));
+                    string[] known = new[] { DirectoryPath, Path.Combine(appDirectory, "desktop-v040-full"), Path.Combine(appDirectory, "desktop-v3"), Path.Combine(appDirectory, "launcher") };
+                    if (metadata.ContainsKey("BrowserStateDirectory"))
+                    {
+                        string browser = metadata["BrowserStateDirectory"] as string;
+                        if (browser == null || !known.Any(p => String.Equals(p, browser, StringComparison.OrdinalIgnoreCase))) throw new FormatException("Unknown browser state source");
+                        BrowserStateDirectory = browser;
+                    }
+                    Source = metadata.ContainsKey("MigrationSource") ? metadata["MigrationSource"] as string : Target;
+                    if (Source == null || !known.Any(p => String.Equals(Path.Combine(p, "preferences.json"), Source, StringComparison.OrdinalIgnoreCase))) throw new FormatException("Unknown migration source");
+                }
+                catch (Exception error) { throw new PreferencesException("read", Target, error); }
+                Record("read", "ok", null); return current;
+            }
+            var sources = new List<PreferencesSource>();
+            foreach (string oldName in new[] { "desktop-v040-full", "desktop-v3", "launcher" })
+            {
+                string directory = Path.Combine(appDirectory, oldName), file = Path.Combine(directory, "preferences.json");
+                var old = Read(file);
+                if (old == null) continue;
+                // Full mode previously supplied these defaults outside preferences.json.
+                // Normal mode's blanks deliberately retain its existing backend priority.
+                if (oldName == "desktop-v040-full")
+                {
+                    if (String.IsNullOrWhiteSpace(old.VaspAiHome)) old.VaspAiHome = Path.Combine(directory, "home");
+                    if (String.IsNullOrWhiteSpace(old.DataDirectory)) old.DataDirectory = Path.Combine(directory, "data");
+                }
+                sources.Add(new PreferencesSource { Path = file, Options = old });
+            }
+            if (sources.Count == 0)
+                return new LauncherOptions { RootDirectory = packageRoot, EnableAi = true,
+                    VaspAiHome = Path.Combine(appDirectory, "desktop-v040-full", "home"), DataDirectory = Path.Combine(appDirectory, "desktop-v040-full", "data") };
+            var chosen = sources[0];
+            if (sources.Any(s => Content(s.Options) != Content(chosen.Options)))
+            {
+                chosen = select(sources);
+                if (chosen == null || !sources.Contains(chosen)) throw new LauncherException("已取消旧启动设置迁移。原配置和业务数据未改动。");
+            }
+            Source = chosen.Path;
+            BrowserStateDirectory = Path.GetDirectoryName(chosen.Path);
+            Save(chosen.Options); Record("migration", "ok", null);
+            return Copy(chosen.Options);
+        }
+        private void Record(string stage, string result, Exception error)
+        {
+            try
+            {
+                Directory.CreateDirectory(DirectoryPath);
+                string record = new JavaScriptSerializer().Serialize(new { utc = DateTime.UtcNow.ToString("o"), source = Source, target = Target,
+                    stage, result, category = error == null ? null : error is PreferencesException ? ((PreferencesException)error).Category : error.GetType().Name });
+                File.WriteAllText(Path.Combine(DirectoryPath, "last-preferences-operation.json"), record, Encoding.UTF8);
+                File.AppendAllText(Path.Combine(DirectoryPath, "preferences-events.jsonl"), record + Environment.NewLine, Encoding.UTF8);
+            }
+            catch { /* A diagnostic write must never convert failure into success. */ }
+        }
+        public void Save(LauncherOptions options)
+        {
+            string stage = "lock", temp = Target + "." + Guid.NewGuid().ToString("N") + ".tmp", backup = temp + ".previous";
+            bool acquired = false, replaced = false; string mutexName;
+            using (var hash = SHA256.Create()) mutexName = "Local\\VaspCopilotPreferences-" + BitConverter.ToString(hash.ComputeHash(Encoding.UTF8.GetBytes(Target.ToUpperInvariant()))).Replace("-", "");
+            using (var mutex = new Mutex(false, mutexName))
+            {
+                try
+                {
+                    try { acquired = mutex.WaitOne(5000); } catch (AbandonedMutexException) { acquired = true; }
+                    if (!acquired) throw new IOException("Preferences busy");
+                    stage = "read"; var previous = Read(Target); // Never overwrite unreadable/corrupt existing settings.
+                    stage = "write"; Directory.CreateDirectory(DirectoryPath);
+                    var fields = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(Content(options));
+                    fields["MigrationSource"] = Source; fields["BrowserStateDirectory"] = BrowserStateDirectory;
+                    byte[] bytes = Encoding.UTF8.GetBytes(new JavaScriptSerializer().Serialize(fields));
+                    using (var stream = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None)) { stream.Write(bytes, 0, bytes.Length); stream.Flush(true); }
+                    stage = "replace";
+                    if (previous != null) File.Replace(temp, Target, backup); else File.Move(temp, Target);
+                    replaced = true; stage = "verify";
+                    var saved = Read(Target);
+                    if (saved == null || Content(saved) != Content(options)) throw new IOException("Read-back mismatch");
+                    Record("verify", "ok", null);
+                }
+                catch (Exception error)
+                {
+                    if (replaced)
+                    {
+                        try
+                        {
+                            if (File.Exists(backup)) File.Replace(backup, Target, null);
+                            else File.Move(Target, Target + ".unverified-" + Guid.NewGuid().ToString("N"));
+                        }
+                        catch { stage += "-restore-failed"; /* Preserve the backup for explicit recovery. */ }
+                    }
+                    Record(stage, "failed", error); throw new PreferencesException(stage, Target, error);
+                }
+                finally
+                {
+                    try { if (File.Exists(temp)) File.Delete(temp); } catch { }
+                    // Keep recovery evidence if restoring the old file failed.
+                    if (!stage.EndsWith("restore-failed")) try { if (File.Exists(backup)) File.Delete(backup); } catch { }
+                    if (acquired) mutex.ReleaseMutex();
+                }
+            }
+        }
+    }
     public static class LauncherPreferences
     {
-        // D1 candidate only: allow the desktop harness to isolate its preferences/logs.
-        internal static readonly string DirectoryPath = Environment.GetEnvironmentVariable("VASP_LAUNCHER_STATE_DIR")
-            ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "VASP-Copilot", "launcher");
+        private static LauncherPreferencesStore store;
+        public static void Initialize(LauncherPreferencesStore context) { if (context == null) throw new ArgumentNullException("context"); store = context; }
+        public static LauncherPreferencesStore Store
+        {
+            get
+            {
+                if (store == null) store = new LauncherPreferencesStore(Environment.GetEnvironmentVariable("VASP_LAUNCHER_STATE_DIR")
+                    ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "VASP-Copilot", "launcher"));
+                return store;
+            }
+        }
+        internal static string DirectoryPath { get { return Store.DirectoryPath; } }
         public static string StateDirectory { get { return DirectoryPath; } }
-        public static LauncherOptions Load()
-        {
-            try { var options = new JavaScriptSerializer().Deserialize<LauncherOptions>(File.ReadAllText(Path.Combine(DirectoryPath, "preferences.json"), Encoding.UTF8)) ?? new LauncherOptions(); options.ToolboxPort = 8000; options.WebPort = 5173; options.AiPort = 8500; return options; }
-            catch { return new LauncherOptions(); }
-        }
-        public static void Save(LauncherOptions options)
-        {
-            Directory.CreateDirectory(DirectoryPath);
-            string target = Path.Combine(DirectoryPath, "preferences.json");
-            string temp = target + ".tmp";
-            File.WriteAllText(temp, new JavaScriptSerializer().Serialize(new { options.RootDirectory, options.PythonExecutable, options.VaspAiHome, options.DataDirectory, options.EnableAi }), Encoding.UTF8);
-            if (File.Exists(target)) File.Replace(temp, target, null); else File.Move(temp, target);
-        }
+        public static LauncherOptions Load() { return Store.Load(); }
+        public static void Save(LauncherOptions options) { Store.Save(options); }
     }
 
     public sealed class LauncherController : IDisposable
@@ -103,7 +290,7 @@ namespace VaspCopilot.Launcher
         private readonly object sync = new object();
         private readonly List<Service> services = new List<Service>();
         private int busy;
-        private string message = "选择已有安装目录和 Python 环境；智能模式默认关闭。", version = "", webUrl = "", root = "", fingerprint = "";
+        private string message = "核对安装目录和 Python 环境；智能模式按已保存选择启动。", version = "", webUrl = "", root = "", fingerprint = "";
         private string startupStage = "";
         private bool disposed;
         private readonly Timer healthTimer;
@@ -376,7 +563,7 @@ namespace VaspCopilot.Launcher
             SelectedPythonDescription = null;
             pythonProbeFailures.Clear();
             pythonPolicy = PythonRuntimePolicy.Load(options.RootDirectory);
-            string state = Path.GetFullPath(Path.Combine(LauncherPreferences.StateDirectory, "runtime", "full"));
+            string state = Path.GetFullPath(Path.Combine(LauncherPreferences.Store.RuntimeStateDirectory, "runtime", "full"));
             string request = Path.Combine(state, "requests", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(request);
             string result = Path.Combine(request, "result.json"), progress = Path.Combine(request, "progress.json");
