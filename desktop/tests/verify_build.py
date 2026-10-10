@@ -5,7 +5,7 @@ import json
 
 ROOT = Path(__file__).resolve().parents[2]
 manifest = json.loads((ROOT/'desktop/dist/build-manifest.json').read_text(encoding='utf-8-sig'))
-expected = {'VASP-Copilot-Desktop-V3.exe', 'VASP-Copilot-Desktop-V3.exe.config',
+expected = {'VASP-Copilot.exe', 'VASP-Copilot.exe.config',
             'Microsoft.Web.WebView2.Core.dll', 'Microsoft.Web.WebView2.WinForms.dll',
             'WebView2Loader.dll', 'WebView2-LICENSE.txt', 'WebView2-NOTICE.txt'}
 assert set(manifest['output']) == expected
@@ -30,6 +30,17 @@ for source, output in [('lib/net462/Microsoft.Web.WebView2.Core.dll', 'Microsoft
     assert manifest['output'][output] == lock['files'][source]
 js = '\n'.join(path.read_text(encoding='utf-8') for path in (ROOT/'frontend/dist/assets').glob('*.js'))
 assert not any(marker in js for marker in ['navigator.serviceWorker', 'mockServiceWorker', 'onUnhandledRequest', 'setupWorker'])
+package = Path(json.loads((ROOT/'desktop/dist/last-package.json').read_text(encoding='utf-8-sig'))['directory'])
+inventory = json.loads((package/'package-manifest.json').read_text(encoding='utf-8-sig'))
+assert inventory['entry'] == 'VASP-Copilot.exe'
+assert not (package/'启动完整功能.cmd').exists()
+assert list(package.rglob('*.exe')) == [package/'VASP-Copilot.exe']
+for name, expected_hash in inventory['files'].items():
+    relative = Path(name)
+    assert not relative.is_absolute() and '..' not in relative.parts
+    assert hashlib.sha256((package/relative).read_bytes()).hexdigest() == expected_hash, name
+for name in expected:
+    assert inventory['files'][name] == manifest['output'][name]
 print(json.dumps({'passed': True, 'head': manifest['head'], 'inputs': len(manifest['inputs']),
                   'output': len(manifest['output']), 'frontendDist': len(manifest['frontendDist']),
                   'productionMocks': False}))

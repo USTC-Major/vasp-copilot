@@ -6,7 +6,7 @@ v0.4.1 支持标准 Windows x64 CPython 3.11–3.14，改进注册信息、PATH�
 
 ## 完整功能入口
 
-当前源码构建使用包根目录的 `启动完整功能.cmd`（等价于 EXE 的 `--full-features`）。默认启用 AI 与真实功能入口，自动端口；沿用已有标准 CPython 3.11/3.12/3.13/3.14 x64，不附带解释器；首次自动创建专用环境并联网安装锁定运行依赖。该模式与 `--test-profile` 互斥，使用独立桌面偏好和业务目录；系统凭据仍属于同一 Windows 用户。具体复测与开关范围见 [0.4.0完整功能复测](../0.4.0完整功能复测.md)。普通无参启动与隔离测试入口保持兼容。
+当前源码构建生成根目录 `VASP-Copilot.exe` 的完整包，不再提供 CMD 用户入口。不带参数默认具备完整功能：自动端口、Python 检测、专用依赖准备及真实功能入口；首次默认启用 AI，后续保留已保存的开关选择。`--full-features` 是同一正式模式的兼容参数，不能与隔离 `--test-profile` 混用。已发布 v0.4.1 附件未被替换，历史说明仍保留。用户步骤见[当前源码快速开始](../桌面单入口快速开始.md)。
 
 ## 前提
 
@@ -34,7 +34,7 @@ v0.4.1 支持标准 Windows x64 CPython 3.11–3.14，改进注册信息、PATH�
 
 完整功能入口使用 `launcher/environment.py`，读取 `launcher/python-support.json`，按对应 `backend/requirements-win-cp3xx-x64.lock` 安装完整闭包；每包精确版本及 wheel SHA256，禁止源码临时编译。运行依赖来自 `requirements-runtime.txt`，开发/测试仍用 `requirements.txt`。依赖变化必须重建相应锁并通过四版本 CI，不能只改宽泛运行清单。
 
-环境和下载缓存位于完整功能偏好目录下的 runtime/full；按解释器版本/架构/锁摘要分开，未完成标记不能作为可用凭证，成功环境后续本地核验。取消仅停止所属安装进程树；旧环境及用户 Python 不修改。准备日志留本地，UI报告固定错误与日志位置。当前仅官方 PyPI 直连，不继承 pip 配置、额外源或带凭据代理；无网络时保留缓存并明确提示重试。
+环境和下载缓存继续位于原 `desktop-v040-full/runtime/full`，偏好迁移不搬动环境。按解释器版本/架构/锁摘要分开，未完成标记不作为可用凭证；核验成功后复用。取消仅停止所属安装进程树，不修改用户 Python。仅直连官方 PyPI，不继承 pip 配置、额外源或代理；失败有日志与重试提示。
 
 ## SDK、品牌资源与产物
 
@@ -44,29 +44,32 @@ WebView2 SDK 固定为 [Microsoft.Web.WebView2 1.0.3650.58](https://www.nuget.or
 
 已批准的原始 `assets/app-icon.svg` 和生成的 PNG/七尺寸 ICO 均作为品牌资产入库。普通构建核对 `icon-export.json` 的来源/输出哈希，不要求 Pillow。维护者需要重新导出时，可在已有 Pillow 10.4.0 的独立环境执行 `python desktop/assets/export_icon.py`；脚本不会安装依赖。更换资产时须一起审核 SVG、PNG、ICO 和清单。
 
-输出为 `frontend/dist` 与 `desktop/dist`。桌面目录内包含 EXE、相邻三个 WebView2 DLL、EXE.config 和 WebView2 许可证/NOTICE。`build-manifest.json` 记录本次输入、工具版本、七项运行产物及前端资源哈希；清单不收录自身或目录内的无关旧文件。失败重建会撤销旧成功清单，旧 EXE 不能据此视为新构建成功。旧 Framework 编译器不承诺不同构建的 EXE 位级相同。
+构建暂存为 `frontend/dist` 与 `desktop/dist`，使用新 EXE 名；随后自动调用 `stage-package.ps1`，从版本控制输入和经核验产物生成新的 `desktop/.cache/packages/package-*` 完整包，位置记录在 `desktop/dist/last-package.json`。包根包含 EXE、相邻 config、三个 WebView2 DLL 和许可证；后端、前端及 helper 同包。已有输出目录不会被清空。构建和包清单记录输入/产物哈希，失败重建撤销旧成功清单。Framework 编译器不承诺位级相同。
 
 ## 运行与隔离试用
 
 ```powershell
-./desktop/dist/VASP-Copilot-Desktop-V3.exe
+$package = (Get-Content desktop/dist/last-package.json -Raw | ConvertFrom-Json).directory
+& (Join-Path $package 'VASP-Copilot.exe')
 ```
 
-保留上述相对目录结构：程序从 `desktop/dist` 定位仓库 `launcher/runtime.py`，首次在“启动设置”选择已有安装目录（含 `backend` 与 `frontend/dist`），后续自动寻找已有 Python 和本地端口。复制单个 EXE 不构成安装包。
+须完整解压；发布 EXE 从自身目录定位 helper、前后端，不依赖工作目录。首次预填当前包目录；保存的目录指向另一包时提示核对并阻止混用。内部 desktop/dist 仅供源码构建调试，不作为额外用户入口。
 
-正常启动偏好位于 `%LOCALAPPDATA%/VASP-Copilot/desktop-v3`，不读取或迁移 D2 启动偏好；业务配置沿用项目既有优先级。V3 与 D2 有独立单实例标识；同一 Toolbox 业务 home（`VASP_AI_HOME`）的重复服务由后端进程锁拒绝，控制器仅管理本次所属进程。
+正式偏好固定为 `%LOCALAPPDATA%/VASP-Copilot/desktop/preferences.json`，同一用户的正式入口共用单实例。首次兼容 desktop-v040-full、desktop-v3、launcher；不同旧来源需明确选择，旧原件保留，已有新配置优先。旧 full 模式隐含 home/data 延续，normal 的空路径仍沿用后端配置优先级，不搬数据库、凭据、浏览器数据或缓存。旧 V3 正在运行时提示先退出，不杀进程或接管服务。
+
+设置页显示来源/目标；保存先写盘并回读核验，再接受内存新值。读取损坏或访问失败不能当成首次使用。根 EXE 的 `--diagnose-startup` 不启动服务，输出 startup-diagnostics.json，含 EXE/版本/模式、配置位置及上次操作阶段，不含业务配置或密钥。原故障电脑仍需取证。
 
 隔离试用可显式指定绝对测试目录：
 
 ```powershell
-./desktop/dist/VASP-Copilot-Desktop-V3.exe --test-profile 'C:/test/vasp-desktop' --test-root 'C:/src/vasp-copilot' --test-python 'C:/path/to/existing/python.exe'
+& (Join-Path $package 'VASP-Copilot.exe') --test-profile 'C:/test/vasp-desktop' --test-root $package --test-python 'C:/path/to/existing/python.exe'
 ```
 
 隔离模式使用独立 home/data/偏好、跳过项目 `.env`、阻断共享 keyring 写入与 WebView 外部资源，强制关闭智能模式。省略 `--test-root` 并使用新的 profile 可检查首次目录设置。不要把正常用户配置或科研数据作为测试 profile。
 
 ## 验证范围
 
-`test.ps1` 将控制器测试宿主编译到忽略缓存，并用显式已有 Python 运行 16 个受控场景：环境候选、中文/空格路径、端口占用者保留、绑定争用及三次上限、身份核验、部分失败清理、取消、合成项目/设置持久化、服务全灭和重试恢复。另包含完整功能启动、开关、动态 reviewer、子进程凭据隔离、重启及配置缺失检查。测试 HOME、数据、偏好、日志、pycache 均独立；异常结束时只回收测试启动的进程。
+`test.ps1` 将控制器测试宿主编译到忽略缓存，并用显式已有 Python 运行受控场景，新增实际 SettingsForm 保存/独立进程恢复、迁移和读写失败检查：环境候选、中文/空格路径、端口占用者保留、绑定争用及三次上限、身份核验、部分失败清理、取消、合成项目/设置持久化、服务全灭和重试恢复。另包含完整功能启动、开关、动态 reviewer、子进程凭据隔离、重启及配置缺失检查。测试 HOME、数据、偏好、日志、pycache 均独立；异常结束时只回收测试启动的进程。
 
 新增 `desktop-windows` CI 从准确 PR head 干净构建，恢复既有后端声明依赖到独立测试环境，再运行控制层检查。CI 只上传小型清单/结果及 CI 专用环境的安装日志（安装进程不继承业务凭据或代理），不上传 profile、配置、科研数据、缓存或完整状态目录；已有前端/Linux/Docker CI 保持不变。
 

@@ -28,36 +28,88 @@ namespace VaspCopilot.DesktopV3
         {
             int i = Array.IndexOf(args, key); return i < 0 || i + 1 >= args.Length ? "" : args[i + 1];
         }
+        internal static string InstanceKey(string user, string scope)
+        { using (var hash = SHA256.Create()) return BitConverter.ToString(hash.ComputeHash(Encoding.UTF8.GetBytes(user + "|" + scope))).Replace("-", ""); }
+        internal static bool FullFeatures(string[] args) { return Array.IndexOf(args, "--test-profile") < 0; }
+        internal static bool LegacyRunning(string user)
+        {
+            foreach (string scope in new[] { "normal", "full-features" })
+                try { using (Mutex.OpenExisting("Local\\VaspCopilotV3-" + InstanceKey(user, scope))) return true; }
+                catch (WaitHandleCannotBeOpenedException) { }
+                catch (UnauthorizedAccessException) { return true; }
+            return false;
+        }
+        private static PreferencesSource SelectLegacy(System.Collections.Generic.List<PreferencesSource> sources)
+        {
+            using (var dialog = new Form { Text = "选择旧启动设置", Width = 820, Height = 440, StartPosition = FormStartPosition.CenterScreen })
+            {
+                ShellTheme.Apply(dialog);
+                var list = new ListBox { Dock = DockStyle.Top, Height = 100 };
+                foreach (var source in sources) list.Items.Add(source.Path);
+                var detail = new TextBox { Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical };
+                list.SelectedIndexChanged += delegate
+                {
+                    var o = sources[list.SelectedIndex].Options;
+                    detail.Text = "多个旧来源内容不同，选择后仅导入启动偏好，原件和业务数据保留。\r\n推荐原完整模式来源。\r\n安装目录：" + o.RootDirectory
+                        + "\r\nPython：" + (o.PythonExecutable.Length == 0 ? "自动检测" : o.PythonExecutable)
+                        + "\r\n业务 home：" + (o.VaspAiHome.Length == 0 ? "沿用原配置优先级" : o.VaspAiHome)
+                        + "\r\n数据目录：" + (o.DataDirectory.Length == 0 ? "沿用原配置优先级" : o.DataDirectory) + "\r\n智能服务：" + o.EnableAi;
+                };
+                var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 54 };
+                var use = ShellTheme.Button("使用所选配置", true); use.DialogResult = DialogResult.OK;
+                var cancel = ShellTheme.Button("取消"); cancel.DialogResult = DialogResult.Cancel;
+                buttons.Controls.Add(use); buttons.Controls.Add(cancel); dialog.Controls.Add(detail); dialog.Controls.Add(list); dialog.Controls.Add(buttons);
+                list.SelectedIndex = 0;
+                return dialog.ShowDialog() == DialogResult.OK ? sources[list.SelectedIndex] : null;
+            }
+        }
+        internal static void Diagnose(string state, string mode)
+        {
+            var store = LauncherPreferences.Store;
+            string last = Path.Combine(state, "last-preferences-operation.json");
+            File.WriteAllText(Path.Combine(state, "startup-diagnostics.json"), new JavaScriptSerializer().Serialize(new {
+                executable = Application.ExecutablePath, version = Application.ProductVersion, mode,
+                user = WindowsIdentity.GetCurrent().User.Value, source = store.Source, target = store.Target,
+                lastOperation = File.Exists(last) ? File.ReadAllText(last, Encoding.UTF8) : "尚无保存记录" }), Encoding.UTF8);
+        }
         [STAThread] private static void Main(string[] args)
         {
             Application.EnableVisualStyles(); Application.SetCompatibleTextRenderingDefault(false);
-            bool fullFeatures = Array.IndexOf(args, "--full-features") >= 0;
+            bool fullFeatures = FullFeatures(args);
             bool testProfileSpecified = Array.IndexOf(args, "--test-profile") >= 0;
-            if (fullFeatures && testProfileSpecified)
+            if (Array.IndexOf(args, "--full-features") >= 0 && testProfileSpecified)
             {
                 MessageBox.Show("--full-features 与 --test-profile 不能同时使用。请删除其中一个启动参数。", "启动参数冲突", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
             string profile = Arg(args, "--test-profile");
+            if (testProfileSpecified && String.IsNullOrWhiteSpace(profile)) { MessageBox.Show("测试 profile 必须提供独立绝对路径。"); return; }
             if (profile.Length > 0 && !Path.IsPathRooted(profile)) { MessageBox.Show("测试 profile 必须是绝对路径。"); return; }
             bool isolated = profile.Length > 0;
-            string state = isolated ? Path.GetFullPath(profile) : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "VASP-Copilot", fullFeatures ? "desktop-v040-full" : "desktop-v3");
-            Directory.CreateDirectory(state);
+            string appDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "VASP-Copilot");
+            string state = isolated ? Path.GetFullPath(profile) : Path.Combine(appDirectory, "desktop");
+            string user = WindowsIdentity.GetCurrent().User.Value;
+            if (!isolated && LegacyRunning(user)) { MessageBox.Show("检测到旧版桌面仍在运行，请先退出旧版再打开本包。不会接管或停止旧版服务。", "请先退出旧版"); return; }
+            try { Directory.CreateDirectory(state); } catch (Exception error) { MessageBox.Show("启动设置目录不可访问：" + state + "\n" + error.GetType().Name); return; }
+            LauncherPreferences.Initialize(new LauncherPreferencesStore(state, isolated ? state : Path.Combine(appDirectory, "desktop-v040-full")));
             Environment.SetEnvironmentVariable("VASP_LAUNCHER_STATE_DIR", state);
-            string instance;
-            string instanceScope = isolated ? state.ToUpperInvariant() : fullFeatures ? "full-features" : "normal";
-            using (var hash = SHA256.Create()) instance = BitConverter.ToString(hash.ComputeHash(Encoding.UTF8.GetBytes(WindowsIdentity.GetCurrent().User.Value + "|" + instanceScope))).Replace("-", "");
+            if (Array.IndexOf(args, "--diagnose-startup") >= 0)
+            { try { Diagnose(state, isolated ? "test-profile" : "desktop"); MessageBox.Show("只读诊断已写入：\n" + Path.Combine(state, "startup-diagnostics.json")); } catch (Exception error) { MessageBox.Show("诊断记录失败：" + error.GetType().Name); } return; }
+            string instance = InstanceKey(user, isolated ? state.ToUpperInvariant() : "desktop");
             // Event exists before mutex ownership is decided, so an early second launch is retained.
-            using (var activation = new EventWaitHandle(false, EventResetMode.AutoReset, "Local\\VaspCopilotV3-Activate-" + instance))
+            using (var activation = new EventWaitHandle(false, EventResetMode.AutoReset, "Local\\VaspCopilotDesktop-Activate-" + instance))
             {
                 bool first;
-                using (var mutex = new Mutex(true, "Local\\VaspCopilotV3-" + instance, out first))
+                using (var mutex = new Mutex(true, "Local\\VaspCopilotDesktop-" + instance, out first))
                 {
                     if (!first) { AllowSetForegroundWindow(-1); activation.Set(); return; }
                     try
                     {
-                        string packageRoot = Path.GetFullPath(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", ".."));
-                        var options = LauncherPreferences.Load();
+                        string packageRoot = Path.GetFullPath(AppDomain.CurrentDomain.BaseDirectory).TrimEnd(Path.DirectorySeparatorChar);
+                        // Development build staging only; shipped EXE lives beside backend/launcher.
+                        if (!File.Exists(Path.Combine(packageRoot, "launcher", "runtime.py")) && new DirectoryInfo(packageRoot).Name == "dist")
+                            packageRoot = Path.GetFullPath(Path.Combine(packageRoot, "..", ".."));
+                        var options = isolated ? LauncherPreferences.Load() : LauncherPreferences.Store.LoadFormal(appDirectory, packageRoot, SelectLegacy);
                         options.IsolatedProfile = isolated;
                         options.FullFeatures = fullFeatures;
                         options.AutoPrepareEnvironment = fullFeatures;
@@ -69,15 +121,15 @@ namespace VaspCopilot.DesktopV3
                             options.EnableAi = false;
                             Environment.SetEnvironmentVariable("PYTHONPYCACHEPREFIX", Path.Combine(state, "pycache"));
                         }
-                        else if (fullFeatures)
-                        {
-                            options.EnableAi = true;
-                            if (String.IsNullOrWhiteSpace(options.VaspAiHome)) options.VaspAiHome = Path.Combine(state, "home");
-                            if (String.IsNullOrWhiteSpace(options.DataDirectory)) options.DataDirectory = Path.Combine(state, "data");
-                        }
+                        Diagnose(state, isolated ? "test-profile" : "desktop");
                         using (var controller = new LauncherController(Path.Combine(packageRoot, "launcher", "runtime.py")))
-                        using (var form = new DesktopForm(controller, options, state, isolated, activation)) Application.Run(form);
+                        using (var form = new DesktopForm(controller, options, state, isolated, activation, packageRoot))
+                        {
+                            if (isolated && Array.IndexOf(args, "--test-offscreen") >= 0) { form.StartPosition = FormStartPosition.Manual; form.Location = new Point(-20000, -20000); form.ShowInTaskbar = false; }
+                            Application.Run(form);
+                        }
                     }
+                    catch (Exception error) { MessageBox.Show(error is LauncherException ? error.Message : "桌面初始化失败：" + error.GetType().Name + "\n配置位置：" + LauncherPreferences.Store.Target, "启动未完成"); }
                     finally { mutex.ReleaseMutex(); }
                 }
             }
@@ -107,15 +159,17 @@ namespace VaspCopilot.DesktopV3
     {
         private readonly TextBox root = new TextBox(), python = new TextBox();
         private readonly CheckBox ai = new CheckBox();
-        internal SettingsForm(LauncherOptions options, string selectedPython)
+        internal SettingsForm(LauncherOptions options, string selectedPython, string packageRoot = null)
         {
             SuspendLayout(); AutoScaleMode = AutoScaleMode.Dpi; ShellTheme.Apply(this);
             Text = "启动设置 · VASP-Copilot"; ClientSize = new Size(760, 340); AutoSize = true; AutoSizeMode = AutoSizeMode.GrowAndShrink; MinimumSize = new Size(780, 380); FormBorderStyle = FormBorderStyle.FixedDialog;
             StartPosition = FormStartPosition.CenterParent; MaximizeBox = false; MinimizeBox = false;
-            var layout = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(24), ColumnCount = 3, RowCount = 7 };
+            var layout = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(24), ColumnCount = 3, RowCount = 8 };
             layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize)); layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             for (int row = 0; row < layout.RowCount; row++) layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             var title = ShellTheme.Label("安装目录与运行环境", 16F); layout.Controls.Add(title, 0, 0); layout.SetColumnSpan(title, 3);
+            root.Name = "installationDirectory"; python.Name = "pythonExecutable"; ai.Name = "enableAi";
+            root.AccessibleName = "安装目录"; python.AccessibleName = "Python（留空自动）";
             root.Text = options.RootDirectory; python.Text = options.PythonExecutable; ShellTheme.Input(root); ShellTheme.Input(python);
             var folder = ShellTheme.Button("选择目录");
             folder.Click += delegate { using (var dialog = new FolderBrowserDialog { Description = "选择已有 VASP-Copilot 安装目录（含 backend 与 frontend/dist）", SelectedPath = root.Text }) if (dialog.ShowDialog(this) == DialogResult.OK) root.Text = dialog.SelectedPath; };
@@ -136,9 +190,25 @@ namespace VaspCopilot.DesktopV3
             var hint = ShellTheme.Label(pythonHint, 10F, true); hint.MaximumSize = new Size(650, 0); layout.Controls.Add(hint, 1, 4); layout.SetColumnSpan(hint, 2);
             if (options.IsolatedProfile) { var isolation = ShellTheme.Label("隔离候选：智能模式关闭，数据保存在独立测试目录。", 10F, true); layout.Controls.Add(isolation, 1, 5); layout.SetColumnSpan(isolation, 2); }
             var buttons = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.RightToLeft, Dock = DockStyle.Fill, Margin = new Padding(0, 16, 0, 0) };
-            var save = ShellTheme.Button("保存并启动", true); save.DialogResult = DialogResult.OK; var cancel = ShellTheme.Button("取消"); cancel.DialogResult = DialogResult.Cancel;
-            save.Click += delegate { options.RootDirectory = root.Text.Trim(); options.PythonExecutable = python.Text.Trim(); options.EnableAi = !options.IsolatedProfile && ai.Checked; };
-            buttons.Controls.Add(save); buttons.Controls.Add(cancel); layout.Controls.Add(buttons, 0, 6); layout.SetColumnSpan(buttons, 3);
+            var location = ShellTheme.Label("配置来源：" + LauncherPreferences.Store.Source + "\n保存目标：" + LauncherPreferences.Store.Target, 9F, true);
+            location.MaximumSize = new Size(650, 0); layout.Controls.Add(location, 0, 6); layout.SetColumnSpan(location, 3);
+            var save = ShellTheme.Button("保存并启动", true); save.Name = "savePreferences";
+            var cancel = ShellTheme.Button("取消"); cancel.DialogResult = DialogResult.Cancel;
+            save.Click += delegate
+            {
+                var candidate = LauncherPreferencesStore.Copy(options);
+                candidate.RootDirectory = root.Text.Trim(); candidate.PythonExecutable = python.Text.Trim(); candidate.EnableAi = !options.IsolatedProfile && ai.Checked;
+                try
+                {
+                    if (!String.IsNullOrWhiteSpace(packageRoot) && !options.IsolatedProfile
+                        && !String.Equals(Path.GetFullPath(candidate.RootDirectory).TrimEnd(Path.DirectorySeparatorChar), packageRoot.TrimEnd(Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase))
+                        throw new LauncherException("所选安装目录与当前 EXE 所在包不同。请选择当前完整包目录，或退出后打开所选目录内的 VASP-Copilot.exe；不会混用旧包资源。");
+                    LauncherPreferences.Save(candidate);
+                    LauncherPreferencesStore.Assign(options, candidate); DialogResult = DialogResult.OK;
+                }
+                catch (Exception error) { MessageBox.Show(this, error is LauncherException ? error.Message : "启动设置保存失败（" + error.GetType().Name + "）。\n保存目标：" + LauncherPreferences.Store.Target, "未保存", MessageBoxButtons.OK, MessageBoxIcon.Error); }
+            };
+            buttons.Controls.Add(save); buttons.Controls.Add(cancel); layout.Controls.Add(buttons, 0, 7); layout.SetColumnSpan(buttons, 3);
             Controls.Add(layout); AcceptButton = save; CancelButton = cancel;
             AutoScaleDimensions = new SizeF(96, 96); ResumeLayout(true);
         }
@@ -161,6 +231,7 @@ namespace VaspCopilot.DesktopV3
         private readonly LauncherController controller;
         private readonly LauncherOptions options;
         private readonly string state;
+        private readonly string packageRoot;
         private readonly bool isolated;
         private readonly WebView2 web = new WebView2();
         private readonly Label status = new Label(), launchTitle = new Label(), launchMessage = new Label();
@@ -174,9 +245,9 @@ namespace VaspCopilot.DesktopV3
         private string origin = "", lastStage = "";
         private ulong navigationId;
         private int evidenceNumber;
-        internal DesktopForm(LauncherController controller, LauncherOptions options, string state, bool isolated, EventWaitHandle activation)
+        internal DesktopForm(LauncherController controller, LauncherOptions options, string state, bool isolated, EventWaitHandle activation, string packageRoot = null)
         {
-            SuspendLayout(); this.controller = controller; this.options = options; this.state = state; this.isolated = isolated;
+            SuspendLayout(); this.controller = controller; this.options = options; this.state = state; this.isolated = isolated; this.packageRoot = packageRoot ?? options.RootDirectory;
             AutoScaleMode = AutoScaleMode.Dpi; ShellTheme.Apply(this); Text = "VASP-Copilot" + (isolated ? " · V3 隔离候选" : options.FullFeatures ? " · 完整功能" : ""); Width = 1280; Height = 900; MinimumSize = new Size(960, 700); StartPosition = FormStartPosition.CenterScreen;
             var bar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 54, Padding = new Padding(14, 5, 8, 5), BackColor = ShellTheme.Surface, WrapContents = false };
             var brand = ShellTheme.Label("VASP-Copilot", 12F); brand.Margin = new Padding(0, 8, 24, 0); bar.Controls.Add(brand);
@@ -191,9 +262,9 @@ namespace VaspCopilot.DesktopV3
             BuildLaunch(); Controls.Add(web); Controls.Add(launch); Controls.Add(bar); Controls.Add(status);
             Shown += async delegate
             {
-                if (String.IsNullOrWhiteSpace(options.RootDirectory))
+                if (!CompatiblePackage())
                 {
-                    ShowLaunch("选择安装目录", "首次使用，请在启动设置选择已有安装目录。后续启动会自动准备本地服务。", false);
+                    ShowLaunch("核对安装目录", "保存的安装目录为空或指向其他包。请在启动设置选择当前 EXE 所在完整包目录，避免混用旧 helper 和页面。", false);
                     await Configure(); return;
                 }
                 RunStartup();
@@ -303,25 +374,33 @@ namespace VaspCopilot.DesktopV3
         private void RunStartup()
         {
             if (closing || (startup != null && !startup.IsCompleted)) return;
+            if (!CompatiblePackage()) { ShowLaunch("安装目录不匹配", "请在启动设置核对当前完整包目录；不会使用另一旧包。", true); return; }
             servicesReady = pageReady = startupFailed = serviceInterrupted = serviceDegraded = false; workflow.Enabled = evidence.Enabled = false;
             ShowLaunch("正在准备工作空间", "正在检查桌面运行时与启动信息…", false); SetActions(false); UpdateSteps(""); startup = StartAsync();
         }
         private async Task Configure()
         {
             if (closing || (startup != null && !startup.IsCompleted)) return;
-            using (var dialog = new SettingsForm(options, controller.SelectedPythonDescription))
+            using (var dialog = new SettingsForm(options, controller.SelectedPythonDescription, packageRoot))
             {
                 if (dialog.ShowDialog(this) != DialogResult.OK) return;
-                LauncherPreferences.Save(options); RunStartup();
+                status.Text = "启动设置已写入并重新读取核验：" + LauncherPreferences.Store.Target; RunStartup();
             }
             await Task.FromResult(0);
+        }
+        private bool CompatiblePackage()
+        {
+            if (String.IsNullOrWhiteSpace(options.RootDirectory)) return false;
+            if (isolated) return true;
+            try { return String.Equals(Path.GetFullPath(options.RootDirectory).TrimEnd(Path.DirectorySeparatorChar), packageRoot.TrimEnd(Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase); }
+            catch { return false; }
         }
         private async Task InitializeWeb()
         {
             if (initialized) return;
             string browserFolder = Environment.GetEnvironmentVariable("VASP_D2_BROWSER_FOLDER");
             string runtime = CoreWebView2Environment.GetAvailableBrowserVersionString(browserFolder);
-            var environment = await CoreWebView2Environment.CreateAsync(browserFolder, Path.Combine(state, "webview-data"));
+            var environment = await CoreWebView2Environment.CreateAsync(browserFolder, Path.Combine(LauncherPreferences.Store.BrowserStateDirectory, "webview-data"));
             await web.EnsureCoreWebView2Async(environment); web.ZoomFactor = 1.0;
             if (isolated)
             {

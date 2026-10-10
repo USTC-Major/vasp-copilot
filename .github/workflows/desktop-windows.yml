@@ -83,10 +83,13 @@ jobs:
           retention-days: 7
           path: |
             desktop/dist/build-manifest.json
+            desktop/dist/last-package.json
+            desktop/.cache/packages/**/package-manifest.json
             ${{ runner.temp }}/desktop-results/environment.json
             ${{ runner.temp }}/desktop-results/prepare-*.json
             ${{ runner.temp }}/中文 自动依赖/logs/*.local.log
             ${{ runner.temp }}/desktop-results/controller/**/results.json
+            ${{ runner.temp }}/desktop-results/controller/settings-persistence/**/*.png
             ${{ runner.temp }}/desktop-results/actual/integration-results.json
             ${{ runner.temp }}/desktop-results/scientific/results.xml
             ${{ runner.temp }}/desktop-results/actual/state/runtime/full/logs/*.local.log

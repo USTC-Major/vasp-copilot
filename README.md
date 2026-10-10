@@ -21,7 +21,7 @@ AI 是可选功能。不配置模型，也可以使用基础工作流、确定�
 
 ## 快速开始
 
-Windows 用户可以直接使用桌面包：
+当前源码的后续桌面包使用根目录 `VASP-Copilot.exe` 单入口，见[新入口说明](桌面单入口快速开始.md)。已发布的 v0.4.1 附件没有替换，其使用方式如下：
 
 1. 从 [Releases](https://github.com/USTC-Major/vasp-copilot/releases/tag/v0.4.1) 下载 **`vasp-copilot-0.4.1-windows-x64.zip`**，完整解压到一个新目录。
 2. 双击根目录的 **`启动完整功能.cmd`**，在启动设置中确认本次解压目录，Python 留空自动检测。

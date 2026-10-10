@@ -19,7 +19,7 @@ $taskPreviousUtf8 = [Environment]::GetEnvironmentVariable('PYTHONUTF8', 'Process
 try {
     $env:VASP_DESKTOP_TEST_OUTPUT = $OutputDirectory
     $env:PYTHONUTF8 = '1'
-    foreach ($taskName in @('risk_tests.py', 'additional_tests.py', 'lifecycle_tests.py', 'full_features_tests.py', 'environment_controller_tests.py', 'discovery_tests.py')) {
+    foreach ($taskName in @('settings_persistence_tests.py', 'entry_package_tests.py', 'risk_tests.py', 'additional_tests.py', 'lifecycle_tests.py', 'full_features_tests.py', 'environment_controller_tests.py', 'discovery_tests.py')) {
         & $taskPython -X utf8 (Join-Path $PSScriptRoot "tests/$taskName")
         if ($LASTEXITCODE -ne 0) { throw "Isolated controller tests failed: $taskName" }
     }

@@ -4,7 +4,7 @@
 
 ## 桌面配套包的简化入口
 
-若下载的是Windows桌面配套包，已含生产前端和EXE：运行 `desktop/dist/VASP-Copilot-Desktop-V3.exe`，首次选择本包根目录和已有Python环境。无需执行npm或手工设置端口；仍需先具备后端依赖与WebView2 Runtime。不要单独搬走EXE。
+若下载的是Windows桌面配套包，已含生产前端和EXE：当前源码通过 desktop/build.ps1 生成完整包（位置见 desktop/dist/last-package.json），双击该包根目录的 `VASP-Copilot.exe`。首次自动检测 Python 并准备专用依赖；仍需已有 Python、.NET 4.8 和 WebView2 Runtime。不要只复制 EXE。已发布历史包沿用各自快速开始。
 
 本地候选验收请先按[0.4.0本地验收步骤](0.4.0本地验收步骤.md)以独立测试目录启动，避免影响原数据。下面保留源码方式。
 
