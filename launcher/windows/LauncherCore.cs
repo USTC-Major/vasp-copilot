@@ -904,7 +904,7 @@ namespace VaspCopilot.Launcher
         {
             lock (sync)
             {
-                root = options.RootDirectory; fingerprint = Fingerprint(root); version = "0.4.1 / 安装指纹 " + fingerprint;
+                root = options.RootDirectory; fingerprint = Fingerprint(root); version = "0.5.0 / 安装指纹 " + fingerprint;
                 webUrl = "http://127.0.0.1:" + options.WebPort;
                 foreach (Service s in services)
                 {
@@ -1034,7 +1034,7 @@ namespace VaspCopilot.Launcher
                     {
                         var data = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(reader.ReadToEnd());
                         bool ready = s.Key == "toolbox" ? Convert.ToString(data["status"]) == "ok"
-                            : Convert.ToString(data["mode"]) == "ai" && (Convert.ToString(data["version"]) == "0.3.0" || Convert.ToString(data["version"]) == "0.4.0" || Convert.ToString(data["version"]) == "0.4.1") && Convert.ToBoolean(data["enabled"]);
+                            : Convert.ToString(data["mode"]) == "ai" && (Convert.ToString(data["version"]) == "0.3.0" || Convert.ToString(data["version"]) == "0.4.0" || Convert.ToString(data["version"]) == "0.4.1" || Convert.ToString(data["version"]) == "0.5.0") && Convert.ToBoolean(data["enabled"]);
                         if (!ready) return HealthResult.Unavailable;
                     }
                 }

@@ -52,7 +52,7 @@ def _generation_running(store, project_id: str, task_id: str) -> bool:
 logger = logging.getLogger("ai_mode")
 
 APP_TITLE = "VASP-Copilot 智能模式"
-APP_VERSION = "0.4.1"
+APP_VERSION = "0.5.0"
 
 
 

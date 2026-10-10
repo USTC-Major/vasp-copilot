@@ -13,6 +13,7 @@ def test_disabled_state_returns_503(monkeypatch, tmp_path):
         r = client.get("/ai/v1/ping")
         assert r.status_code == 200
         assert r.json()["enabled"] is False
+        assert r.json()["version"] == app.version == "0.5.0"
         conf = client.get("/ai/v1/config")
         assert conf.status_code == 503
         assert conf.json()["error"]["code"] == "AI_MODE_DISABLED"
@@ -28,6 +29,7 @@ def test_enabled_state_returns_masked_config(monkeypatch, tmp_path):
     with TestClient(app) as client:
         r = client.get("/ai/v1/ping")
         assert r.json()["enabled"] is True
+        assert r.json()["version"] == app.version == "0.5.0"
         conf = client.get("/ai/v1/config")
         assert conf.status_code == 200
         data = conf.json()["config"]
