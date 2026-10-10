@@ -18,9 +18,8 @@ _TERMINAL = frozenset({"completed", "failed", "not_converged"})
 _SLOTS = threading.BoundedSemaphore(2)
 
 
-def _snapshot(svc, project_id: str, task_id: str, job_key: str, attempt_id: str, name: str):
-    if name not in RESULT_NAMES:
-        raise ToolboxError("RESULT_NAME_DENIED", "只可下载指定的三种结果文件", 400)
+def submitted_snapshot(svc, project_id: str, task_id: str, job_key: str, attempt_id: str):
+    """Shared identity boundary; callers independently restrict readable filenames."""
     if not job_key or not attempt_id:
         raise ToolboxError("RESULT_IDENTITY_REQUIRED", "必须指定当前作业与尝试", 400)
     task = svc.require_task(project_id, task_id)
@@ -61,6 +60,12 @@ def _snapshot(svc, project_id: str, task_id: str, job_key: str, attempt_id: str,
             or binding.get("endpoint_digest") != digest({"scheduler_target": target, "host_key_evidence": "unknown"})):
         raise ToolboxError("RESULT_ENDPOINT_CHANGED", "SSH或调度目标与提交记录不同", 409)
     return {"job": copy.deepcopy(job), "action": copy.deepcopy(action), "directory": directory, "target": target}
+
+
+def _snapshot(svc, project_id: str, task_id: str, job_key: str, attempt_id: str, name: str):
+    if name not in RESULT_NAMES:
+        raise ToolboxError("RESULT_NAME_DENIED", "只可下载指定的三种结果文件", 400)
+    return submitted_snapshot(svc, project_id, task_id, job_key, attempt_id)
 
 
 def download_result(svc, project_id: str, task_id: str, job_key: str, attempt_id: str, name: str):

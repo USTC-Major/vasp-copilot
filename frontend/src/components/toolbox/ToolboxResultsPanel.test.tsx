@@ -26,6 +26,7 @@ it('downloads exact current job and attempt only on explicit click', async () =>
   const refresh = vi.fn();
   render(<ToolboxResultsPanel projectId="project" taskId="task" jobs={[job('static')]} report="done" onRefresh={refresh} />);
   expect(call).not.toHaveBeenCalled();
+  expect(screen.getByRole('link', { name: 'DOS／能带结果后处理' })).toHaveAttribute('href', '/toolbox/postprocessing?project=project&task=task&job=static&attempt=attempt-static');
   await userEvent.click(screen.getByRole('button', { name: '下载 OUTCAR' }));
   await waitFor(() => expect(call).toHaveBeenCalledWith('project', 'task', 'static', 'attempt-static', 'OUTCAR', expect.any(AbortSignal)));
   await waitFor(() => expect(refresh).toHaveBeenCalled());
@@ -38,6 +39,7 @@ it('does not enable result fetch before terminal submitted identity', () => {
   const call = vi.spyOn(toolboxApi, 'downloadResult').mockResolvedValue(new Blob());
   render(<ToolboxResultsPanel projectId="p" taskId="t" jobs={[job('static', 'running')]} report="" />);
   expect(screen.getByRole('button', { name: '下载 OUTCAR' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'DOS／能带结果后处理' })).toBeDisabled();
   expect(call).not.toHaveBeenCalled();
 });
 

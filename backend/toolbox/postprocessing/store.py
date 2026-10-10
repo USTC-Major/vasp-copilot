@@ -46,16 +46,27 @@ class AnalysisStore:
         self.active = None
         self.process = None
         self.thread = None
+        self.task_sources = None
         for directory in self.root.glob('ds_*'):
             if not directory.is_dir():
                 continue
             for temporary in directory.glob('*.upload'):
+                temporary.unlink(missing_ok=True)
+            for temporary in directory.glob('*.download'):
                 temporary.unlink(missing_ok=True)
             try:
                 doc = self.read(directory.name)
                 if doc['status'] == 'processing':
                     doc.update(status='failed', error={'code': 'PP_INTERRUPTED', 'message': '上次解析被中断，可重新解析原快照'})
                     self.save(doc)
+                if doc['status'] == 'downloading':
+                    error = {'code': 'PP_DOWNLOAD_INTERRUPTED', 'message': '上次下载被中断；可核对原预览重试，或重新预览创建新快照'}
+                    doc.update(status='failed', error=error)
+                    doc['download'].update(status='failed', current_file=None, error=error)
+                    self.save(doc)
+                if doc['source']['kind'] == 'task_result' and doc.get('download', {}).get('status') != 'cached':
+                    for name in NAMES:
+                        (directory / name).unlink(missing_ok=True)
             except (OSError, ValueError):
                 continue
 
@@ -118,12 +129,15 @@ class AnalysisStore:
             doc = self.read(ident)
             if name not in NAMES:
                 fail('请选择原始 VASP 文件名；不接收 POTCAR、压缩包或任意文件')
-            if doc['status'] != 'draft' or ident in self.uploads:
+            if doc['source']['kind'] != 'local_upload' or doc['status'] != 'draft' or ident in self.uploads:
                 fail('当前快照不可写或已有上传正在进行', 'PP_CONFLICT', 409)
             if any(f['name'] == name for f in doc['files']):
                 fail('同名文件已上传；请重新建立数据集，避免混用来源', 'PP_CONFLICT', 409)
             total = sum(f['size_bytes'] for d in self.list() for f in d['files'])
-            if total + (len(self.uploads) + 1) * MAX_FILE > MAX_STORE:
+            pending = self.task_sources.active if self.task_sources else {}
+            reserved = sum((d.get('download') or {}).get('total_bytes', 0) for d in self.list()
+                           if d['status'] == 'downloading' or (d['id'] in pending and d.get('download', {}).get('status') != 'cached'))
+            if total + reserved + (len(self.uploads) + 1) * MAX_FILE > MAX_STORE:
                 fail('原始文件快照接近 1 GiB 上限，请先删除不需要的分析', 'PP_QUOTA', 413)
             self.uploads.add(ident)
             return self.directory(ident) / (name + '.upload'), MAX_BATCH - sum(f['size_bytes'] for f in doc['files'])
@@ -144,6 +158,8 @@ class AnalysisStore:
                 fail('已有解析运行，或当前数据集不能重新解析', 'PP_BUSY', 409)
             if not doc['files']:
                 fail('请先选择文件')
+            if doc['source']['kind'] == 'task_result' and doc.get('download', {}).get('status') != 'cached':
+                fail('任务快照未完整缓存，请先重试下载', 'PP_CACHE_INCOMPLETE', 409)
             # Avoid ambiguous precedence when users select a whole mixed directory.
             names = {f['name'] for f in doc['files']}
             if 'vasprun.xml' in names and names & {'DOSCAR', 'EIGENVAL'}:
@@ -164,9 +180,7 @@ class AnalysisStore:
                 if doc['status'] != 'processing':
                     return
                 directory = self.directory(ident)
-                for file in doc['files']:
-                    if hashlib.sha256((directory / file['name']).read_bytes()).hexdigest() != file['sha256']:
-                        fail('源快照已变化，请重新导入', 'PP_SOURCE_CHANGED', 409)
+                self.verify_sources(doc)
                 target = directory / 'worker-result.json'
                 target.unlink(missing_ok=True)
                 self.process = subprocess.Popen(
@@ -215,6 +229,8 @@ class AnalysisStore:
     def cancel(self, ident):
         with self.guard:
             doc = self.read(ident)
+            if doc['status'] == 'downloading' and self.task_sources:
+                return self.task_sources.cancel(ident)
             if doc['status'] == 'processing':
                 if self.active == ident and self.process and self.process.poll() is None:
                     self.process.terminate()
@@ -223,6 +239,8 @@ class AnalysisStore:
             return doc
 
     def close(self):
+        if self.task_sources:
+            self.task_sources.close()
         if self.active:
             self.cancel(self.active)
         if self.thread:
@@ -231,13 +249,38 @@ class AnalysisStore:
     def delete(self, ident):
         with self.guard:
             self.read(ident)
-            if self.active == ident or ident in self.uploads:
+            if self.active == ident or ident in self.uploads or (self.task_sources and ident in self.task_sources.active):
                 fail('请先取消解析／等待上传完成再删除', 'PP_BUSY', 409)
             # Only this validated UUID child of our snapshot root can be removed.
             directory = self.directory(ident).resolve()
             if directory.parent != self.root.resolve():
                 fail('快照路径无效')
             shutil.rmtree(directory)
+
+    @staticmethod
+    def file_fingerprint(path):
+        if path.is_symlink() or not path.is_file():
+            fail('缓存原始文件不存在或不是普通文件', 'PP_SOURCE_CHANGED', 409)
+        sha, size = hashlib.sha256(), 0
+        with path.open('rb') as stream:
+            while chunk := stream.read(65536):
+                size += len(chunk)
+                if size > MAX_FILE:
+                    fail('缓存文件超过单文件上限', 'PP_SOURCE_CHANGED', 409)
+                sha.update(chunk)
+        return size, sha.hexdigest()
+
+    def verify_sources(self, doc):
+        directory = self.directory(doc['id'])
+        if not doc['files']:
+            fail('源快照缺少文件', 'PP_SOURCE_CHANGED', 409)
+        for file in doc['files']:
+            if file['name'] not in NAMES or self.file_fingerprint(directory / file['name']) != (file['size_bytes'], file['sha256']):
+                fail('源快照已变化，请重新导入', 'PP_SOURCE_CHANGED', 409)
+        if doc['source']['kind'] == 'task_result':
+            recipe = json.loads((directory / 'task-source.json').read_text(encoding='utf-8'))
+            if set(recipe['selected_files']) != {f['name'] for f in doc['files']}:
+                fail('任务缓存文件集不完整', 'PP_CACHE_INCOMPLETE', 409)
 
     def view(self, ident, revision, view):
         with self.guard:
@@ -336,7 +379,7 @@ class AnalysisStore:
                 'energy_bounds_ev': energy_bounds(result, view), 'curves': curves, 'ticks': ticks,
                 'units': {'energy': 'eV', 'dos_total': data.get('density_unit', 'states/eV/cell'),
                           'dos_projection': 'states/eV', 'kpath': 'Å⁻¹', 'reciprocal_convention': '2pi'},
-                'sources': doc['files'], 'parser': result['parser'], 'warnings': result['warnings'],
+                'sources': doc['files'], 'source': doc['source'], 'parser': result['parser'], 'warnings': result['warnings'],
                 'plot_warnings': bounds_warning(curves, doc['kind'], view)}
 
     def csv(self, ident):
@@ -347,8 +390,9 @@ class AnalysisStore:
                          f"reference={result['view']['reference']}", f"reference_eV={result['reference_ev']}",
                          f"offset_eV={result['view']['reference_ev']}" if result['view']['reference'] == 'custom' else ''])
         writer.writerow(['# units', 'energy=eV', 'total_DOS=states/eV/cell', 'projection_DOS=states/eV (selected atom sum)', 'kpath=1/angstrom (2pi reciprocal lattice)'])
+        writer.writerow(['# provenance', json.dumps(result['source'], ensure_ascii=False, sort_keys=True)])
         for source in result['sources']:
-            writer.writerow(['# source', source['name'], source['sha256']])
+            writer.writerow(['# source', source['name'], source['sha256'], source.get('remote_path', '')])
         writer.writerow(['curve', 'channel', 'segment_index', 'energy_eV' if result['kind'] == 'dos' else 'distance_1/angstrom', 'DOS_states/eV' if result['kind'] == 'dos' else 'energy_eV'])
         for curve in result['curves']:
             for x, y in zip(curve['x'], curve['y']):
