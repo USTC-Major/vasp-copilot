@@ -210,33 +210,37 @@ class RemoteFiles:
             raise RemoteFileError("ENDPOINT_CHANGED", "Verified unchanged host identity required")
         return endpoint
 
-    def preview_pp(self, directory, *, expected=None, should_cancel=None):
+    def preview_pp(self, directory, *, expected=None, should_cancel=None, _energy=False):
         """Bounded metadata for PP's independent fixed-name allowlist."""
         try:
             protocol.absolute(directory)
         except protocol.FileError as exc:
             raise _local_error(exc) from exc
         endpoint = self._pp_endpoint(expected.get("endpoint") if expected else None)
+        names = protocol.ENERGY_NAMES if _energy else protocol.PP_NAMES
+        prefix = 'energy' if _energy else 'pp'
         wire = _Wire(self.manager, expected_endpoint=endpoint, scheduler_target=self.scheduler_target)
         try:
             root = wire.call({"op": "root", "path": directory}, timeout=5,
-                             should_cancel=should_cancel, abort_op="pp_abort")
+                             should_cancel=should_cancel, abort_op=prefix + '_abort')
             if root.get("requested_path") != directory or root.get("canonical_path") != directory or root.get("resolution_chain") != []:
                 raise RemoteFileError("PATH_SYMLINK_ESCAPE", "Post-processing directory must not contain links")
-            result = wire.call({"op": "pp_preview", "root": root}, timeout=5,
-                               should_cancel=should_cancel, abort_op="pp_abort")
+            result = wire.call({"op": prefix + '_preview', "root": root}, timeout=5,
+                               should_cancel=should_cancel, abort_op=prefix + '_abort')
             wire.check_endpoint()
             if (result.get("root") != root or not isinstance(result.get("files"), list)
-                    or len(result["files"]) != len(protocol.PP_NAMES)
-                    or {f.get("name") for f in result["files"]} != protocol.PP_NAMES):
+                    or len(result["files"]) != len(names)
+                    or {f.get("name") for f in result["files"]} != names):
                 raise RemoteFileError("PROTOCOL_ERROR", "Invalid post-processing preview")
             return {**result, "endpoint": endpoint}
         finally:
             wire.close()
 
-    def stream_pp(self, preview, name, target, *, should_cancel, progress, deadline):
+    def stream_pp(self, preview, name, target, *, should_cancel, progress, deadline, _energy=False):
         """Stream one preview-bound file to local staging; never hold the full file in RAM."""
-        if name not in protocol.PP_NAMES:
+        names = protocol.ENERGY_NAMES if _energy else protocol.PP_NAMES
+        prefix = 'energy' if _energy else 'pp'
+        if name not in names:
             raise RemoteFileError("CONTENT_READ_DENIED", "Unsupported post-processing name")
         selected = next((f for f in preview["files"] if f["name"] == name and f["available"]), None)
         if selected is None:
@@ -256,13 +260,13 @@ class RemoteFiles:
                 raise RemoteFileError("PP_DOWNLOAD_TIMEOUT", "Post-processing download deadline exceeded")
             return min(5, remaining)
         try:
-            ready = wire.call({"op": "pp_begin", "root": preview["root"], "name": name,
+            ready = wire.call({"op": prefix + '_begin', "root": preview["root"], "name": name,
                                "metadata": selected["metadata"], "max_bytes": protocol.PP_LIMIT},
-                              timeout=timeout(), should_cancel=should_cancel, abort_op="pp_abort")
+                              timeout=timeout(), should_cancel=should_cancel, abort_op=prefix + '_abort')
             if ready != {"state": "ready", "size": selected["size_bytes"]}:
                 raise RemoteFileError("PROTOCOL_ERROR", "Invalid post-processing file metadata")
             for index in range(protocol.PP_LIMIT // protocol.RESULT_CHUNK + 2):
-                frame = wire.call({"op": "pp_next"}, timeout=timeout(), should_cancel=should_cancel, abort_op="pp_abort")
+                frame = wire.call({"op": prefix + '_next'}, timeout=timeout(), should_cancel=should_cancel, abort_op=prefix + '_abort')
                 wire.check_endpoint()
                 if should_cancel():
                     raise RemoteFileError("ACTION_ABORTED", "Post-processing download cancelled")
@@ -285,6 +289,13 @@ class RemoteFiles:
             raise RemoteFileError("PROTOCOL_ERROR", "Post-processing frame count exceeded")
         finally:
             wire.close()
+
+    def preview_energy(self, directory, *, expected=None, should_cancel=None):
+        return self.preview_pp(directory, expected=expected, should_cancel=should_cancel, _energy=True)
+
+    def stream_energy(self, preview, name, target, *, should_cancel, progress, deadline):
+        return self.stream_pp(preview, name, target, should_cancel=should_cancel, progress=progress,
+                              deadline=deadline, _energy=True)
 
     def read_result(self, directory, name):
         """Read one fixed result through the verified helper, then validate whole bytes."""

@@ -15,3 +15,6 @@ desktop/assets/app-icon.ico binary
 # Preserve upstream license bytes, including their original trailing spaces.
 desktop/licenses/WebView2-LICENSE.txt -text -whitespace
 desktop/licenses/WebView2-NOTICE.txt -text -whitespace
+
+# Public energy fixtures retain the upstream bytes verified by SHA-256.
+backend/tests/fixtures/energy/OUTCAR* -text

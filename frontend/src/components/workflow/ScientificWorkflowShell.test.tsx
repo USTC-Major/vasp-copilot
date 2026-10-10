@@ -73,6 +73,7 @@ describe('shared scientific navigation and isolated content', () => {
     ['/diagnosis/result-id', '诊断计算', '诊断结果'],
     ['/toolbox/projects', '计算任务', '计算任务'],
     ['/toolbox/projects/p/tasks/t', '计算任务', '任务详情'],
+    ['/toolbox/postprocessing/energy', '基础能量', '基础能量'],
     ['/settings', '设置', '设置'],
     ['/toolbox/settings', '设置', '设置'],
     ['/ai', '智能模式', '智能模式'],

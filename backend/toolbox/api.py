@@ -16,6 +16,8 @@ from .postprocessing.api import router as postprocessing_router
 router.include_router(postprocessing_router)
 from .postprocessing.preferences_api import router as postprocessing_preferences_router
 router.include_router(postprocessing_preferences_router)
+from .postprocessing.energy.api import router as energy_router
+router.include_router(energy_router)
 from .catalysis.api import router as catalysis_router
 router.include_router(catalysis_router)
 
@@ -404,6 +406,8 @@ def create_toolbox_app(*, root: Path | None = None, settings_loader=None, orch_f
         finally:
             if hasattr(app.state, 'postprocessing'):
                 app.state.postprocessing.close()
+            if hasattr(app.state, 'energy'):
+                app.state.energy.close()
             app.state.toolbox.close()
     app = FastAPI(lifespan=lifespan)
     app.add_exception_handler(ToolboxError, error_handler)

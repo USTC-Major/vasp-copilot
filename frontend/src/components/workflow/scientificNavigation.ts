@@ -7,6 +7,7 @@ export function workspaceLocation(path: string): { current: string; group: strin
   if (matches('/', path)) return { current: '/', group: '工作区', title: '首页' };
   if (matches('/settings', path)) return { current: '/settings', group: '工作区', title: '设置' };
   if (matches('/toolbox/postprocessing', path)) return { current: '/toolbox/postprocessing', group: '工具箱', title: '结果后处理' };
+  if (matches('/toolbox/postprocessing/energy', path)) return { current: '/toolbox/postprocessing/energy', group: '结果后处理', title: '基础能量' };
   if (matches('/toolbox/surface-builder', path)) return { current: '/toolbox/surface-builder', group: '工具箱', title: '表面构建' };
   if (matches('/ai/settings', path) || matches('/toolbox/settings', path)) return { current: '/settings', group: '工作区', title: '设置' };
   if (matches('/toolbox/potcar', path)) return { current: '/settings', group: '工具箱', title: '本地赝势库' };
@@ -26,6 +27,7 @@ export function workspaceLocation(path: string): { current: string; group: strin
 
 export const hasScientificContent = (path: string) => matches('/', path) || matches('/settings', path) || matches('/workflow', path)
   || matches('/toolbox/postprocessing', path)
+  || matches('/toolbox/postprocessing/energy', path)
   || matches('/toolbox/surface-builder', path)
   || matches('/diagnosis/upload', path) || matches('/diagnosis/:id', path)
   || matches('/toolbox/projects', path) || matches('/toolbox/projects/:projectId/tasks/:taskId', path)
