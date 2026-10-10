@@ -142,6 +142,7 @@ jobs:
             backend/tests/test_mp_natural_search.py \
             backend/tests/test_toolbox_results.py \
             backend/tests/test_postprocessing.py \
+            backend/tests/test_postprocessing_task_sources.py \
             backend/tests/test_postprocessing_preferences.py \
             backend/tests/test_postprocessing_view_v2.py \
             backend/tests/test_bootstrap.py \

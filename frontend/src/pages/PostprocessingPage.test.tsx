@@ -3,7 +3,9 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { ConfigProvider, theme } from 'antd';
 import { vi } from 'vitest';
-import { ppApi, type PPDataset, type PPCurves, type PPView } from '../api/postprocessing';
+import { ppApi, type PPDataset, type PPCurves, type PPView, type PPTaskSource } from '../api/postprocessing';
+import { toolboxApi } from '../api/client';
+import type { ToolboxTaskDetail } from '../types/toolbox';
 import { plotPreferencesApi, defaultPlotPreferences, PLOT_PALETTES } from '../api/plotPreferences';
 import PostprocessingPage from './PostprocessingPage';
 import { clearAnalysisViewSessions, NUMERIC_SAVE_DELAY_MS } from '../components/postprocessing/analysisViewStore';
@@ -28,6 +30,8 @@ function curvesFor(saved: PPDataset): PPCurves {
   return { id: saved.id, revision: saved.revision, kind: saved.kind, reference_ev: .5, effective_reference_ev: .5, energy_bounds_ev: { min_ev: -10, max_ev: 10 }, view: saved.view, ticks: [], curves: [{ name: '总 DOS · down', channel: 'down', x: [-10, 0, 10], y: [1, 3, 2] }] };
 }
 function deferred<T>() { let resolve!: (value: T) => void; let reject!: (reason: unknown) => void; const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; }
+const taskSource: PPTaskSource = { kind: 'task_result', project_id: 'project-test', task_id: 'task-test', job_key: 'dos', attempt_id: 'attempt-test', submission_action_id: 'submit-test', slurm_id: '42', remote_directory: '/synthetic/task/dos', scheduler_target: 'fixture-only', submission_binding_sha256: 'synthetic-binding', cached_at: '2026-10-10T00:00:00Z' };
+const taskDownload = { status: 'cached' as const, completed_bytes: 100, total_bytes: 100, current_file: null, completed_files: 1, total_files: 1, error: null };
 function mount(path = '/toolbox/postprocessing?analysis=ds-test', dark = false) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } }); clients.push(client);
   return render(<ConfigProvider theme={{ algorithm: dark ? theme.darkAlgorithm : theme.defaultAlgorithm, token: { motion: false } }}><QueryClientProvider client={client}><MemoryRouter initialEntries={[path]}><PostprocessingPage /></MemoryRouter></QueryClientProvider></ConfigProvider>);
@@ -273,4 +277,76 @@ it('uses the scientific shell only for the real post-processing route', () => {
   expect(hasScientificContent('/toolbox/postprocessing')).toBe(true);
   expect(hasScientificContent('/toolbox/postprocessing-extra')).toBe(false);
   expect(workspaceLocation('/toolbox/postprocessing').title).toBe('结果后处理');
+});
+
+it('polls download separately, then offers explicit parsing of the completed cache without starting automatically', async () => {
+  record = { ...record, source: taskSource, status: 'downloading', download: { ...taskDownload, status: 'downloading', completed_bytes: 50, completed_files: 0, current_file: 'vasprun.xml' } };
+  records[record.id] = record;
+  const complete = { ...record, revision: 5, status: 'draft' as const, download: taskDownload };
+  vi.mocked(ppApi.get).mockResolvedValueOnce({ dataset: record }).mockImplementation(async () => ({ dataset: complete }));
+  const start = vi.spyOn(ppApi, 'start').mockResolvedValue({ dataset: { ...complete, revision: 6, status: 'processing' } });
+  mount();
+  expect(await screen.findByRole('button', { name: '取消取回' })).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: '取消解析' })).not.toBeInTheDocument();
+  expect(start).not.toHaveBeenCalled();
+  const parse = await screen.findByRole('button', { name: '解析缓存文件并查看图形' }, { timeout: 3000 });
+  expect(start).not.toHaveBeenCalled();
+  expect(screen.queryByRole('button', { name: '取消取回' })).not.toBeInTheDocument();
+  expect(screen.getByText('/synthetic/task/dos')).toBeInTheDocument();
+  fireEvent.click(parse);
+  await waitFor(() => expect(start).toHaveBeenCalledWith('ds-test'));
+});
+
+it('cancels and retries an incomplete download without offering scientific parsing', async () => {
+  record = { ...record, source: taskSource, status: 'downloading', download: { ...taskDownload, status: 'downloading', completed_bytes: 50, completed_files: 0 } };
+  records[record.id] = record;
+  const cancelled: PPDataset = { ...record, revision: 5, status: 'cancelled', download: { ...record.download!, status: 'cancelled' } };
+  const cancel = vi.spyOn(ppApi, 'cancel').mockResolvedValue({ dataset: cancelled });
+  const retry = vi.spyOn(ppApi, 'retryDownload').mockResolvedValue({ dataset: { ...record, revision: 6 } });
+  const start = vi.spyOn(ppApi, 'start');
+  mount();
+  fireEvent.click(await screen.findByRole('button', { name: '取消取回' }));
+  await waitFor(() => expect(cancel).toHaveBeenCalledWith('ds-test'));
+  fireEvent.click(await screen.findByRole('button', { name: '重试下载已确认文件' }));
+  await waitFor(() => expect(retry).toHaveBeenCalledWith('ds-test'));
+  expect(screen.queryByRole('button', { name: '解析已保存文件' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: '重试解析缓存文件' })).not.toBeInTheDocument();
+  expect(start).not.toHaveBeenCalled();
+});
+
+it('keeps polling a retried download after an older failed read returns late', async () => {
+  record = { ...record, source: taskSource, status: 'failed', download: { ...taskDownload, status: 'failed', completed_bytes: 0, completed_files: 0 } };
+  records[record.id] = record;
+  const pending = deferred<{ dataset: PPDataset }>();
+  const retried: PPDataset = { ...record, revision: 5, status: 'downloading', download: { ...record.download!, status: 'downloading' } };
+  const complete: PPDataset = { ...retried, revision: 6, status: 'draft', download: taskDownload };
+  vi.mocked(ppApi.get).mockResolvedValueOnce({ dataset: record }).mockImplementationOnce(() => pending.promise).mockImplementation(async () => ({ dataset: complete }));
+  vi.spyOn(ppApi, 'retryDownload').mockResolvedValue({ dataset: retried });
+  mount();
+  const retry = await screen.findByRole('button', { name: '重试下载已确认文件' });
+  await act(async () => { void clients.at(-1)!.invalidateQueries({ queryKey: ['pp-dataset', record.id] }); });
+  await waitFor(() => expect(ppApi.get).toHaveBeenCalledTimes(2));
+  fireEvent.click(retry);
+  await screen.findByRole('button', { name: '取消取回' });
+  await act(async () => pending.resolve({ dataset: record }));
+  expect(screen.getByRole('button', { name: '取消取回' })).toBeInTheDocument();
+  await screen.findByRole('button', { name: '解析缓存文件并查看图形' }, { timeout: 3000 });
+  expect(ppApi.get).toHaveBeenCalledTimes(3);
+});
+
+it('prepares an explicit new remote snapshot while retaining the existing dataset and mounted plot', async () => {
+  record = { ...record, source: taskSource, download: taskDownload }; records[record.id] = record;
+  vi.spyOn(toolboxApi, 'listProjects').mockResolvedValue({ mode: 'toolbox', projects: [{ id: 'project-test', name: '合成项目' }] });
+  vi.spyOn(toolboxApi, 'listTasks').mockResolvedValue({ mode: 'toolbox', tasks: [{ id: 'task-test', project_id: 'project-test', title: '合成任务', goal: '', local_workspace: null, hpc_workspace: null, status: 'completed', updated_at: '' }] });
+  const detail: ToolboxTaskDetail = { mode: 'toolbox', task_id: 'task-test', task: { id: 'task-test', project_id: 'project-test', title: '合成任务', goal: '', local_workspace: null, hpc_workspace: null, status: 'completed', updated_at: '' }, flow: { execution_mode: 'Fake', phase: 'completed', goal: '', strategy: '', local_dir: '', hpc_dir: '', waiting: [], precheck: { ok: true, issues: [] }, report: '', jobs: [{ key: 'dos', label: 'DOS', kind: 'static', requires: [], status: 'completed', submission_state: 'submitted', slurm_id: '42', attempt_id: 'attempt-test' }], draft: [], artifacts: {} }, consents: [], events: [], monitor: { state: 'idle', interval_seconds: 5, remote_cancelled: false }, backend_mode: 'Fake' };
+  vi.spyOn(toolboxApi, 'getTaskDetail').mockResolvedValue(detail);
+  const preview = vi.spyOn(ppApi, 'previewTaskSource'); const importing = vi.spyOn(ppApi, 'importTaskSource');
+  mount();
+  const chart = await screen.findByTestId('chart');
+  fireEvent.click(screen.getByRole('button', { name: '刷新远端并新建分析' }));
+  await waitFor(() => expect(screen.getByRole('button', { name: '预览远端新快照' })).toBeEnabled());
+  expect(screen.getByTestId('chart')).toBe(chart);
+  expect(screen.getByLabelText('分析名称')).toHaveValue('合成中文分析（新快照）');
+  expect(preview).not.toHaveBeenCalled(); expect(importing).not.toHaveBeenCalled();
+  expect(chartLifecycle.unmounts).not.toHaveBeenCalled();
 });

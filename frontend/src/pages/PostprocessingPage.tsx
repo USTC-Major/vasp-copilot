@@ -1,19 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Button, Card, Checkbox, Empty, Input, Select, Space, Spin, Tag, Typography } from 'antd';
+import { Alert, Button, Card, Checkbox, Empty, Input, Progress, Select, Space, Spin, Tag, Typography } from 'antd';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import ReactECharts from 'echarts-for-react';
-import { ppApi, type PPDataset, type PPCurves } from '../api/postprocessing';
+import { ppApi, type PPDataset, type PPCurves, type PPTaskIdentity } from '../api/postprocessing';
 import { buildPlotOption, exportPostprocessingPng, fullEnergyWindow, SCIENTIFIC_PLOT_THEME } from '../components/postprocessing/plotting';
 import { forgetAnalysisViewSession, useAnalysisView } from '../components/postprocessing/analysisViewStore';
 import { validateView, viewKey } from '../components/postprocessing/viewState';
 import ProjectionSelector from '../components/postprocessing/ProjectionSelector';
 import NumericDraftInput from '../components/postprocessing/NumericDraftInput';
 import PlotExportDialog from '../components/postprocessing/PlotExportDialog';
+import TaskSourceImport from '../components/postprocessing/TaskSourceImport';
+import TaskSourceDetails from '../components/postprocessing/TaskSourceDetails';
 import { usePlotPalette } from '../hooks/usePlotPreferences';
 import './postprocessing.css';
 
-const labels = { draft: '待导入／解析', processing: '正在解析', ready: '可查看', failed: '需要处理', cancelled: '已取消' };
+const labels = { draft: '待导入／解析', downloading: '正在取回文件', processing: '正在解析', ready: '可查看', failed: '需要处理', cancelled: '已取消' };
 const allowed = new Set(['vasprun.xml', 'DOSCAR', 'EIGENVAL', 'KPOINTS', 'POSCAR', 'CONTCAR', 'INCAR']);
 const errorText = (error: unknown) => error instanceof Error ? error.message : '操作失败，请重试';
 function saveBlob(blob: Blob, name: string) {
@@ -122,6 +124,9 @@ export default function PostprocessingPage() {
   const client = useQueryClient();
   const [params, setParams] = useSearchParams();
   const id = params.get('analysis') || '';
+  const [sourceMode, setSourceMode] = useState<'local' | 'task'>(params.has('task') ? 'task' : 'local');
+  const [taskSource, setTaskSource] = useState<Partial<PPTaskIdentity>>(() => ({ project_id: params.get('project') ?? '', task_id: params.get('task') ?? '', job_key: params.get('job') ?? '', attempt_id: params.get('attempt') ?? '' }));
+  const [refreshRequest, setRefreshRequest] = useState(0);
   const [kind, setKind] = useState<'dos' | 'band'>('dos');
   const [title, setTitle] = useState('');
   const [files, setFiles] = useState<File[]>([]);
@@ -131,9 +136,17 @@ export default function PostprocessingPage() {
   const abort = useRef<AbortController | null>(null);
   useEffect(() => () => abort.current?.abort(), []);
   const listing = useQuery({ queryKey: ['pp-datasets'], queryFn: ({ signal }) => ppApi.list(signal) });
-  const current = useQuery({ queryKey: ['pp-dataset', id], queryFn: ({ signal }) => ppApi.get(id, signal), enabled: !!id,
-    refetchInterval: query => query.state.data?.dataset.status === 'processing' ? 1000 : false });
+  const current = useQuery({ queryKey: ['pp-dataset', id], queryFn: async ({ signal }) => {
+    const response = await ppApi.get(id, signal);
+    const cached = client.getQueryData<{ dataset: PPDataset }>(['pp-dataset', id]);
+    // A read started before cancel/retry must not restore its old terminal
+    // status after a newer action response, which would stop download polling.
+    return cached && cached.dataset.revision > response.dataset.revision ? cached : response;
+  }, enabled: !!id,
+    refetchInterval: query => ['processing', 'downloading'].includes(query.state.data?.dataset.status ?? '') ? 1000 : false });
   const doc = current.data?.dataset;
+  const downloading = doc?.download?.status === 'downloading';
+  const cachedTaskSource = doc?.source?.kind === 'task_result' && doc.download?.status === 'cached';
   const update = useCallback((next: PPDataset) => {
     const existing = client.getQueryData<{ dataset: PPDataset }>(['pp-dataset', next.id]);
     if (existing && existing.dataset.revision >= next.revision) return;
@@ -153,20 +166,23 @@ export default function PostprocessingPage() {
   }
   async function action(work: () => Promise<unknown>) { setError(''); try { await work(); } catch (e) { setError(errorText(e)); } }
   return <div className="wf-page pp-page">
-    <div className="wf-page-heading"><div><Typography.Title level={3}>结果后处理</Typography.Title><p>导入已有计算结果，查看态密度与能带；无需模型或超算连接。</p></div><Tag>本地分析 · 首批</Tag></div>
+    <div className="wf-page-heading"><div><Typography.Title level={3}>结果后处理</Typography.Title><p>从任务结果或本地文件建立 DOS／能带分析；缓存后的解析与绘图无需连接超算。</p></div><Tag>任务取回 · 本地分析</Tag></div>
     <div className="pp-grid">
       <aside>
         <Card title="导入新的分析">
           <div className="pp-controls pp-single">
+            <label>结果来源<Select aria-label="结果来源" value={sourceMode} disabled={busy} onChange={setSourceMode} options={[{ value: 'local', label: '本地文件' }, { value: 'task', label: 'Toolbox 任务结果' }]} /></label>
             <label>分析类型<Select aria-label="分析类型" value={kind} disabled={busy} onChange={setKind} options={[{ value: 'dos', label: 'DOS／投影 DOS' }, { value: 'band', label: '普通能带' }]} /></label>
             <label>分析名称<Input aria-label="分析名称" value={title} maxLength={120} disabled={busy} onChange={e => setTitle(e.target.value)} placeholder="例如 Si 静态计算" /></label>
           </div>
           <Typography.Paragraph>{kind === 'dos' ? '优先选择 vasprun.xml（含投影时可选原子／轨道）；也可选择 DOSCAR＋INCAR 查看总 DOS。' : '选择 vasprun.xml＋原始 line-mode KPOINTS；或 EIGENVAL＋INCAR＋POSCAR／CONTCAR＋KPOINTS。普通 k 网格不能作为路径能带。'}</Typography.Paragraph>
+          {sourceMode === 'task' ? <TaskSourceImport kind={kind} title={title} initial={taskSource} refreshRequest={refreshRequest} datasets={listing.data?.datasets ?? []} disabled={busy} onBusy={setBusy} onDataset={next => { update(next); setParams({ analysis: next.id }); }} /> : <>
           <label className="pp-file-picker">选择本地文件<input aria-label="选择本地文件" type="file" multiple disabled={busy} onChange={event => { setFiles(Array.from(event.target.files || [])); event.target.value = ''; }} /></label>
           <ul className="pp-file-list">{files.map(file => <li key={file.name}>{file.name} · {(file.size / 1024 ** 2).toFixed(2)} MiB</li>)}</ul>
           <Space wrap><Button type="primary" disabled={!files.length || busy} loading={busy} onClick={() => void importFiles()}>导入并解析</Button>{busy && <Button onClick={() => abort.current?.abort()}>取消上传</Button>}</Space>
           {progress && <Typography.Paragraph role="status">{progress}</Typography.Paragraph>}
           <Typography.Paragraph type="secondary">单文件 ≤64 MiB，总计 ≤128 MiB。仅保存所选文件的副本，不修改原文件。暂不支持压缩文件、NCL／SOC。</Typography.Paragraph>
+          </>}
         </Card>
         <Card title="已保存的分析" extra={<Button size="small" onClick={() => void listing.refetch()}>刷新</Button>}>
           {listing.error && <Alert type="error" title={errorText(listing.error)} />}
@@ -177,13 +193,25 @@ export default function PostprocessingPage() {
       <section className="pp-detail">
         {error && <Alert type="error" showIcon title={error} closable onClose={() => setError('')} />}
         {current.error && <Alert type="error" title={errorText(current.error)} />}
-        {!id && <Card><Empty description="选择文件建立分析，或打开已保存的分析" /></Card>}
-        {doc && <Card title={doc.title} extra={<Button danger size="small" disabled={busy || doc.status === 'processing'} onClick={() => void action(async () => { await ppApi.remove(doc.id); forgetAnalysisViewSession(doc.id); setParams({}); await client.invalidateQueries({ queryKey: ['pp-datasets'] }); })}>删除本地快照</Button>}>
-          <Space wrap><Tag>{labels[doc.status]}</Tag><Typography.Text type="secondary">本地导入 · 独立副本</Typography.Text></Space>
+        {!id && <Card><Empty description="选择任务结果或本地文件建立分析，或打开已保存的分析" /></Card>}
+        {doc && <Card title={doc.title} extra={<Button danger size="small" disabled={busy || doc.status === 'processing' || downloading} onClick={() => void action(async () => { await ppApi.remove(doc.id); forgetAnalysisViewSession(doc.id); setParams({}); await client.invalidateQueries({ queryKey: ['pp-datasets'] }); })}>删除本地快照</Button>}>
+          <Space wrap><Tag>{labels[doc.status]}</Tag>{doc.source?.kind !== 'task_result' && <Typography.Text type="secondary">本地导入 · 独立副本</Typography.Text>}</Space>
+          {doc.source?.kind === 'task_result' && <TaskSourceDetails source={doc.source} />}
           <details><summary>来源文件与指纹</summary><ul className="pp-file-list">{doc.files.map(file => <li key={file.name}><strong>{file.name}</strong> · {file.size_bytes.toLocaleString()} bytes<code>{file.sha256}</code></li>)}</ul></details>
           {doc.error && <Alert type="error" title={doc.error.message} description={doc.error.code} />}
+          {doc.download && <div className="pp-download-status" role="status">
+            {downloading ? <>
+              <Typography.Paragraph>正在取回 {doc.download.current_file ?? '所选文件'}：{doc.download.completed_files}/{doc.download.total_files} 个文件，{doc.download.completed_bytes.toLocaleString()}/{doc.download.total_bytes.toLocaleString()} bytes</Typography.Paragraph>
+              <Progress aria-label="文件取回进度" percent={doc.download.total_bytes ? Math.min(100, Math.floor(doc.download.completed_bytes / doc.download.total_bytes * 100)) : 0} />
+              <Button disabled={busy} onClick={() => void action(async () => update((await ppApi.cancel(doc.id)).dataset))}>取消取回</Button>
+            </> : doc.download.status === 'cached' ? <Typography.Paragraph type="secondary">文件已缓存，后续解析与重新绘图均使用本地副本。CSV／JSON 导出保留任务来源与文件指纹。</Typography.Paragraph> : <>
+              <Alert type={doc.download.status === 'cancelled' ? 'info' : 'error'} title={doc.download.status === 'cancelled' ? '文件取回已取消，尚未形成完整缓存。' : '文件取回失败，尚未形成完整缓存。'} description={doc.download.error?.message} />
+              <Button disabled={busy} onClick={() => void action(async () => update((await ppApi.retryDownload(doc.id)).dataset))}>重试下载已确认文件</Button>
+            </>}
+          </div>}
           {doc.status === 'processing' && <Space wrap><Spin size="small" /><span>独立进程解析中，切换页面后仍可返回查看。</span><Button onClick={() => void action(async () => update((await ppApi.cancel(doc.id)).dataset))}>取消解析</Button></Space>}
-          {['draft', 'failed', 'cancelled'].includes(doc.status) && <Button disabled={busy || !doc.files.length} onClick={() => void action(async () => update((await ppApi.start(doc.id)).dataset))}>解析已保存文件</Button>}
+          {['draft', 'failed', 'cancelled'].includes(doc.status) && (!doc.download || cachedTaskSource) && <Button type={cachedTaskSource ? 'primary' : 'default'} disabled={busy || !doc.files.length} onClick={() => void action(async () => update((await ppApi.start(doc.id)).dataset))}>{cachedTaskSource ? (doc.status === 'draft' ? '解析缓存文件并查看图形' : '重试解析缓存文件') : '解析已保存文件'}</Button>}
+          {doc.source?.kind === 'task_result' && <Button className="pp-refresh-source" disabled={busy || downloading} onClick={() => { if (doc.source?.kind !== 'task_result') return; setTaskSource(doc.source); setKind(doc.kind); setTitle(`${doc.title}（新快照）`.slice(0, 120)); setSourceMode('task'); setRefreshRequest(value => value + 1); }}>刷新远端并新建分析</Button>}
         </Card>}
         {doc?.status === 'ready' && <Analysis key={doc.id} doc={doc} update={update} />}
       </section>

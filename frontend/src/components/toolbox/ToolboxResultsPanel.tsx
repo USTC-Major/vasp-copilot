@@ -87,7 +87,9 @@ const ToolboxResultsPanel: React.FC<Props> = ({ projectId, taskId, jobs, report,
       <Space wrap>
         {names.map((name) => <Button key={name} aria-label={`下载 ${name}`} disabled={!selected || !!busy}
           loading={busy === name} onClick={() => void download(name)}>下载 {name}</Button>)}
+        <Button disabled={!selected || !!busy} href={selected ? `/toolbox/postprocessing?${new URLSearchParams({ project: projectId, task: taskId, job: selected.key, attempt: selected.attempt_id! }).toString()}` : undefined}>DOS／能带结果后处理</Button>
       </Space>
+      <Text type="secondary">DOS／能带入口先预览结果文件，确认后下载到独立缓存；后续分析无需超算连接。</Text>
       {report && <Button onClick={() => saveBlob(new Blob([report], { type: 'text/markdown;charset=utf-8' }), 'toolbox-report.md')}>
         保存当前任务报告（Markdown）
       </Button>}

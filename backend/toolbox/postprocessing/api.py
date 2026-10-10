@@ -19,6 +19,23 @@ class Create(BaseModel):
     title: str = Field(default='', max_length=120)
 
 
+class TaskPreview(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    project_id: str = Field(min_length=1, max_length=256)
+    task_id: str = Field(min_length=1, max_length=256)
+    job_key: str = Field(min_length=1, max_length=128)
+    attempt_id: str = Field(min_length=1, max_length=256)
+    kind: Literal['dos', 'band']
+
+
+class TaskImport(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    preview_id: str | None = Field(default=None, max_length=40)
+    files: list[str] | None = Field(default=None, max_length=7)
+    title: str = Field(default='', max_length=120)
+    reuse_dataset_id: str | None = Field(default=None, max_length=40)
+
+
 class AxisSettings(BaseModel):
     model_config = ConfigDict(extra='forbid', strict=True)
     version: Literal['pp.axes.v1']
@@ -58,6 +75,40 @@ def store(request):
         if not hasattr(request.app.state, 'postprocessing'):
             request.app.state.postprocessing = AnalysisStore(request.app.state.toolbox.root)
         return request.app.state.postprocessing
+
+
+def task_sources(request):
+    svc = store(request)
+    with _creation_lock:
+        if svc.task_sources is None:
+            from .task_sources import TaskSources
+            svc.task_sources = TaskSources(request.app.state.toolbox, svc)
+        return svc.task_sources
+
+
+@router.post('/task-sources/preview')
+def preview_task(request: Request, body: TaskPreview):
+    identity = body.model_dump(exclude={'kind'})
+    return {'mode': 'toolbox', 'preview': task_sources(request).preview(identity, body.kind)}
+
+
+@router.post('/task-sources/import', status_code=202)
+def import_task(request: Request, body: TaskImport):
+    svc = task_sources(request)
+    if body.reuse_dataset_id:
+        if body.preview_id is not None or body.files is not None or body.title:
+            fail('缓存复用仅接受已有数据集 ID')
+        doc = svc.reuse(body.reuse_dataset_id)
+    else:
+        if not body.preview_id or body.files is None:
+            fail('下载必须先预览并确认文件')
+        doc = svc.import_files(body.preview_id, body.files, body.title)
+    return {'mode': 'toolbox', 'dataset': doc}
+
+
+@router.post('/datasets/{ident}/retry-download', status_code=202)
+def retry_download(ident: str, request: Request):
+    return {'mode': 'toolbox', 'dataset': task_sources(request).retry(ident)}
 
 
 @router.get('/datasets')

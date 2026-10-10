@@ -107,13 +107,13 @@ class _Wire:
             data = data[count:]
         self.channel.settimeout(0.2)
 
-    def receive(self, *, timeout=60, writing=False, should_cancel=None):
+    def receive(self, *, timeout=60, writing=False, should_cancel=None, abort_op="abort"):
         deadline = time.monotonic() + timeout
         aborted = False
         try:
             while b"\n" not in self.buffer:
                 if should_cancel and should_cancel() and not aborted:
-                    self.send({"op": "abort"})
+                    self.send({"op": abort_op})
                     aborted = True
                     deadline = min(deadline, time.monotonic() + 2)
                 if time.monotonic() >= deadline:
@@ -159,11 +159,11 @@ class _Wire:
                                   "Helper reply is unavailable, malformed, truncated or late; no write replay",
                                   stage="receive", dispatched=self.dispatched, published="unknown" if writing else False)
 
-    def call(self, request, *, timeout=60, writing=False, should_cancel=None, dispatch_guard=None, request_factory=None):
+    def call(self, request, *, timeout=60, writing=False, should_cancel=None, dispatch_guard=None, request_factory=None, abort_op="abort"):
         try:
             with dispatch_guard() if dispatch_guard else nullcontext():
                 self.send(request_factory() if request_factory else request)
-            return self.receive(timeout=timeout, writing=writing, should_cancel=should_cancel)
+            return self.receive(timeout=timeout, writing=writing, should_cancel=should_cancel, abort_op=abort_op)
         except RemoteFileError:
             raise
         except Exception:
@@ -199,6 +199,92 @@ class RemoteFiles:
 
     def probe(self):
         return self._read({"op": "probe"})
+
+    def _pp_endpoint(self, expected=None):
+        # FileActions.remote owns a dedicated manager for this read. Bound PP's
+        # connect/banner/auth stages without changing the diagnostic transport.
+        if hasattr(self.manager, 'connect_timeout'):
+            self.manager.connect_timeout = min(5, self.manager.connect_timeout)
+        endpoint = self.endpoint()
+        if endpoint.get("host_key", {}).get("verification") != "known_hosts" or (expected is not None and endpoint != expected):
+            raise RemoteFileError("ENDPOINT_CHANGED", "Verified unchanged host identity required")
+        return endpoint
+
+    def preview_pp(self, directory, *, expected=None, should_cancel=None):
+        """Bounded metadata for PP's independent fixed-name allowlist."""
+        try:
+            protocol.absolute(directory)
+        except protocol.FileError as exc:
+            raise _local_error(exc) from exc
+        endpoint = self._pp_endpoint(expected.get("endpoint") if expected else None)
+        wire = _Wire(self.manager, expected_endpoint=endpoint, scheduler_target=self.scheduler_target)
+        try:
+            root = wire.call({"op": "root", "path": directory}, timeout=5,
+                             should_cancel=should_cancel, abort_op="pp_abort")
+            if root.get("requested_path") != directory or root.get("canonical_path") != directory or root.get("resolution_chain") != []:
+                raise RemoteFileError("PATH_SYMLINK_ESCAPE", "Post-processing directory must not contain links")
+            result = wire.call({"op": "pp_preview", "root": root}, timeout=5,
+                               should_cancel=should_cancel, abort_op="pp_abort")
+            wire.check_endpoint()
+            if (result.get("root") != root or not isinstance(result.get("files"), list)
+                    or len(result["files"]) != len(protocol.PP_NAMES)
+                    or {f.get("name") for f in result["files"]} != protocol.PP_NAMES):
+                raise RemoteFileError("PROTOCOL_ERROR", "Invalid post-processing preview")
+            return {**result, "endpoint": endpoint}
+        finally:
+            wire.close()
+
+    def stream_pp(self, preview, name, target, *, should_cancel, progress, deadline):
+        """Stream one preview-bound file to local staging; never hold the full file in RAM."""
+        if name not in protocol.PP_NAMES:
+            raise RemoteFileError("CONTENT_READ_DENIED", "Unsupported post-processing name")
+        selected = next((f for f in preview["files"] if f["name"] == name and f["available"]), None)
+        if selected is None:
+            raise RemoteFileError("SOURCE_CHANGED", "Selected preview file unavailable")
+        if should_cancel():
+            raise RemoteFileError("ACTION_ABORTED", "Post-processing download cancelled")
+        if time.monotonic() >= deadline:
+            raise RemoteFileError("PP_DOWNLOAD_TIMEOUT", "Post-processing download deadline exceeded")
+        endpoint = self._pp_endpoint(preview["endpoint"])
+        wire = _Wire(self.manager, expected_endpoint=endpoint, scheduler_target=self.scheduler_target)
+        length, sha = 0, hashlib.sha256()
+        def timeout():
+            if should_cancel():
+                raise RemoteFileError("ACTION_ABORTED", "Post-processing download cancelled")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise RemoteFileError("PP_DOWNLOAD_TIMEOUT", "Post-processing download deadline exceeded")
+            return min(5, remaining)
+        try:
+            ready = wire.call({"op": "pp_begin", "root": preview["root"], "name": name,
+                               "metadata": selected["metadata"], "max_bytes": protocol.PP_LIMIT},
+                              timeout=timeout(), should_cancel=should_cancel, abort_op="pp_abort")
+            if ready != {"state": "ready", "size": selected["size_bytes"]}:
+                raise RemoteFileError("PROTOCOL_ERROR", "Invalid post-processing file metadata")
+            for index in range(protocol.PP_LIMIT // protocol.RESULT_CHUNK + 2):
+                frame = wire.call({"op": "pp_next"}, timeout=timeout(), should_cancel=should_cancel, abort_op="pp_abort")
+                wire.check_endpoint()
+                if should_cancel():
+                    raise RemoteFileError("ACTION_ABORTED", "Post-processing download cancelled")
+                if frame.get("state") == "complete":
+                    if frame.get("length") != length or length != ready["size"] or frame.get("sha256") != sha.hexdigest():
+                        raise RemoteFileError("SOURCE_CHANGED", "Post-processing checksum or size changed")
+                    return length, sha.hexdigest()
+                if frame.get("state") != "chunk" or frame.get("index") != index:
+                    raise RemoteFileError("PROTOCOL_ERROR", "Out-of-order post-processing frame")
+                try:
+                    chunk = base64.b64decode(frame["data"], validate=True)
+                except (KeyError, ValueError, TypeError, binascii.Error) as exc:
+                    raise RemoteFileError("PROTOCOL_ERROR", "Invalid post-processing frame") from exc
+                if not 0 < len(chunk) <= protocol.RESULT_CHUNK or length + len(chunk) > min(protocol.PP_LIMIT, ready["size"]):
+                    raise RemoteFileError("PROTOCOL_ERROR", "Post-processing frame exceeds byte budget")
+                target.write(chunk)
+                length += len(chunk)
+                sha.update(chunk)
+                progress(length)
+            raise RemoteFileError("PROTOCOL_ERROR", "Post-processing frame count exceeded")
+        finally:
+            wire.close()
 
     def read_result(self, directory, name):
         """Read one fixed result through the verified helper, then validate whole bytes."""

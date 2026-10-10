@@ -33,6 +33,19 @@
 .pp-scientific-plot { background:#FFFFFF; color:#1F2937; border:1px solid #D1D5DB; border-radius:6px; overflow:hidden; margin:12px 0; }
 .pp-plot-loading { height:432px; box-sizing:border-box; display:grid; place-items:center; }
 .pp-plot-update-status { min-height:22px; margin-bottom:8px; }
+.pp-source-metadata { display:grid; grid-template-columns:auto minmax(0,1fr); gap:6px 12px; margin:12px 0; font-size:13px; }
+.pp-source-metadata dt { color:var(--wf-muted); }
+.pp-source-metadata dd { margin:0; overflow-wrap:anywhere; }
+.pp-task-source { margin-top:14px; }
+.pp-task-files { border:1px solid var(--wf-border); border-radius:6px; padding:10px; margin:12px 0; min-width:0; }
+.pp-task-files legend { width:auto; padding:0 6px; font-size:14px; color:var(--wf-text); }
+.pp-task-file { display:flex; flex-direction:column; gap:4px; padding:6px 0; overflow-wrap:anywhere; }
+.pp-task-file .ant-typography { font-size:12px; }
+.pp-confirm-download { margin-top:12px; }
+.pp-cache-options { margin-top:14px; display:grid; gap:6px; }
+.pp-cache-options .ant-btn { height:auto; min-height:32px; white-space:normal; text-align:left; }
+.pp-download-status { margin:12px 0; }
+.pp-refresh-source { margin:12px 0 0 8px; max-width:100%; }
 @media(max-width:1050px) { .pp-grid { grid-template-columns:minmax(0,1fr); } }
-@media(max-width:480px) { .pp-controls { grid-template-columns:minmax(0,1fr); } .pp-page .ant-card-head-wrapper { flex-wrap:wrap; gap:8px; padding:8px 0; } }
+@media(max-width:480px) { .pp-controls { grid-template-columns:minmax(0,1fr); } .pp-page .ant-card-head-wrapper { flex-wrap:wrap; gap:8px; padding:8px 0; } .pp-source-metadata { grid-template-columns:minmax(0,1fr); gap:4px; } .pp-source-metadata dd { margin-bottom:6px; } .pp-refresh-source { margin-left:0; display:block; } }
 @media(max-width:600px) { .pp-energy-grid { grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; } .pp-energy-grid > .ant-btn { grid-column:1/-1; justify-self:start; } .pp-projection-columns { grid-template-columns:minmax(0,1fr); } }

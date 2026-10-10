@@ -25,6 +25,8 @@ TEXT_LIMIT = 12000
 RESULT_LIMIT = 32 * 1024 * 1024
 RESULT_CHUNK = 32 * 1024
 RESULT_NAMES = frozenset({"OUTCAR", "OSZICAR", "CONTCAR"})
+PP_NAMES = frozenset({"vasprun.xml", "DOSCAR", "EIGENVAL", "KPOINTS", "POSCAR", "CONTCAR", "INCAR"})
+PP_LIMIT = 64 * 1024 * 1024
 CHUNK = 1024 * 1024
 RESERVED = ".vasp-doctor-"
 CREDENTIAL_PARTS = ("/.ssh", "/.gnupg", "/.aws", "/.azure", "/.codex", "/.config", "/.vasp-ai")
@@ -318,8 +320,11 @@ def root_evidence(path):
 class ResultReader:
     """One fixed-name, read-only FD session; no path supplied after begin."""
 
+    allowed_names = RESULT_NAMES
+    limit = RESULT_LIMIT
+
     def __init__(self, root, name):
-        require(name in RESULT_NAMES, "CONTENT_READ_DENIED", "Unsupported result name")
+        require(name in self.allowed_names, "CONTENT_READ_DENIED", "Unsupported result name")
         require(isinstance(root, dict) and root.get("resolution_chain") == [],
                 "PATH_SYMLINK_ESCAPE", "Result directory must not contain links")
         require(root.get("requested_path") == root.get("canonical_path"),
@@ -338,7 +343,7 @@ class ResultReader:
                                    dir_fd=self.directory_fd)
             self.info = metadata(os.fstat(self.file_fd))
             require(self.info["type"] == "file", "CONTENT_READ_DENIED", "Result must be an ordinary file")
-            require(self.info["size"] <= RESULT_LIMIT, "RESULT_TOO_LARGE", "Result exceeds 32 MiB")
+            require(self.info["size"] <= self.limit, "RESULT_TOO_LARGE", "Result exceeds byte limit")
             self._check()
         except BaseException:
             self.close()
@@ -359,7 +364,7 @@ class ResultReader:
         chunk = os.read(self.file_fd, RESULT_CHUNK)
         self._check()
         self.length += len(chunk)
-        require(self.length <= RESULT_LIMIT, "RESULT_TOO_LARGE", "Result exceeds 32 MiB")
+        require(self.length <= self.limit, "RESULT_TOO_LARGE", "Result exceeds byte limit")
         self.sha.update(chunk)
         if chunk:
             index = self.index
@@ -375,6 +380,52 @@ class ResultReader:
         if self.directory_fd is not None:
             os.close(self.directory_fd)
             self.directory_fd = None
+
+
+def pp_preview(root):
+    """Only fixed PP names, metadata only, no links or special-file reads."""
+    require(isinstance(root, dict) and root.get("resolution_chain") == []
+            and root.get("requested_path") == root.get("canonical_path"),
+            "PATH_SYMLINK_ESCAPE", "Post-processing directory must not contain links")
+    verify_root(root)
+    fd, _ = open_directory(root["requested_path"])
+    try:
+        require(identity_matches(metadata(os.fstat(fd)), root["identity"], stable=True),
+                "ROOT_CHANGED", "Post-processing directory changed")
+        files = []
+        for name in sorted(PP_NAMES):
+            try:
+                info = metadata(os.stat(name, dir_fd=fd, follow_symlinks=False))
+            except FileNotFoundError:
+                files.append({"name": name, "available": False, "size_bytes": None,
+                              "reason": "SOURCE_NOT_FOUND"})
+                continue
+            reason = ("PATH_SYMLINK_ESCAPE" if info["type"] == "symlink" else
+                      "CONTENT_READ_DENIED" if info["type"] != "file" else
+                      "PP_TOO_LARGE" if info["size"] > PP_LIMIT else
+                      "PP_EMPTY_FILE" if info["size"] == 0 else None)
+            files.append({"name": name, "available": reason is None, "size_bytes": info["size"],
+                          "metadata": info, **({"reason": reason} if reason else {})})
+        require(identity_matches(metadata(os.fstat(fd)), root["identity"], stable=True),
+                "ROOT_CHANGED", "Post-processing directory changed while previewing")
+        verify_root(root)
+        return {"root": root, "files": files}
+    finally:
+        os.close(fd)
+
+
+class PPReader(ResultReader):
+    allowed_names = PP_NAMES
+    limit = PP_LIMIT
+
+    def __init__(self, root, name, expected):
+        super().__init__(root, name)
+        try:
+            require(isinstance(expected, dict) and self.info == expected,
+                    "SOURCE_CHANGED", "Post-processing source changed since preview")
+        except BaseException:
+            self.close()
+            raise
 
 
 def rename_noreplace(parent_fd, source, target):
@@ -987,6 +1038,7 @@ def _reply(data=None, error=None):
 def main():
     transaction = None
     result_reader = None
+    pp_session = False
     def cancellation():
         if select.select([sys.stdin.buffer], [], [], 0)[0]:
             request = _read_request()
@@ -1006,7 +1058,7 @@ def main():
                 require(isinstance(request, dict) and isinstance(request.get("op"), str))
                 op = request["op"]
                 if result_reader is not None:
-                    require(op in {"result_next", "result_abort"}, "PROTOCOL_ERROR",
+                    require(op in ({"pp_next", "pp_abort"} if pp_session else {"result_next", "result_abort"}), "PROTOCOL_ERROR",
                             "Only result continuation or abort is accepted")
                 if op == "probe" and transaction is None:
                     require(set(request) == {"op"})
@@ -1031,7 +1083,16 @@ def main():
                     require(request["max_bytes"] == RESULT_LIMIT)
                     result_reader = ResultReader(request["root"], request["name"])
                     _reply({"state": "ready", "size": result_reader.info["size"]})
-                elif op == "result_next" and transaction is None and result_reader is not None:
+                elif op == "pp_preview" and transaction is None and result_reader is None:
+                    require(set(request) == {"op", "root"})
+                    _reply(pp_preview(request["root"]))
+                elif op == "pp_begin" and transaction is None and result_reader is None:
+                    require(set(request) == {"op", "root", "name", "metadata", "max_bytes"})
+                    require(request["max_bytes"] == PP_LIMIT)
+                    result_reader = PPReader(request["root"], request["name"], request["metadata"])
+                    pp_session = True
+                    _reply({"state": "ready", "size": result_reader.info["size"]})
+                elif op in {"result_next", "pp_next"} and transaction is None and result_reader is not None:
                     require(set(request) == {"op"})
                     result = result_reader.next()
                     _reply(result)
@@ -1039,7 +1100,7 @@ def main():
                         result_reader.close()
                         result_reader = None
                         break
-                elif op == "result_abort" and transaction is None and result_reader is not None:
+                elif op in {"result_abort", "pp_abort"} and transaction is None and result_reader is not None:
                     require(set(request) == {"op"})
                     result_reader.close()
                     result_reader = None
