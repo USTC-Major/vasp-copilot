@@ -7,6 +7,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { routes } from '../router';
 import { server } from '../mocks/server';
 import { connectDesktopSettings, openDesktopLaunchSettings } from '../utils/desktopSettings';
+import { defaultPlotPreferences, PLOT_PALETTES, plotPreferencesApi } from '../api/plotPreferences';
 
 const renderPage = (path = '/settings') => {
   const router = createMemoryRouter(routes, { initialEntries: [path] });
@@ -14,7 +15,7 @@ const renderPage = (path = '/settings') => {
   render(<QueryClientProvider client={client}><RouterProvider router={router} /></QueryClientProvider>);
   return router;
 };
-afterEach(() => { delete (window as Window & { chrome?: unknown }).chrome; });
+afterEach(() => { delete (window as Window & { chrome?: unknown }).chrome; vi.restoreAllMocks(); });
 
 it.each([['/ai/settings', '#settings-models'], ['/toolbox/settings', '#settings-execution']])('redirects %s to the same browser center', async (path, hash) => {
   const router = renderPage(path);
@@ -64,6 +65,73 @@ it('uses Toolbox execution save/test while AI is unreachable and guards fallback
   await waitFor(() => expect(tests).toBe(1));
   expect(await screen.findByText('synthetic saved SSH unavailable')).toBeInTheDocument();
   expect(screen.queryByRole('textbox', { name: '模型名称' })).not.toBeInTheDocument();
+});
+
+it('guards palette drafts and clears only the saved section from the combined dirty state', async () => {
+  let saved = defaultPlotPreferences();
+  vi.spyOn(plotPreferencesApi, 'get').mockImplementation(async () => ({ preferences: saved, presets: PLOT_PALETTES }));
+  const savePalette = vi.spyOn(plotPreferencesApi, 'save').mockImplementation(async (_revision, palette) => {
+    saved = { ...saved, revision: saved.revision + 1, palette };
+    return { preferences: saved };
+  });
+  const saveBusiness = vi.fn();
+  server.use(http.put('/ai/v1/settings', () => { saveBusiness(); return HttpResponse.json({}); }));
+  const router = renderPage();
+  const model = await screen.findByRole('textbox', { name: '模型名称' });
+  const originalModel = (model as HTMLInputElement).value;
+  const color = screen.getByRole('textbox', { name: '颜色 1' });
+  await waitFor(() => expect(color).toBeEnabled());
+  fireEvent.change(color, { target: { value: '#112233' } });
+  const unsavedUnload = new Event('beforeunload', { cancelable: true });
+  window.dispatchEvent(unsavedUnload);
+  expect(unsavedUnload.defaultPrevented).toBe(true);
+  await userEvent.click(screen.getByRole('link', { name: '首页' }));
+  await userEvent.click(within(await screen.findByRole('dialog', { name: '设置尚未保存' })).getByRole('button', { name: '继续编辑' }));
+  expect(router.state.location.pathname).toBe('/settings');
+  expect(color).toHaveValue('#112233');
+
+  fireEvent.change(model, { target: { value: `${originalModel}-unsaved` } });
+  await userEvent.click(screen.getByRole('button', { name: '保存默认配色' }));
+  expect(await screen.findByText('默认配色已保存（仅本地）')).toBeInTheDocument();
+  expect(savePalette).toHaveBeenCalledWith(0, expect.objectContaining({ colors: expect.arrayContaining(['#112233']) }));
+  expect(saveBusiness).not.toHaveBeenCalled();
+  await userEvent.click(screen.getByRole('link', { name: '首页' }));
+  await userEvent.click(within(await screen.findByRole('dialog', { name: '设置尚未保存' })).getByRole('button', { name: '继续编辑' }));
+  expect(model).toHaveValue(`${originalModel}-unsaved`);
+  fireEvent.change(model, { target: { value: originalModel } });
+  const savedUnload = new Event('beforeunload', { cancelable: true });
+  window.dispatchEvent(savedUnload);
+  expect(savedUnload.defaultPrevented).toBe(false);
+  await userEvent.click(screen.getByRole('link', { name: '首页' }));
+  await waitFor(() => expect(router.state.location.pathname).toBe('/'));
+});
+
+it('preserves the palette draft when pending AI settings replace the Toolbox fallback', async () => {
+  const preferences = defaultPlotPreferences();
+  const readPalette = vi.spyOn(plotPreferencesApi, 'get').mockResolvedValue({ preferences, presets: PLOT_PALETTES });
+  const savePalette = vi.spyOn(plotPreferencesApi, 'save');
+  let releaseSettings!: () => void;
+  const pendingSettings = new Promise<void>(resolve => { releaseSettings = resolve; });
+  server.use(http.get('/ai/v1/settings', async () => {
+    await pendingSettings;
+    return HttpResponse.json({ settings: { max_jobs: 20, poll_interval_seconds: 60, llm: { model: 'delayed-model' }, ssh: {} } });
+  }));
+  const router = renderPage();
+  const color = await screen.findByRole('textbox', { name: '颜色 1' });
+  await waitFor(() => expect(color).toBeEnabled());
+  expect(screen.queryByRole('textbox', { name: '模型名称' })).not.toBeInTheDocument();
+  fireEvent.change(color, { target: { value: '#445566' } });
+  await act(async () => releaseSettings());
+  expect(await screen.findByRole('textbox', { name: '模型名称' })).toHaveValue('delayed-model');
+  expect(screen.getByRole('textbox', { name: '颜色 1' })).toBe(color);
+  expect(color).toHaveValue('#445566');
+  expect(screen.getByText('有未保存配色')).toBeInTheDocument();
+  expect(readPalette).toHaveBeenCalledTimes(1);
+  expect(savePalette).not.toHaveBeenCalled();
+  await userEvent.click(screen.getByRole('link', { name: '首页' }));
+  await userEvent.click(within(await screen.findByRole('dialog', { name: '设置尚未保存' })).getByRole('button', { name: '继续编辑' }));
+  expect(router.state.location.pathname).toBe('/settings');
+  expect(color).toHaveValue('#445566');
 });
 
 it('requires a live host capability, accepts fixed navigation and sends no configuration', async () => {

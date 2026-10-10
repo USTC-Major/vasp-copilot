@@ -243,7 +243,7 @@ const AiSettingsPage: React.FC<{ embedded?: boolean; onDirtyChange?: (dirty: boo
         const [latest, latestSecrets] = await Promise.all([settingsQuery.refetch(), secretQuery.refetch()]);
         if (!latest.isError && !latestSecrets.isError) setFallbackPinned(false);
       }}>重试读取模型配置</Button>
-    </>} /><PlotPreferencesSettings /></>;
+    </>} /></>;
   }
   if (settingsQuery.isLoading || secretQuery.isLoading) return <div className="scientific-settings settings-loading" role="status">{contextHolder}<Spin aria-label="智能设置加载中" /><Text type="secondary">正在读取智能设置与凭据状态…</Text></div>;
   if (settingsQuery.error || secretQuery.error || !settings || !rawSecrets) {
@@ -362,7 +362,7 @@ const AiSettingsPage: React.FC<{ embedded?: boolean; onDirtyChange?: (dirty: boo
         </Row>
       ))}
 
-      <PlotPreferencesSettings />
+      {!embedded && <PlotPreferencesSettings />}
       {testNotice && <Alert type="warning" showIcon message={testNotice} style={{ marginBottom: 16 }} />}
     </div>
   );

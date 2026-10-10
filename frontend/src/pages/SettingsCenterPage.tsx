@@ -2,12 +2,15 @@ import { useEffect, useState } from 'react';
 import { Alert, Button, Card, Modal, Space, Typography } from 'antd';
 import { Link, useBlocker, useLocation } from 'react-router-dom';
 import AiSettingsPage from './AiSettingsPage';
+import PlotPreferencesSettings from '../components/postprocessing/PlotPreferencesSettings';
 import { openDesktopLaunchSettings, useDesktopSettings } from '../utils/desktopSettings';
 import './scientific-settings.css';
 
 export default function SettingsCenterPage() {
   const desktop = useDesktopSettings();
-  const [dirty, setDirty] = useState(false);
+  const [businessDirty, setBusinessDirty] = useState(false);
+  const [paletteDirty, setPaletteDirty] = useState(false);
+  const dirty = businessDirty || paletteDirty;
   const blocker = useBlocker(({ currentLocation, nextLocation }) => dirty && currentLocation.pathname !== nextLocation.pathname);
   const { hash } = useLocation();
   useEffect(() => {
@@ -40,9 +43,10 @@ export default function SettingsCenterPage() {
           : <Alert type="info" showIcon message="此项需在桌面程序中操作" description="独立浏览器不读写本机启动配置。请在 VASP-Copilot.exe 的设置中配置安装目录、Python 和服务开关。" />}
       </Card>
     </section>
-    <AiSettingsPage embedded onDirtyChange={setDirty} />
+    <AiSettingsPage embedded onDirtyChange={setBusinessDirty} />
+    <PlotPreferencesSettings onDirtyChange={setPaletteDirty} />
     <Modal open={blocker.state === 'blocked'} title="设置尚未保存" okText="放弃修改并离开" cancelText="继续编辑"
-      onOk={() => { setDirty(false); if (blocker.state === 'blocked') blocker.proceed(); }}
+      onOk={() => { setBusinessDirty(false); setPaletteDirty(false); if (blocker.state === 'blocked') blocker.proceed(); }}
       onCancel={() => { if (blocker.state === 'blocked') blocker.reset(); }}>
       当前修改尚未保存。离开不会自动保存或调用连接测试。
     </Modal>
