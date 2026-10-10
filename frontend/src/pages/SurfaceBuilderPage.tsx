@@ -7,6 +7,8 @@ import { ApiError } from '../api/client';
 import { CrystalGeometryViewer } from '../components/structure/CrystalViewer';
 import type { CatalysisDraft, CatalysisSource } from '../types/catalysis';
 import { activeSurface, editorFor, parsedParameters, readRecovery, same, storeRecovery, type SurfaceEditor, type SurfaceFields } from './surfaceDraftState';
+import AdsorptionBuilder from './AdsorptionBuilder';
+import { adsorptionEditorFor, storeAdsorptionRecovery } from './adsorptionDraftState';
 import './surface-builder.css';
 
 const errorText = (e: unknown) => e instanceof Error ? e.message : '操作失败，请重试。';
@@ -23,6 +25,8 @@ function DraftEditor({ initial, onUpdate }: { initial: CatalysisDraft; onUpdate:
   const [conflict, setConflict] = useState(false);
   const [notice, setNotice] = useState('');
   const [storageFailed, setStorageFailed] = useState(false);
+  const [adsorptionBusy, setAdsorptionBusy] = useState(false);
+  const [adsorptionReset, setAdsorptionReset] = useState(0);
   const version = useRef(0);
   const live = useRef(true);
   useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
@@ -30,6 +34,9 @@ function DraftEditor({ initial, onUpdate }: { initial: CatalysisDraft; onUpdate:
   const paramsDirty = !same(editor.fields, saved.fields);
   const constraintsDirty = editor.bottom !== saved.bottom || !same(editor.overrides, saved.overrides) || editor.reset !== saved.reset;
   const dirty = paramsDirty || constraintsDirty || editor.name !== doc.name;
+  const dirtyRef = useRef(dirty), cleanVersion = useRef(version.current);
+  dirtyRef.current = dirty;
+  if (!dirty) cleanVersion.current = version.current;
   const nameError = !editor.name.trim() ? '草稿名称不能为空。' : '';
   const staleRecovery = recovery.current && recovery.current.revision !== initial.revision;
   const surface = activeSurface(doc);
@@ -49,6 +56,12 @@ function DraftEditor({ initial, onUpdate }: { initial: CatalysisDraft; onUpdate:
   const geometry = useQuery({ queryKey: ['cat-geometry', doc.draft_id, doc.revision, surface?.surface_id], queryFn: ({ signal }) => catalysisApi.geometry(doc.draft_id, surface!.surface_id, doc.revision, signal), enabled: !!surface && !paramsDirty && !constraintsDirty && !busy, retry: false });
   const edit = (patch: Partial<SurfaceEditor>) => { version.current++; setEditor(previous => ({ ...previous, ...patch })); setNotice(''); };
   const update = (next: CatalysisDraft) => { setDoc(previous => next.revision >= previous.revision ? next : previous); onUpdate(next); };
+  const updateFromAdsorption = (next: CatalysisDraft) => {
+    // A conflict refresh may include another window's changed surface or flags.
+    // Adopt those parent fields only when no local parent edit is pending.
+    if (!dirtyRef.current && version.current === cleanVersion.current) setEditor(editorFor(next));
+    update(next);
+  };
   async function action(label: string, work: () => Promise<{ draft: CatalysisDraft }>, mode: 'save' | 'build' | 'constraints' | 'selection') {
     const atVersion = version.current; setBusy(label); setError(''); setNotice('');
     try {
@@ -74,17 +87,17 @@ function DraftEditor({ initial, onUpdate }: { initial: CatalysisDraft; onUpdate:
   }
   async function loadLatest() {
     setBusy('载入最新草稿'); setError('');
-    try { const next = (await catalysisApi.get(doc.draft_id)).draft; if (!live.current) return; update(next); setEditor(editorFor(next)); version.current++; setConflict(false); setRecovered(false); recovery.current = null; setNotice('已载入最新草稿。'); }
+    try { const next = (await catalysisApi.get(doc.draft_id)).draft; if (!live.current) return; update(next); setEditor(editorFor(next)); storeAdsorptionRecovery(next, adsorptionEditorFor(next), false); setAdsorptionReset(n => n + 1); version.current++; setConflict(false); setRecovered(false); recovery.current = null; setNotice('已载入最新草稿。'); }
     catch (e) { setError(errorText(e)); } finally { if (live.current) setBusy(''); }
   }
   async function exportZip() {
-    if (!surface || dirty || busy || conflict || geometry.isFetching || geometry.data?.revision !== doc.revision || geometry.data.surface_id !== surface.surface_id) return;
+    if (!surface || dirty || busy || adsorptionBusy || conflict || geometry.isFetching || geometry.data?.revision !== doc.revision || geometry.data.surface_id !== surface.surface_id) return;
     setBusy('准备导出'); setError(''); const atVersion = version.current;
     try { const blob = await catalysisApi.export(doc, surface.surface_id); if (live.current && atVersion === version.current) { download(blob, `${doc.name || 'surface'}-${doc.draft_id}.zip`); setNotice('已导出 POSCAR 与建模元数据。'); } else if (live.current) setNotice('导出期间输入已变化，已取消旧结构下载。'); }
     catch (e) { if (live.current) { setError(errorText(e)); setConflict(e instanceof ApiError && e.status === 409); } } finally { if (live.current) setBusy(''); }
   }
   const geometryMatches = !!surface && geometry.data?.revision === doc.revision && geometry.data.surface_id === surface.surface_id;
-  const ready = !!surface && !dirty && !busy && !conflict && geometryMatches && !geometry.isFetching && !geometry.error;
+  const ready = !!surface && !dirty && !busy && !adsorptionBusy && !conflict && geometryMatches && !geometry.isFetching && !geometry.error;
   return <div className="cat-editor">
     <Card title="建模草稿" extra={<Tag>revision {doc.revision}</Tag>}>
       <label className="cat-label">草稿名称<Input aria-label="草稿名称" value={editor.name} maxLength={120} onChange={e => edit({ name: e.target.value })} /></label>
@@ -93,7 +106,7 @@ function DraftEditor({ initial, onUpdate }: { initial: CatalysisDraft; onUpdate:
       {staleRecovery && recovered && <Alert type="warning" title="发现旧 revision 的本机输入" description="服务器草稿已更新，旧输入未自动套用。可恢复旧参数后审阅并重新生成；逐原子例外将不恢复。" action={<Button size="small" onClick={() => { const old = recovery.current; if (old) edit({ name: old.editor.name, fields: old.editor.fields }); setRecovered(false); recovery.current = null; }}>恢复旧参数</Button>} />}
       {storageFailed && <Alert type="warning" title="浏览器无法保存未提交输入，请在离开前保存草稿。" />}
       {nameError && <Alert type="warning" title={nameError} />}
-      <Space wrap><Button disabled={!!busy || conflict || !dirty || !!nameError || constraintsDirty || (doc.source.role === 'bulk' && typeof parameters === 'string')} onClick={() => void action('保存草稿', () => catalysisApi.save(doc, { name: editor.name.trim(), ...(doc.source.role === 'bulk' && paramsDirty && typeof parameters !== 'string' ? { parameters } : {}) }), 'save')}>保存草稿</Button><Button disabled={!!busy || (!dirty && !conflict)} onClick={() => void loadLatest()}>放弃本页输入并载入最新</Button></Space>
+      <Space wrap><Button disabled={!!busy || adsorptionBusy || conflict || !dirty || !!nameError || constraintsDirty || (doc.source.role === 'bulk' && typeof parameters === 'string')} onClick={() => void action('保存草稿', () => catalysisApi.save(doc, { name: editor.name.trim(), ...(doc.source.role === 'bulk' && paramsDirty && typeof parameters !== 'string' ? { parameters } : {}) }), 'save')}>保存草稿</Button><Button disabled={!!busy || adsorptionBusy || (!dirty && !conflict)} onClick={() => void loadLatest()}>放弃本页输入并载入最新</Button></Space>
       <div className="cat-save-status" role="status">{busy ? <Space><Spin size="small" />{busy}…</Space> : <>{notice && <span>{notice}</span>}{dirty ? <span> 有尚未应用的输入，导出已暂停。</span> : !notice && '已保存，可跨页面或关闭后恢复。'}</>}</div>
       {error && <Alert type={conflict ? 'warning' : 'error'} title={conflict ? '草稿 revision 已变化，本页输入已保留' : '操作失败，本页输入已保留'} description={error} />}
       {doc.warnings.map(w => <Alert key={w} type="warning" title={w} showIcon />)}
@@ -102,11 +115,11 @@ function DraftEditor({ initial, onUpdate }: { initial: CatalysisDraft; onUpdate:
       <Typography.Paragraph type="secondary">hkl 相对于导入的输入晶胞。保留该晶胞定义，不隐式转为常规胞或原胞。</Typography.Paragraph>
       <div className="cat-controls">{(Object.keys(fieldLabels) as (keyof SurfaceFields)[]).map(key => <label key={key}>{fieldLabels[key]}<Input aria-label={fieldLabels[key]} inputMode={['h', 'k', 'l', 'nx', 'ny'].includes(key) ? 'numeric' : 'decimal'} value={editor.fields[key]} onChange={e => edit({ fields: { ...editor.fields, [key]: e.target.value } })} /></label>)}</div>
       {typeof parameters === 'string' && <Alert type="warning" title={parameters} />}
-      <Button type="primary" disabled={!!busy || conflict || typeof parameters === 'string'} onClick={() => { if (typeof parameters !== 'string') void action('生成表面', () => catalysisApi.build(doc, parameters), 'build'); }}>{surface ? '重新生成表面' : '生成表面'}</Button>
+      <Button type="primary" disabled={!!busy || adsorptionBusy || conflict || typeof parameters === 'string'} onClick={() => { if (typeof parameters !== 'string') void action('生成表面', () => catalysisApi.build(doc, parameters), 'build'); }}>{surface ? '重新生成表面' : '生成表面'}</Button>
       <Typography.Paragraph className="cat-note" type="secondary">厚度和真空是生成下限，实际原子核跨度及周期空隙由离散晶层决定。重新生成会替换终止面和其约束。</Typography.Paragraph>
     </Card>}
     {surface && <Card title="终止面与实际几何">
-      <label className="cat-label">终止面<Select aria-label="终止面" value={surface.surface_id} disabled={!!busy || dirty || conflict} options={doc.surfaces.map((s, i) => ({ value: s.surface_id, label: `${doc.source.role === 'slab' ? '导入表面' : `终止面 ${i + 1}`} · ${s.termination_shift === null ? '原始晶胞' : `shift ${s.termination_shift.toFixed(4)}`} · ${s.snapshot.atoms.length} 原子` }))} onChange={active_surface_id => void action('保存终止面', () => catalysisApi.save(doc, { active_surface_id }), 'selection')} /></label>
+      <label className="cat-label">终止面<Select aria-label="终止面" value={surface.surface_id} disabled={!!busy || adsorptionBusy || dirty || conflict} options={doc.surfaces.map((s, i) => ({ value: s.surface_id, label: `${doc.source.role === 'slab' ? '导入表面' : `终止面 ${i + 1}`} · ${s.termination_shift === null ? '原始晶胞' : `shift ${s.termination_shift.toFixed(4)}`} · ${s.snapshot.atoms.length} 原子` }))} onChange={active_surface_id => void action('保存终止面', () => catalysisApi.save(doc, { active_surface_id }), 'selection')} /></label>
       <dl className="cat-metrics"><div><dt>实际原子核跨度</dt><dd>{surface.surface.actual_nuclei_span_angstrom.toFixed(4)} Å</dd></div><div><dt>周期无核空隙</dt><dd>{surface.surface.periodic_vacuum_gap_angstrom.toFixed(4)} Å</dd></div><div><dt>法向周期</dt><dd>{surface.surface.normal_period_angstrom.toFixed(4)} Å</dd></div><div><dt>实际面内尺寸</dt><dd>{surface.surface.in_plane_lengths_angstrom.map(v => v.toFixed(4)).join(' × ')} Å</dd></div></dl>
       {doc.parameters && <Typography.Paragraph type="secondary">已应用的生成下限：slab {doc.parameters.min_slab_size} Å，真空 {doc.parameters.min_vacuum_size} Å。</Typography.Paragraph>}
       <Typography.Paragraph type="secondary">法向 n = a × b 归一化：{surface.surface.normal.map(v => v.toFixed(4)).join(' / ')}。底层按沿 n 的投影分组；无核空隙是周期几何量。</Typography.Paragraph>
@@ -114,13 +127,14 @@ function DraftEditor({ initial, onUpdate }: { initial: CatalysisDraft; onUpdate:
     </Card>}
     {surface && <Card title="固定层与逐原子例外">
       <Typography.Paragraph type="secondary">按 a × b 的法向，从底部起固定。FFF 为全固定，TTT 为全自由；混合 T/F 按直接晶格 a/b/c 基矢解释，与屏幕 x/y/z 无关。</Typography.Paragraph>
-      <div className="cat-controls"><label>底部固定层数<Input aria-label="底部固定层数" inputMode="numeric" value={editor.bottom} disabled={!!busy || paramsDirty || conflict} onChange={e => edit({ bottom: e.target.value })} /></label><label>分层信息<span>{surface.surface.layers.length} 层 · 容差 {surface.surface.layer_tolerance} Å</span></label></div>
-      <Checkbox checked={editor.reset} disabled={!!busy || paramsDirty || conflict} onChange={e => edit({ reset: e.target.checked })}>先释放所有已有约束，再应用本页固定层和例外</Checkbox>
-      <div className="cat-layer-list">{surface.surface.layers.map((layer, layerNumber) => <details key={layer.layer_index}><summary>底部第 {layerNumber + 1} 层 · {layer.atom_ids.length} 原子 · 投影 {layer.projection_angstrom.toFixed(4)} Å</summary><div className="cat-atom-list">{layer.atom_ids.map(atomId => { const index = surface.snapshot.atoms.findIndex(a => a.atom_id === atomId); const atom = surface.snapshot.atoms[index]; return atom && <label key={atomId}><span title={`稳定原子 ID: ${atomId}`}>#{index + 1} {atom.element} · {atom.selective_dynamics.map(f => f ? 'T' : 'F').join('')}</span><Select aria-label={`原子 ${index + 1} ${atom.element} 约束例外`} value={editor.overrides[atomId] ?? 'inherit'} disabled={!!busy || paramsDirty || conflict} options={[{ value: 'inherit', label: '跟随层／原有约束' }, { value: 'fixed', label: '例外：固定 FFF' }, { value: 'free', label: '例外：自由 TTT' }]} onChange={(value: 'fixed' | 'free' | 'inherit') => { const overrides = { ...editor.overrides }; if (value === 'inherit') delete overrides[atomId]; else overrides[atomId] = value; edit({ overrides }); }} /></label>; })}</div></details>)}</div>
+      <div className="cat-controls"><label>底部固定层数<Input aria-label="底部固定层数" inputMode="numeric" value={editor.bottom} disabled={!!busy || adsorptionBusy || paramsDirty || conflict} onChange={e => edit({ bottom: e.target.value })} /></label><label>分层信息<span>{surface.surface.layers.length} 层 · 容差 {surface.surface.layer_tolerance} Å</span></label></div>
+      <Checkbox checked={editor.reset} disabled={!!busy || adsorptionBusy || paramsDirty || conflict} onChange={e => edit({ reset: e.target.checked })}>先释放所有已有约束，再应用本页固定层和例外</Checkbox>
+      <div className="cat-layer-list">{surface.surface.layers.map((layer, layerNumber) => <details key={layer.layer_index}><summary>底部第 {layerNumber + 1} 层 · {layer.atom_ids.length} 原子 · 投影 {layer.projection_angstrom.toFixed(4)} Å</summary><div className="cat-atom-list">{layer.atom_ids.map(atomId => { const index = surface.snapshot.atoms.findIndex(a => a.atom_id === atomId); const atom = surface.snapshot.atoms[index]; return atom && <label key={atomId}><span title={`稳定原子 ID: ${atomId}`}>#{index + 1} {atom.element} · {atom.selective_dynamics.map(f => f ? 'T' : 'F').join('')}</span><Select aria-label={`原子 ${index + 1} ${atom.element} 约束例外`} value={editor.overrides[atomId] ?? 'inherit'} disabled={!!busy || adsorptionBusy || paramsDirty || conflict} options={[{ value: 'inherit', label: '跟随层／原有约束' }, { value: 'fixed', label: '例外：固定 FFF' }, { value: 'free', label: '例外：自由 TTT' }]} onChange={(value: 'fixed' | 'free' | 'inherit') => { const overrides = { ...editor.overrides }; if (value === 'inherit') delete overrides[atomId]; else overrides[atomId] = value; edit({ overrides }); }} /></label>; })}</div></details>)}</div>
       {constraintsError && <Alert type="warning" title={constraintsError} />}
-      <Button disabled={!!busy || paramsDirty || conflict || !!constraintsError || !constraintsDirty} onClick={() => void action('应用约束', () => catalysisApi.constraints(doc, { bottom_fixed_layers: bottom, atom_overrides: editor.overrides, reset_existing: editor.reset }), 'constraints')}>应用并保存约束</Button>
+      <Button disabled={!!busy || adsorptionBusy || paramsDirty || conflict || !!constraintsError || !constraintsDirty} onClick={() => void action('应用约束', () => catalysisApi.constraints(doc, { bottom_fixed_layers: bottom, atom_overrides: editor.overrides, reset_existing: editor.reset }), 'constraints')}>应用并保存约束</Button>
     </Card>}
-    <Card title="独立导出"><Space wrap><Button type="primary" disabled={!ready} onClick={() => void exportZip()}>导出 POSCAR + metadata ZIP</Button><span className="cat-note">{surface ? '保存当前输入并完成预览后可导出。' : '生成表面后可导出。'}</span></Space><Typography.Paragraph type="secondary" className="cat-note">几何生成不代表稳定性、松弛或收敛验证。极性、磁性、带电与重构表面仍须单独判断。本阶段提供表面建模与文件导出。</Typography.Paragraph></Card>
+    <Card title="清洁表面独立导出"><Space wrap><Button type="primary" disabled={!ready} onClick={() => void exportZip()}>导出 POSCAR + metadata ZIP</Button><span className="cat-note">{surface ? '保存当前输入并完成预览后可导出。' : '生成表面后可导出。'}</span></Space><Typography.Paragraph type="secondary" className="cat-note">几何生成不代表稳定性、松弛或收敛验证。极性、磁性、带电与重构表面仍须单独判断。</Typography.Paragraph></Card>
+    {surface && <AdsorptionBuilder key={`${doc.draft_id}-${adsorptionReset}`} doc={doc} upstreamDirty={dirty} parentBusy={!!busy} parentConflict={conflict} surfaceGeometry={geometryMatches ? geometry.data?.geometry : undefined} onUpdate={updateFromAdsorption} onBusy={setAdsorptionBusy} />}
   </div>;
 }
 
@@ -147,7 +161,7 @@ export default function SurfaceBuilderPage() {
       const doc = (await catalysisApi.create(name, source)).draft; update(doc); setParams({ draft: doc.draft_id }); setFile(undefined); setName('');
     } catch (e) { setError(errorText(e)); } finally { setBusy(false); }
   }
-  return <div className="wf-page cat-page"><div className="wf-page-heading"><div><Typography.Title level={3}>表面构建</Typography.Title><p>从体相切出指定晶面，或导入已有 slab；选择终止面、设置约束并保存建模草稿。</p></div><Tag>Toolbox · 独立几何工具</Tag></div>
+  return <div className="wf-page cat-page"><div className="wf-page-heading"><div><Typography.Title level={3}>表面构建</Typography.Title><p>从体相切出指定晶面，或导入已有 slab；设置约束、构建吸附候选并独立导出。</p></div><Tag>Toolbox · 独立几何工具</Tag></div>
     <div className="cat-grid"><aside><Card title="结构来源"><div className="cat-controls cat-single"><label>新草稿名称<Input aria-label="新草稿名称" value={name} maxLength={120} disabled={busy} onChange={e => setName(e.target.value)} placeholder="例如 Pt(111) 清洁表面" /></label><label>输入用途<Select aria-label="输入用途" value={role} disabled={busy} onChange={setRole} options={[{ value: 'bulk', label: '体相：切出表面' }, { value: 'slab', label: '已有 slab：分层与约束' }]} /></label></div><label className="cat-file-picker">选择本地 POSCAR／CIF<input aria-label="选择本地 POSCAR／CIF" type="file" disabled={busy} onChange={e => { setFile(e.target.files?.[0]); e.target.value = ''; }} /></label>{file && <p className="cat-note">已选择 {file.name}</p>}<Space orientation="vertical" style={{ width: '100%' }}><Button block disabled={busy || !file} onClick={() => void create()} loading={busy}>导入并创建草稿</Button><Button block disabled={busy} onClick={() => void create(true)}>使用合成 Pt 示例</Button></Space><details className="cat-existing-source"><summary>使用已有结构记录</summary><label className="cat-label">已有结构 ID<Input aria-label="已有结构 ID" value={structureId} maxLength={100} disabled={busy} onChange={e => setStructureId(e.target.value)} placeholder="structure_id" /></label><Typography.Paragraph type="secondary" className="cat-note">从本机已有导入记录读取结构；输入用途沿用上方选择。</Typography.Paragraph><Button block disabled={busy || !structureId.trim()} onClick={() => void create(false, true)}>从已有记录创建草稿</Button></details><Typography.Paragraph type="secondary" className="cat-note">示例为理想 fcc Pt，a = 3.92 Å；仅用于演示几何，不是实验或 DFT 优化结构。CIF 输入不携带 POSCAR 逐原子约束。</Typography.Paragraph>{error && <Alert type="error" title={error} />}</Card>
     <Card title="已保存的草稿" extra={<Button size="small" disabled={list.isFetching} onClick={() => void list.refetch()}>刷新</Button>}>{list.isPending ? <Spin /> : list.error ? <Alert type="error" title={errorText(list.error)} /> : !list.data?.drafts.length ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="还没有建模草稿" /> : <ul className="cat-history">{list.data.drafts.map(d => <li key={d.draft_id}><button aria-current={id === d.draft_id} onClick={() => setParams({ draft: d.draft_id })}>{d.name}<small>{d.source_role === 'bulk' ? '体相' : 'slab'} · {d.atom_count} 原子 · {d.surface_count} 终止面 · r{d.revision}</small><small>{new Date(d.updated_at).toLocaleString()}</small></button></li>)}</ul>}</Card></aside>
     <main aria-label="表面建模编辑区">{!id ? <Card><Empty description="选择已保存草稿，或导入结构开始建模。" /></Card> : current.isPending ? <Card><Spin /> 正在恢复草稿…</Card> : current.error ? <Card><Alert type="error" title="草稿恢复失败" description={errorText(current.error)} action={<Button onClick={() => void current.refetch()}>重试恢复</Button>} /></Card> : current.data && <DraftEditor key={id} initial={current.data.draft} onUpdate={update} />}</main></div>

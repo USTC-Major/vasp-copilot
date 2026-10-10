@@ -71,11 +71,12 @@ class SetConstraints(RevisionRequest):
 
 
 class AtomProvenance(StrictModel):
-    kind: Literal['import', 'surface_replica']
+    kind: Literal['import', 'surface_replica', 'adsorbate']
     source_atom_id: str | None = None
     source_index: int
     replica_ordinal: int | None = None
     mapping: str | None = None
+    source_id: str | None = None
 
 
 class AtomSnapshot(StrictModel):
@@ -137,6 +138,174 @@ class SourceRecord(StrictModel):
     standardized: Literal[False]
 
 
+class AdsorbateSource(StrictModel):
+    kind: Literal['atom', 'xyz', 'co_example']
+    element: str | None = Field(default=None, max_length=3)
+    content: str | None = Field(default=None, max_length=65536)
+    name: str | None = Field(default=None, max_length=200)
+
+    @model_validator(mode='after')
+    def source_fields(self):
+        if self.kind == 'atom' and (not self.element or self.content is not None):
+            raise ValueError('单原子来源须提供元素且不接受 XYZ 正文')
+        if self.kind == 'xyz' and (not self.content or self.element is not None):
+            raise ValueError('XYZ 来源须提供正文且不接受单原子元素')
+        if self.kind == 'co_example' and (self.element is not None or self.content is not None):
+            raise ValueError('CO 示例不接受元素或正文覆盖')
+        return self
+
+
+class SetAdsorbate(RevisionRequest):
+    source: AdsorbateSource
+    anchor_index: StrictInt = Field(ge=0, le=127)
+
+
+class AdsorbateAtom(StrictModel):
+    atom_id: str
+    element: str
+    cartesian: tuple[float, float, float]
+
+
+class AdsorbateRecord(StrictModel):
+    source_id: str
+    source_sha256: str
+    source: AdsorbateSource
+    atoms: list[AdsorbateAtom]
+    anchor_index: int
+    coordinate_frame: Literal['orthonormal_surface_frame']
+
+
+class Placement(StrictModel):
+    height_angstrom: float = Field(default=2, ge=-10, le=100)
+    rotation_degrees: tuple[float, float, float] = (0, 0, 0)
+    screening_distance_angstrom: float = Field(default=.8, ge=0, le=5)
+
+    @model_validator(mode='after')
+    def angles(self):
+        if any(abs(v) > 360 for v in self.rotation_degrees):
+            raise ValueError('三个固定表面轴旋转角限制为 -360 至 360 度')
+        return self
+
+
+class ManualSite(StrictModel):
+    label: str | None = Field(default=None, max_length=80)
+    uv: tuple[float, float]
+
+    @model_validator(mode='after')
+    def bounds(self):
+        if any(v < 0 or v >= 1 for v in self.uv):
+            raise ValueError('手动位点 u/v 须位于 [0,1)，沿已保存的晶格 a/b')
+        return self
+
+
+class FindAdsorptionSites(RevisionRequest):
+    kinds: list[Literal['ontop', 'bridge', 'hollow']] = Field(default_factory=lambda: ['ontop', 'bridge', 'hollow'], max_length=3)
+    manual_sites: list[ManualSite] = Field(default_factory=list, max_length=32)
+    dedup_tolerance_angstrom: float = Field(default=.05, ge=.001, le=.5)
+
+    @model_validator(mode='after')
+    def kinds_unique(self):
+        if len(self.kinds) != len(set(self.kinds)):
+            raise ValueError('自动位点类型不可重复')
+        if not self.kinds and not self.manual_sites:
+            raise ValueError('请选择自动位点类型或提供手动位点')
+        return self
+
+
+class BuildAdsorptionCandidates(RevisionRequest):
+    site_ids: list[str] = Field(min_length=1, max_length=16)
+    placement: Placement = Field(default_factory=Placement)
+
+    @model_validator(mode='after')
+    def unique_ids(self):
+        if len(set(self.site_ids)) != len(self.site_ids) or any(len(i) > 80 for i in self.site_ids):
+            raise ValueError('位点身份不可重复且每项不超过 80 字符')
+        return self
+
+
+class SelectAdsorptionCandidates(RevisionRequest):
+    selected_candidate_ids: list[str] = Field(default_factory=list, max_length=16)
+
+    @model_validator(mode='after')
+    def unique_ids(self):
+        if len(set(self.selected_candidate_ids)) != len(self.selected_candidate_ids) or any(len(i) > 80 for i in self.selected_candidate_ids):
+            raise ValueError('候选身份不可重复且每项不超过 80 字符')
+        return self
+
+
+class ExportAdsorptionCandidates(RevisionRequest):
+    candidate_ids: list[str] = Field(min_length=1, max_length=16)
+
+    @model_validator(mode='after')
+    def unique_ids(self):
+        if len(set(self.candidate_ids)) != len(self.candidate_ids) or any(len(i) > 80 for i in self.candidate_ids):
+            raise ValueError('导出候选身份不可重复且每项不超过 80 字符')
+        return self
+
+
+class AdsorptionSite(StrictModel):
+    site_id: str
+    kind: Literal['ontop', 'bridge', 'hollow', 'manual']
+    label: str
+    cartesian: tuple[float, float, float]
+    fractional: tuple[float, float, float]
+    source_atom_ids: list[str]
+
+
+class SurfaceFrame(StrictModel):
+    x: tuple[float, float, float]
+    y: tuple[float, float, float]
+    z: tuple[float, float, float]
+    rotation_convention: Literal['fixed_surface_xyz_X_then_Y_then_Z']
+
+
+class SiteSettings(StrictModel):
+    kinds: list[Literal['ontop', 'bridge', 'hollow']]
+    manual_sites: list[ManualSite]
+    dedup_tolerance_angstrom: float
+
+
+class CandidateValidation(StrictModel):
+    minimum_adsorbate_surface_distance_angstrom: float
+    minimum_periodic_self_image_distance_angstrom: float
+    screening_distance_angstrom: float
+    screening_passed: bool
+    warnings: list[str]
+
+
+class AdsorptionCandidate(StrictModel):
+    candidate_id: str
+    site_id: str
+    label: str
+    parent_revision: int
+    parent_surface_id: str
+    parent_snapshot_sha256: str
+    adsorbate_source_id: str
+    status: Literal['valid', 'stale']
+    invalidation_reason: str | None = None
+    snapshot: StructureSnapshot
+    placement: Placement
+    validation: CandidateValidation
+    transform: dict
+
+
+class AdsorptionState(StrictModel):
+    adsorbate: AdsorbateRecord | None = None
+    sites: list[AdsorptionSite] = Field(default_factory=list)
+    site_parent_snapshot_sha256: str | None = None
+    site_parent_surface_id: str | None = None
+    site_parent_revision: int | None = None
+    frame: SurfaceFrame | None = None
+    site_settings: SiteSettings | None = None
+    site_surface_atoms: list[AdsorbateAtom] = Field(default_factory=list)
+    site_map_origin_cartesian: tuple[float, float, float] | None = None
+    placement: Placement | None = None
+    selected_site_ids: list[str] = Field(default_factory=list)
+    candidates: list[AdsorptionCandidate] = Field(default_factory=list)
+    selected_candidate_ids: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
 class Draft(StrictModel):
     draft_id: str
     schema_version: Literal[1]
@@ -150,6 +319,7 @@ class Draft(StrictModel):
     surfaces: list[SurfaceOption]
     active_surface_id: str | None
     warnings: list[str]
+    adsorption: AdsorptionState | None = None
 
 
 class DraftSummary(StrictModel):

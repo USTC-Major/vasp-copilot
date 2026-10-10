@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ConfigProvider, theme } from 'antd';
 import { http, HttpResponse } from 'msw';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import CrystalViewer from './CrystalViewer';
+import CrystalViewer, { CrystalGeometryViewer } from './CrystalViewer';
 import { server } from '../../mocks/server';
 import type { StructureGeometry } from '../../types/structure-geometry';
 
@@ -25,6 +25,14 @@ function mount(id=geometry.structure_id){
   const rendered=render(view(id));return {...rendered,client,view};
 }
 describe('real structure inspector interactions',()=>{
+  it('adds optional spatial site markers without changing atom data or default inspector behavior', async () => {
+    const data = structuredClone(geometry), saved = JSON.stringify(data);
+    render(<ConfigProvider theme={{ token: { motion: false } }}><CrystalGeometryViewer data={data} markers={[{ id: 'site-1', label: 'S1', cartesian: [1, 2, 5], selected: true }]} /></ConfigProvider>);
+    fireEvent.click(screen.getByRole('button', { name: '查看结构与位点' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog.querySelector('[data-site-marker="site-1"]')).toBeInTheDocument();
+    expect(dialog.querySelectorAll('.cv-atom')).toHaveLength(3); expect(JSON.stringify(data)).toBe(saved);
+  });
   it('keeps fixed thumbnail independent, distinguishes stable atom clicks from drags and restores focus',async()=>{
     server.use(http.get('/api/v1/structure/:id/geometry',()=>HttpResponse.json({data:geometry})));
     const user=userEvent.setup();const rendered=mount();

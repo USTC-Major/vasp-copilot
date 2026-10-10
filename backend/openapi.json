@@ -3684,6 +3684,23 @@
               ],
               "title": "Surface Id"
             }
+          },
+          {
+            "name": "candidate_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 80
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Candidate Id"
+            }
           }
         ],
         "responses": {
@@ -3775,10 +3792,709 @@
           }
         }
       }
+    },
+    "/api/v1/toolbox/catalysis/drafts/{draft_id}/adsorbate": {
+      "post": {
+        "tags": [
+          "Toolbox execution",
+          "Catalysis preparation"
+        ],
+        "summary": "Set Adsorbate",
+        "operationId": "set_adsorbate_api_v1_toolbox_catalysis_drafts__draft_id__adsorbate_post",
+        "parameters": [
+          {
+            "name": "draft_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Draft Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetAdsorbate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DraftResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/catalysis/drafts/{draft_id}/adsorption/sites": {
+      "post": {
+        "tags": [
+          "Toolbox execution",
+          "Catalysis preparation"
+        ],
+        "summary": "Find Adsorption Sites",
+        "operationId": "find_adsorption_sites_api_v1_toolbox_catalysis_drafts__draft_id__adsorption_sites_post",
+        "parameters": [
+          {
+            "name": "draft_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Draft Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FindAdsorptionSites"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DraftResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/catalysis/drafts/{draft_id}/adsorption/candidates": {
+      "post": {
+        "tags": [
+          "Toolbox execution",
+          "Catalysis preparation"
+        ],
+        "summary": "Build Adsorption Candidates",
+        "operationId": "build_adsorption_candidates_api_v1_toolbox_catalysis_drafts__draft_id__adsorption_candidates_post",
+        "parameters": [
+          {
+            "name": "draft_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Draft Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BuildAdsorptionCandidates"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DraftResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/catalysis/drafts/{draft_id}/adsorption/selection": {
+      "patch": {
+        "tags": [
+          "Toolbox execution",
+          "Catalysis preparation"
+        ],
+        "summary": "Select Adsorption Candidates",
+        "operationId": "select_adsorption_candidates_api_v1_toolbox_catalysis_drafts__draft_id__adsorption_selection_patch",
+        "parameters": [
+          {
+            "name": "draft_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Draft Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SelectAdsorptionCandidates"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DraftResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/catalysis/drafts/{draft_id}/adsorption/export": {
+      "post": {
+        "tags": [
+          "Toolbox execution",
+          "Catalysis preparation"
+        ],
+        "summary": "Export Adsorption Candidates",
+        "operationId": "export_adsorption_candidates_api_v1_toolbox_catalysis_drafts__draft_id__adsorption_export_post",
+        "parameters": [
+          {
+            "name": "draft_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Draft Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExportAdsorptionCandidates"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
     "schemas": {
+      "AdsorbateAtom": {
+        "properties": {
+          "atom_id": {
+            "type": "string",
+            "title": "Atom Id"
+          },
+          "element": {
+            "type": "string",
+            "title": "Element"
+          },
+          "cartesian": {
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "type": "array",
+            "maxItems": 3,
+            "minItems": 3,
+            "title": "Cartesian"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "atom_id",
+          "element",
+          "cartesian"
+        ],
+        "title": "AdsorbateAtom"
+      },
+      "AdsorbateRecord": {
+        "properties": {
+          "source_id": {
+            "type": "string",
+            "title": "Source Id"
+          },
+          "source_sha256": {
+            "type": "string",
+            "title": "Source Sha256"
+          },
+          "source": {
+            "$ref": "#/components/schemas/AdsorbateSource"
+          },
+          "atoms": {
+            "items": {
+              "$ref": "#/components/schemas/AdsorbateAtom"
+            },
+            "type": "array",
+            "title": "Atoms"
+          },
+          "anchor_index": {
+            "type": "integer",
+            "title": "Anchor Index"
+          },
+          "coordinate_frame": {
+            "type": "string",
+            "const": "orthonormal_surface_frame",
+            "title": "Coordinate Frame"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "source_id",
+          "source_sha256",
+          "source",
+          "atoms",
+          "anchor_index",
+          "coordinate_frame"
+        ],
+        "title": "AdsorbateRecord"
+      },
+      "AdsorbateSource": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "atom",
+              "xyz",
+              "co_example"
+            ],
+            "title": "Kind"
+          },
+          "element": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 3
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Element"
+          },
+          "content": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 65536
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "kind"
+        ],
+        "title": "AdsorbateSource"
+      },
+      "AdsorptionCandidate": {
+        "properties": {
+          "candidate_id": {
+            "type": "string",
+            "title": "Candidate Id"
+          },
+          "site_id": {
+            "type": "string",
+            "title": "Site Id"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "parent_revision": {
+            "type": "integer",
+            "title": "Parent Revision"
+          },
+          "parent_surface_id": {
+            "type": "string",
+            "title": "Parent Surface Id"
+          },
+          "parent_snapshot_sha256": {
+            "type": "string",
+            "title": "Parent Snapshot Sha256"
+          },
+          "adsorbate_source_id": {
+            "type": "string",
+            "title": "Adsorbate Source Id"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "valid",
+              "stale"
+            ],
+            "title": "Status"
+          },
+          "invalidation_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invalidation Reason"
+          },
+          "snapshot": {
+            "$ref": "#/components/schemas/StructureSnapshot"
+          },
+          "placement": {
+            "$ref": "#/components/schemas/Placement"
+          },
+          "validation": {
+            "$ref": "#/components/schemas/CandidateValidation"
+          },
+          "transform": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Transform"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "candidate_id",
+          "site_id",
+          "label",
+          "parent_revision",
+          "parent_surface_id",
+          "parent_snapshot_sha256",
+          "adsorbate_source_id",
+          "status",
+          "snapshot",
+          "placement",
+          "validation",
+          "transform"
+        ],
+        "title": "AdsorptionCandidate"
+      },
+      "AdsorptionSite": {
+        "properties": {
+          "site_id": {
+            "type": "string",
+            "title": "Site Id"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "ontop",
+              "bridge",
+              "hollow",
+              "manual"
+            ],
+            "title": "Kind"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "cartesian": {
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "type": "array",
+            "maxItems": 3,
+            "minItems": 3,
+            "title": "Cartesian"
+          },
+          "fractional": {
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "type": "array",
+            "maxItems": 3,
+            "minItems": 3,
+            "title": "Fractional"
+          },
+          "source_atom_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Source Atom Ids"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "site_id",
+          "kind",
+          "label",
+          "cartesian",
+          "fractional",
+          "source_atom_ids"
+        ],
+        "title": "AdsorptionSite"
+      },
+      "AdsorptionState": {
+        "properties": {
+          "adsorbate": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AdsorbateRecord"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sites": {
+            "items": {
+              "$ref": "#/components/schemas/AdsorptionSite"
+            },
+            "type": "array",
+            "title": "Sites"
+          },
+          "site_parent_snapshot_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Site Parent Snapshot Sha256"
+          },
+          "site_parent_surface_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Site Parent Surface Id"
+          },
+          "site_parent_revision": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Site Parent Revision"
+          },
+          "frame": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SurfaceFrame"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "site_settings": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SiteSettings"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "site_surface_atoms": {
+            "items": {
+              "$ref": "#/components/schemas/AdsorbateAtom"
+            },
+            "type": "array",
+            "title": "Site Surface Atoms"
+          },
+          "site_map_origin_cartesian": {
+            "anyOf": [
+              {
+                "prefixItems": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ],
+                "type": "array",
+                "maxItems": 3,
+                "minItems": 3
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Site Map Origin Cartesian"
+          },
+          "placement": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Placement"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "selected_site_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Selected Site Ids"
+          },
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/AdsorptionCandidate"
+            },
+            "type": "array",
+            "title": "Candidates"
+          },
+          "selected_candidate_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Selected Candidate Ids"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Warnings"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "AdsorptionState"
+      },
       "AgentHandleRequest": {
         "properties": {
           "command": {
@@ -3887,7 +4603,8 @@
             "type": "string",
             "enum": [
               "import",
-              "surface_replica"
+              "surface_replica",
+              "adsorbate"
             ],
             "title": "Kind"
           },
@@ -3927,6 +4644,17 @@
               }
             ],
             "title": "Mapping"
+          },
+          "source_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Id"
           }
         },
         "additionalProperties": false,
@@ -4073,6 +4801,34 @@
         ],
         "title": "Body_upload_api_v1_files_upload_post"
       },
+      "BuildAdsorptionCandidates": {
+        "properties": {
+          "revision": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Revision"
+          },
+          "site_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 16,
+            "minItems": 1,
+            "title": "Site Ids"
+          },
+          "placement": {
+            "$ref": "#/components/schemas/Placement"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "revision",
+          "site_ids"
+        ],
+        "title": "BuildAdsorptionCandidates"
+      },
       "BuildSurfaces": {
         "properties": {
           "revision": {
@@ -4148,6 +4904,43 @@
           "revision"
         ],
         "title": "BuildSurfaces"
+      },
+      "CandidateValidation": {
+        "properties": {
+          "minimum_adsorbate_surface_distance_angstrom": {
+            "type": "number",
+            "title": "Minimum Adsorbate Surface Distance Angstrom"
+          },
+          "minimum_periodic_self_image_distance_angstrom": {
+            "type": "number",
+            "title": "Minimum Periodic Self Image Distance Angstrom"
+          },
+          "screening_distance_angstrom": {
+            "type": "number",
+            "title": "Screening Distance Angstrom"
+          },
+          "screening_passed": {
+            "type": "boolean",
+            "title": "Screening Passed"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Warnings"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "minimum_adsorbate_surface_distance_angstrom",
+          "minimum_periodic_self_image_distance_angstrom",
+          "screening_distance_angstrom",
+          "screening_passed",
+          "warnings"
+        ],
+        "title": "CandidateValidation"
       },
       "ChatHistoryRequest": {
         "properties": {
@@ -4406,6 +5199,16 @@
             },
             "type": "array",
             "title": "Warnings"
+          },
+          "adsorption": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AdsorptionState"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "additionalProperties": false,
@@ -4581,6 +5384,74 @@
           "question"
         ],
         "title": "ExplainRequest"
+      },
+      "ExportAdsorptionCandidates": {
+        "properties": {
+          "revision": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Revision"
+          },
+          "candidate_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 16,
+            "minItems": 1,
+            "title": "Candidate Ids"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "revision",
+          "candidate_ids"
+        ],
+        "title": "ExportAdsorptionCandidates"
+      },
+      "FindAdsorptionSites": {
+        "properties": {
+          "revision": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Revision"
+          },
+          "kinds": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "ontop",
+                "bridge",
+                "hollow"
+              ]
+            },
+            "type": "array",
+            "maxItems": 3,
+            "title": "Kinds"
+          },
+          "manual_sites": {
+            "items": {
+              "$ref": "#/components/schemas/ManualSite"
+            },
+            "type": "array",
+            "maxItems": 32,
+            "title": "Manual Sites"
+          },
+          "dedup_tolerance_angstrom": {
+            "type": "number",
+            "maximum": 0.5,
+            "minimum": 0.001,
+            "title": "Dedup Tolerance Angstrom",
+            "default": 0.05
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "revision"
+        ],
+        "title": "FindAdsorptionSites"
       },
       "HTTPValidationError": {
         "properties": {
@@ -4833,6 +5704,42 @@
         },
         "type": "object",
         "title": "LlmTestRequest"
+      },
+      "ManualSite": {
+        "properties": {
+          "label": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 80
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "uv": {
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "type": "array",
+            "maxItems": 2,
+            "minItems": 2,
+            "title": "Uv"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "uv"
+        ],
+        "title": "ManualSite"
       },
       "MaterialAssumptions": {
         "properties": {
@@ -5112,6 +6019,49 @@
         ],
         "title": "PatchValidationResult"
       },
+      "Placement": {
+        "properties": {
+          "height_angstrom": {
+            "type": "number",
+            "maximum": 100.0,
+            "minimum": -10.0,
+            "title": "Height Angstrom",
+            "default": 2
+          },
+          "rotation_degrees": {
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "type": "array",
+            "maxItems": 3,
+            "minItems": 3,
+            "title": "Rotation Degrees",
+            "default": [
+              0,
+              0,
+              0
+            ]
+          },
+          "screening_distance_angstrom": {
+            "type": "number",
+            "maximum": 5.0,
+            "minimum": 0.0,
+            "title": "Screening Distance Angstrom",
+            "default": 0.8
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "Placement"
+      },
       "PrecisionLevel": {
         "type": "string",
         "enum": [
@@ -5299,6 +6249,55 @@
         "type": "object",
         "title": "SearchRequest"
       },
+      "SelectAdsorptionCandidates": {
+        "properties": {
+          "revision": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Revision"
+          },
+          "selected_candidate_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 16,
+            "title": "Selected Candidate Ids"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "revision"
+        ],
+        "title": "SelectAdsorptionCandidates"
+      },
+      "SetAdsorbate": {
+        "properties": {
+          "revision": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Revision"
+          },
+          "source": {
+            "$ref": "#/components/schemas/AdsorbateSource"
+          },
+          "anchor_index": {
+            "type": "integer",
+            "maximum": 127.0,
+            "minimum": 0.0,
+            "title": "Anchor Index"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "revision",
+          "source",
+          "anchor_index"
+        ],
+        "title": "SetAdsorbate"
+      },
       "SetConstraints": {
         "properties": {
           "revision": {
@@ -5337,6 +6336,41 @@
           "bottom_fixed_layers"
         ],
         "title": "SetConstraints"
+      },
+      "SiteSettings": {
+        "properties": {
+          "kinds": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "ontop",
+                "bridge",
+                "hollow"
+              ]
+            },
+            "type": "array",
+            "title": "Kinds"
+          },
+          "manual_sites": {
+            "items": {
+              "$ref": "#/components/schemas/ManualSite"
+            },
+            "type": "array",
+            "title": "Manual Sites"
+          },
+          "dedup_tolerance_angstrom": {
+            "type": "number",
+            "title": "Dedup Tolerance Angstrom"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "kinds",
+          "manual_sites",
+          "dedup_tolerance_angstrom"
+        ],
+        "title": "SiteSettings"
       },
       "SourceInput": {
         "properties": {
@@ -5676,6 +6710,75 @@
           "sha256"
         ],
         "title": "StructureSnapshot"
+      },
+      "SurfaceFrame": {
+        "properties": {
+          "x": {
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "type": "array",
+            "maxItems": 3,
+            "minItems": 3,
+            "title": "X"
+          },
+          "y": {
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "type": "array",
+            "maxItems": 3,
+            "minItems": 3,
+            "title": "Y"
+          },
+          "z": {
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "type": "array",
+            "maxItems": 3,
+            "minItems": 3,
+            "title": "Z"
+          },
+          "rotation_convention": {
+            "type": "string",
+            "const": "fixed_surface_xyz_X_then_Y_then_Z",
+            "title": "Rotation Convention"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "x",
+          "y",
+          "z",
+          "rotation_convention"
+        ],
+        "title": "SurfaceFrame"
       },
       "SurfaceGeometry": {
         "properties": {
