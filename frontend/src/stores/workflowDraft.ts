@@ -3,6 +3,7 @@ import type { ParameterConfirmFormData } from '../components/workflow/ParameterC
 import type { StructureSummary, WorkflowPlan, FileTreeNode, ParameterPatch } from '../types/generated-api';
 import type { WorkflowPotcarChoice, WorkflowPotcarState } from '../types/potcar';
 import type { PatchDraftRow } from '../components/recipes/ParameterPatchEditor';
+import type { CatalysisSurfacePolicy, CatalysisWorkflowBinding, CatalysisWorkflowBindingResponse } from '../types/catalysis';
 
 export type WorkflowStep = 'upload' | 'confirm' | 'plan' | 'edit' | 'generate' | 'download';
 export interface WorkflowDraft {
@@ -21,6 +22,9 @@ export interface WorkflowDraft {
   generationNeedsCheck: boolean;
   generationRequest: { workflowId: string; revision: number; canRecoverArtifact: boolean } | null;
   lastGenerationKey: string | null;
+  catalysisBinding: CatalysisWorkflowBinding | null;
+  surfacePolicy: CatalysisSurfacePolicy | null;
+  surfaceDosSmearing: { value: number | null; confirmed: boolean };
 }
 
 const emptyDraft = (): WorkflowDraft => ({
@@ -28,6 +32,8 @@ const emptyDraft = (): WorkflowDraft => ({
   workflowPlan: null, workflowId: null, fileTree: null, patches: [], patchRows: undefined,
   potcarChoice: { mode: 'omit' }, potcarResult: undefined, generationNeedsCheck: false,
   generationRequest: null, lastGenerationKey: null,
+  catalysisBinding: null, surfacePolicy: null,
+  surfaceDosSmearing: { value: null, confirmed: false },
 });
 
 // Deliberately memory-only: neither structure data nor scientific inputs go to browser storage.
@@ -44,6 +50,19 @@ export function setWorkflowDraftField<K extends keyof WorkflowDraft>(
   publish();
 }
 export function resetWorkflowDraft() { draft = emptyDraft(); publish(); }
+export const hasWorkflowDraft = (value: WorkflowDraft) => value.structureId !== null || value.formValues !== undefined || value.workflowPlan !== null || value.sampleName !== '' || value.patchRows !== undefined;
+
+/** Replace only the draft the user reviewed; a later draft edit must survive a late handoff. */
+export function adoptCatalysisWorkflow(response: CatalysisWorkflowBindingResponse, expected: WorkflowDraft): boolean {
+  if (draft !== expected) return false;
+  const frozen = structuredClone(response);
+  draft = { ...emptyDraft(), currentStep: 'confirm', structureId: frozen.structure_id, summary: frozen.summary,
+    sampleName: `${frozen.summary.formula} ${frozen.binding.model_kind === 'clean_surface' ? '清洁表面' : '吸附候选'}`,
+    formValues: { tasks: ['relax', 'static'], magnetic: false },
+    catalysisBinding: frozen.binding, surfacePolicy: frozen.surface_policy };
+  publish();
+  return true;
+}
 export function useWorkflowDraft() {
   return useSyncExternalStore(callback => {
     listeners.add(callback);

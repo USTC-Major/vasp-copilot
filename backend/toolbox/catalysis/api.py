@@ -5,7 +5,7 @@ from fastapi.responses import Response
 from ..contracts import ToolboxError
 from .schemas import (CreateDraft, PatchDraft, BuildSurfaces, SetConstraints, DraftResponse, DraftListResponse,
                       SetAdsorbate, FindAdsorptionSites, BuildAdsorptionCandidates,
-                      SelectAdsorptionCandidates, ExportAdsorptionCandidates)
+                      SelectAdsorptionCandidates, ExportAdsorptionCandidates, BindWorkflow, WorkflowBindingResponse)
 from .service import CatalysisService
 
 router = APIRouter(prefix='/catalysis', tags=['Catalysis preparation'])
@@ -28,6 +28,24 @@ def resolve_structure(structure_id):
         if isinstance(exc, AppError) or getattr(exc, 'http_status', None) == 404:
             raise ToolboxError('CAT_SOURCE_NOT_FOUND', '已有结构不存在或已过期，请重新导入', 404) from exc
         raise
+
+
+def workflow_file_store():
+    import sys
+    module = sys.modules.get('app.api.v1.deps') or sys.modules.get('backend.app.api.v1.deps')
+    if module is None:
+        raise ToolboxError('CAT_WORKFLOW_UNAVAILABLE', '当前独立 Toolbox 未连接 Workflow；请在工作台内传入', 422)
+    return module.file_store
+
+
+@router.post('/drafts/{draft_id}/workflow-binding', response_model=WorkflowBindingResponse)
+def bind_workflow(draft_id: str, request: Request, body: BindWorkflow):
+    live_store = workflow_file_store()
+    from backend.app.api.v1.structure import _summary_json
+    summary = service(request).bind_workflow(draft_id, body, file_store=live_store)
+    return {'mode': 'toolbox', 'structure_id': summary.structure_id,
+            'summary': _summary_json(summary, 'poscar'),
+            'binding': summary.catalysis_binding, 'surface_policy': summary.surface_policy}
 
 
 @router.get('/drafts', response_model=DraftListResponse)

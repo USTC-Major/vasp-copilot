@@ -5,7 +5,7 @@
 
 import { act, render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { MemoryRouter, Routes, Route, Link } from 'react-router-dom';
-import { resetWorkflowDraft, getWorkflowDraft, setWorkflowDraftField } from '../stores/workflowDraft';
+import { adoptCatalysisWorkflow, resetWorkflowDraft, getWorkflowDraft, setWorkflowDraftField } from '../stores/workflowDraft';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ConfigProvider } from 'antd';
@@ -26,6 +26,7 @@ import { potcarApi } from '../api/potcar';
 import type { PotcarArtifact, PotcarLibrary, PotcarPreview, WorkflowPotcarState } from '../types/potcar';
 import useApiSource from '../hooks/useApi.ts?raw';
 import clientSource from '../api/client.ts?raw';
+import { catalysisWorkflowResponseFixture } from '../mocks/catalysisWorkflowFixture';
 
 const API = '/api/v1';
 
@@ -132,6 +133,80 @@ const leaveAndReturn = async (user: ReturnType<typeof userEvent.setup>, realMana
   await screen.findByRole('heading', { name: '赝势设置' });
   await user.click(screen.getByRole('link', { name: '返回工作流' }));
 };
+
+describe('CAT surface Workflow context', () => {
+  it('retains provenance through navigation and sends the bound structure through the existing plan route', async () => {
+    useFastMocks();
+    const response = catalysisWorkflowResponseFixture();
+    response.binding.warnings = ['合成几何说明，仅用于界面验证'];
+    adoptCatalysisWorkflow(response, getWorkflowDraft());
+    const user = userEvent.setup(); renderRoutedPage();
+    expect(await screen.findByText('表面计算场景 · CAT 来源与约束')).toBeInTheDocument();
+    expect(screen.getByText(/relax 使用 ISIF = 2/)).toBeInTheDocument();
+    expect(screen.getByText(/Gamma 二维网格/)).toBeInTheDocument();
+    expect(screen.getByText('合成几何说明，仅用于界面验证')).not.toBeVisible();
+    expect(screen.getByText(/revision 7/)).not.toBeVisible();
+    await user.click(screen.getByText('来源与约束详情（1 条说明）'));
+    expect(screen.getByText('合成几何说明，仅用于界面验证')).toBeVisible();
+    await user.click(screen.getByText('来源与约束详情（1 条说明）'));
+    expect(getWorkflowDraft().formValues?.tasks).toEqual(['relax', 'static']);
+    await leaveAndReturn(user);
+    expect(getWorkflowDraft().catalysisBinding).toEqual(response.binding);
+    await openSummaryModal(user);
+    expect(screen.getAllByText(/revision 7/)).toHaveLength(2);
+    await confirmAndWaitPlan(user);
+    expect(planBodies[0]).toMatchObject({ structure_id: response.structure_id, workflow: { requested_tasks: ['relax', 'static'] } });
+    expect(planBodies[0].patches).toBeUndefined();
+    expect(getWorkflowDraft().catalysisBinding?.snapshot.atoms[0].selective_dynamics).toEqual([false, false, false]);
+  });
+
+  it('requires explicit skew DOS smearing confirmation and keeps its scoped patch through unrelated parameter editing', async () => {
+    useFastMocks();
+    server.use(http.post(`${API}/workflows/plan`, async ({ request }) => {
+      planBodies.push(await request.json() as WorkflowPlanRequestBody);
+      return HttpResponse.json({ ...workflowPlanFixture, steps: workflowPlanFixture.steps.map(step => step.step_id === '03_dos' ? { ...step, parameters: { ...step.parameters, ISMEAR: 0 } } : step) });
+    }));
+    const response = catalysisWorkflowResponseFixture();
+    response.surface_policy = { ...response.surface_policy, kpoint_mode: 'explicit_gamma_2d', c_parallel_to_normal: false };
+    adoptCatalysisWorkflow(response, getWorkflowDraft());
+    setWorkflowDraftField('formValues', { tasks: ['relax', 'static', 'dos'], magnetic: false });
+    const user = userEvent.setup(); renderPage();
+    await screen.findByText('倾斜 c 表面 · DOS 占据设置');
+    await user.click(screen.getByRole('button', { name: '下一步：确认摘要' }));
+    expect(screen.queryByText('最终确认：工作流参数摘要')).not.toBeInTheDocument();
+    expect(planBodies).toHaveLength(0);
+    await selectOption(screen.getByRole('combobox', { name: '表面 DOS ISMEAR' }), '0 · Gaussian');
+    expect(screen.getByRole('checkbox', { name: '已确认此 DOS 占据设置及其适用性' })).not.toBeChecked();
+    await user.click(screen.getByRole('checkbox', { name: '已确认此 DOS 占据设置及其适用性' }));
+    await openSummaryModal(user);
+    expect(screen.getByText(/03_dos · ISMEAR = 0/)).toBeInTheDocument();
+    await confirmAndWaitPlan(user);
+    expect(planBodies[0].patches).toEqual([expect.objectContaining({ step_id: '03_dos', parameter: 'ISMEAR', value: 0, confirmed_by_user: true, source: 'user_confirmed' })]);
+    expect(getWorkflowDraft().patches[0].step_id).toBe('03_dos');
+    await user.click(screen.getByRole('button', { name: '编辑参数 (可选)' }));
+    const switches = screen.getAllByRole('switch');
+    await user.click(switches[0]);
+    expect(getWorkflowDraft().patches.find(patch => patch.parameter === 'ISMEAR')).toMatchObject({ step_id: '03_dos', value: 0 });
+  });
+
+  it('invalidates DOS confirmation on value change and removes its scoped patch when DOS is deselected', async () => {
+    useFastMocks();
+    const response = catalysisWorkflowResponseFixture();
+    response.surface_policy = { ...response.surface_policy, kpoint_mode: 'explicit_gamma_2d', c_parallel_to_normal: false };
+    adoptCatalysisWorkflow(response, getWorkflowDraft());
+    setWorkflowDraftField('formValues', { tasks: ['relax', 'static', 'dos'], magnetic: false });
+    const user = userEvent.setup(); renderPage();
+    await selectOption(screen.getByRole('combobox', { name: '表面 DOS ISMEAR' }), '0 · Gaussian');
+    await user.click(screen.getByRole('checkbox', { name: '已确认此 DOS 占据设置及其适用性' }));
+    await selectOption(screen.getByRole('combobox', { name: '表面 DOS ISMEAR' }), '-1 · Fermi–Dirac');
+    expect(screen.getByRole('checkbox', { name: '已确认此 DOS 占据设置及其适用性' })).not.toBeChecked();
+    removeTask('dos');
+    await openSummaryModal(user); await confirmAndWaitPlan(user);
+    expect(planBodies[0].workflow.requested_tasks).toEqual(['relax', 'static']);
+    expect(planBodies[0].patches).toBeUndefined();
+    expect(getWorkflowDraft().patches).toEqual([]);
+  });
+});
 
 describe('WorkflowBuilderPage', () => {
   it('本地库include一次确认绑定新计划，真实生成请求带artifact；omit重放清除旧引用', async () => {

@@ -299,6 +299,8 @@ export interface WorkflowConfirmation {
 }
 
 export interface WorkflowPlan {
+  catalysis_binding?: import('./catalysis').CatalysisWorkflowBinding | null;
+  surface_policy?: import('./catalysis').CatalysisSurfacePolicy | null;
   potcar?: import('./potcar').WorkflowPotcarState;
   schema_version: string;
   workflow_id: string;
@@ -408,6 +410,7 @@ export interface ParameterProvenance {
 }
 
 export interface ParameterPatch {
+  step_id?: string | null;
   patch_id: string;
   composition_id: string;
   expected_revision: number;

@@ -3,7 +3,7 @@
 // ============================================================
 
 import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
-import { Steps, Button, Space, Card, Result, Typography, Input, Alert } from 'antd';
+import { Steps, Button, Space, Card, Result, Typography, Input, Alert, Select, Checkbox } from 'antd';
 import { ReloadOutlined, DownloadOutlined, ArrowRightOutlined, ArrowLeftOutlined, RobotOutlined, GlobalOutlined } from '@ant-design/icons';
 import WorkflowPotcarPanel from '../components/potcar/WorkflowPotcarPanel';
 import { workflowsApi } from '../api/client';
@@ -12,6 +12,7 @@ import StructureUploadPanel from '../components/upload/StructureUploadPanel';
 import MaterialsProjectPanel from '../components/upload/MaterialsProjectPanel';
 import ParameterConfirmForm, { type ParameterConfirmFormData } from '../components/workflow/ParameterConfirmForm';
 import WorkflowConfirmSummaryModal from '../components/workflow/WorkflowConfirmSummaryModal';
+import CatalysisWorkflowContext from '../components/workflow/CatalysisWorkflowContext';
 import WorkflowPlanPreview from '../components/workflow/WorkflowPlanPreview';
 import RecipeCompositionPreview from '../components/recipes/RecipeCompositionPreview';
 import ParameterPatchEditor from '../components/recipes/ParameterPatchEditor';
@@ -28,6 +29,7 @@ import type {
   WorkflowConfirmSnapshot,
   WorkflowPlanRequestBody,
 } from '../types/workflow-contract';
+import type { CatalysisSurfacePolicy, CatalysisWorkflowBinding } from '../types/catalysis';
 
 const { Title } = Typography;
 
@@ -130,7 +132,8 @@ const SampleNameEditor: React.FC<{
 
 /** 表单数据 → 不可变快照（Modal 展示与实际 payload 同源，避免显示与发送不一致）。 */
 const buildSnapshot = (data: ParameterConfirmFormData, summary: StructureSummary,
-                       sampleName: string = defaultSampleName(summary)): WorkflowConfirmSnapshot => {
+                       sampleName: string = defaultSampleName(summary),
+                       context?: { binding: CatalysisWorkflowBinding; policy: CatalysisSurfacePolicy; patches?: ParameterPatch[] }): WorkflowConfirmSnapshot => {
   const entries = data.dftu?.entries ?? [];
   const isLegacyDftu = data.dftu.enabled && !data.dftu.form &&
     entries.some((entry) => entry.u_ev != null || entry.j_ev != null);
@@ -158,6 +161,7 @@ const buildSnapshot = (data: ParameterConfirmFormData, summary: StructureSummary
     : { enabled: false, entries: [] };
   // 深拷贝冻结，后续表单变化不影响快照。
   return JSON.parse(JSON.stringify({
+    ...(context ? { catalysis_binding: context.binding, surface_policy: context.policy, ...(context.patches?.length ? { patches: context.patches } : {}) } : {}),
     structure: {
       formula: summary.formula,
       elements: summary.elements,
@@ -195,6 +199,7 @@ export const canBuildConfirmSnapshot = (data: Pick<ParameterConfirmFormData, 'df
 /** 快照 → 后端嵌套契约请求体（confirm=true 已在最终确认 Modal 中由用户点击确认）。 */
 const buildPlanBody = (structureId: string, snapshot: WorkflowConfirmSnapshot): WorkflowPlanRequestBody => ({
   structure_id: structureId,
+  ...(snapshot.patches?.length ? { patches: snapshot.patches } : {}),
   workflow: {
     sample_name: snapshot.sample_name,
     requested_tasks: snapshot.requested_tasks,
@@ -220,7 +225,7 @@ const invalidateGeneration = () => {
 
 const WorkflowBuilderPage: React.FC = () => {
   const { currentStep, structureId, summary, sampleName, workflowPlan, workflowId, fileTree,
-    potcarChoice, potcarResult, patches, patchRows, formValues, generationNeedsCheck } = useWorkflowDraft();
+    potcarChoice, potcarResult, patches, patchRows, formValues, generationNeedsCheck, catalysisBinding, surfacePolicy, surfaceDosSmearing } = useWorkflowDraft();
   const draftEpoch = useRef(0);
   const mounted = useRef(true);
   const inputVersion = useRef(0);
@@ -301,6 +306,8 @@ const WorkflowBuilderPage: React.FC = () => {
     if (source === 'mp') setUploadKey(key => key + 1);
     ++draftEpoch.current; setPotcarChoice({ mode: 'omit' }); setPotcarResult(undefined);
     setFormValues(undefined); setConfirmSnapshot(null); invalidateGeneration();
+    setWorkflowDraftField('catalysisBinding', null); setWorkflowDraftField('surfacePolicy', null);
+    setWorkflowDraftField('surfaceDosSmearing', { value: null, confirmed: false });
     setStructureId(structId);
     setSummary(structSummary);
     setSampleName(defaultSampleName(structSummary));
@@ -337,14 +344,24 @@ const WorkflowBuilderPage: React.FC = () => {
     // 不构造确认快照、不打开最终确认 Modal（表单校验之外的二道防线）。
     if (!canBuildConfirmSnapshot(data)) return;
     if (data.tasks.includes('band') && (
+      catalysisBinding ||
       !bandWorkflowEnabled ||
       data.tasks.includes('relax') ||
       data.tasks.includes('static') === false ||
       data.soc
     )) return;
+    const needsDosPatch = surfacePolicy?.kpoint_mode === 'explicit_gamma_2d' && data.tasks.includes('dos');
+    if (needsDosPatch && (!surfaceDosSmearing.confirmed || ![-1, 0, 1, 2].includes(surfaceDosSmearing.value as number))) return;
+    const dosPatches: ParameterPatch[] = needsDosPatch ? [{
+      patch_id: `cat_dos_${Date.now().toString(36)}`, composition_id: '', expected_revision: 1, step_id: '03_dos',
+      parameter: 'ISMEAR', operation: 'replace', value: surfaceDosSmearing.value, source: 'user_confirmed',
+      reason: '用户确认倾斜 c 表面的 DOS 占据设置', confirmed_by_user: surfaceDosSmearing.confirmed,
+      validation: { allowed: true, rule_ids: [], warnings: [] },
+    }] : [];
     // 不直接调 API：先冻结快照并打开最终确认 Modal。
-    setConfirmSnapshot(buildSnapshot(data, summary, sampleName));
-  }, [structureId, summary, sampleName, bandWorkflowEnabled]);
+    setConfirmSnapshot(buildSnapshot(data, summary, sampleName,
+      catalysisBinding && surfacePolicy ? { binding: catalysisBinding, policy: surfacePolicy, patches: dosPatches } : undefined));
+  }, [structureId, summary, sampleName, bandWorkflowEnabled, catalysisBinding, surfacePolicy, surfaceDosSmearing]);
 
   const handleModalConfirm = useCallback(async () => {
     if (submitLock.current || !confirmSnapshot || !structureId) return;
@@ -360,7 +377,7 @@ const WorkflowBuilderPage: React.FC = () => {
       if (!mounted.current || token !== draftEpoch.current) return;
       // 成功：关闭并清空快照，进入计划步骤。
       setConfirmSnapshot(null);
-      ++draftEpoch.current; setPotcarChoice({ mode: 'omit' }); setPotcarResult(plan.potcar); setPatches([]); setPatchRows(undefined);
+      ++draftEpoch.current; setPotcarChoice({ mode: 'omit' }); setPotcarResult(plan.potcar); setPatches(confirmSnapshot.patches ?? []); setPatchRows(undefined);
       invalidateGeneration();
       setWorkflowPlan(plan);
       setWorkflowId(plan.workflow_id);
@@ -481,6 +498,7 @@ const WorkflowBuilderPage: React.FC = () => {
       </div>
       <div className="wf-body-grid">
       <section className="wf-stage-content" aria-label={steps[currentStepIndex].title}>
+      {catalysisBinding && surfacePolicy && <CatalysisWorkflowContext binding={catalysisBinding} policy={surfacePolicy} />}
 
       {/* Step 1: 上传 */}
       {currentStep === 'upload' && (
@@ -548,11 +566,21 @@ const WorkflowBuilderPage: React.FC = () => {
       {currentStep === 'confirm' && summary && (
         <>
         <SampleNameEditor summary={summary} value={sampleName} onChange={handleSampleNameChange} />
+        {surfacePolicy?.kpoint_mode === 'explicit_gamma_2d' && formValues?.tasks?.includes('dos') && <Card size="small" title="倾斜 c 表面 · DOS 占据设置" style={{ marginBottom: 16 }}>
+          <Typography.Paragraph>显式二维网格不能使用默认四面体法。请自行选择 DOS 的 ISMEAR；系统不推荐或自动选择科研取值，SIGMA 等相关设置仍须在参数编辑中审阅。</Typography.Paragraph>
+          <Select aria-label="表面 DOS ISMEAR" style={{ width: 280 }} placeholder="选择 DOS 占据方法" value={surfaceDosSmearing.value}
+            options={[{ value: 0, label: '0 · Gaussian' }, { value: -1, label: '-1 · Fermi–Dirac' }, { value: 1, label: '1 · Methfessel–Paxton 1' }, { value: 2, label: '2 · Methfessel–Paxton 2' }]}
+            onChange={value => { setWorkflowDraftField('surfaceDosSmearing', { value, confirmed: false }); setConfirmSnapshot(null); }} />
+          <Checkbox style={{ display: 'block', marginTop: 12 }} disabled={surfaceDosSmearing.value === null} checked={surfaceDosSmearing.confirmed}
+            onChange={event => setWorkflowDraftField('surfaceDosSmearing', { ...surfaceDosSmearing, confirmed: event.target.checked })}>已确认此 DOS 占据设置及其适用性</Checkbox>
+          {!surfaceDosSmearing.confirmed && <Typography.Paragraph type="secondary" style={{ marginTop: 8 }}>选择并确认后才能打开最终参数摘要。</Typography.Paragraph>}
+        </Card>}
         <ParameterConfirmForm
           initialValues={formValues}
           onDraftChange={setFormValues}
           elements={summary.elements}
           transitionMetals={summary.transition_metals}
+          surfaceContext={!!catalysisBinding}
           bandWorkflowStatus={bandWorkflowStatus}
           onRetryBandCapability={() => { void featureFlags.refetch(); }}
           onSubmit={handleFormSubmit}

@@ -83,8 +83,10 @@ const ParameterPatchEditor: React.FC<ParameterPatchEditorProps> = ({
     const result: ParameterPatch[] = [];
     rows.forEach((row, idx) => {
       if (!row.selected) return;
-      if (row.newValue === '' || row.newValue === row.currentValue) return;
+      const scopedPatch = patches.find(patch => patch.parameter === row.parameter && patch.step_id);
+      if (row.newValue === '' || (row.newValue === row.currentValue && !scopedPatch)) return;
       result.push({
+        ...(scopedPatch?.step_id ? { step_id: scopedPatch.step_id } : {}),
         patch_id: `user_${row.parameter}_${idx}_${Date.now().toString(36)}`,
         composition_id: '',
         expected_revision: 1,

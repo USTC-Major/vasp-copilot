@@ -204,7 +204,9 @@ def _resolve_workflow(req: WorkflowApiRequest, config: WorkflowConfig) -> Workfl
         return build(_structure_from_file_store(req.structure_id))
     if config.structure is not None and config.structure.poscar_text:
         # A direct client structure may carry arbitrary source metadata.
-        return build(config.structure.model_copy(update={"source_material_id": None}))
+        return build(config.structure.model_copy(update={"source_material_id": None,
+                                                          "catalysis_binding": None,
+                                                          "surface_policy": None}))
     if req.diagnosis_id:
         return build(_structure_from_diagnosis(req.diagnosis_id))
     raise ConflictError(

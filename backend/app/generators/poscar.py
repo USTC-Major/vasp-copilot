@@ -68,12 +68,29 @@ class PoscarGenerator:
                 details={"reason": str(exc)},
             ) from exc
         try:
-            poscar = Poscar.from_string(text)
+            import numpy as np
+            from backend.input_validation import validate_poscar
+            original = validate_poscar(text, include_coordinates=True)
+            poscar = Poscar.from_str(text)
+            rendered = poscar.get_str(direct=True, significant_figures=16)
+            normalized = validate_poscar(rendered, include_coordinates=True)
+            before_flags = original.selective_flags if original.selective_dynamics else ((True, True, True),) * original.atom_count
+            after_flags = normalized.selective_flags if normalized.selective_dynamics else ((True, True, True),) * normalized.atom_count
+            def cartesian(info):
+                coords = np.asarray(info.coordinates)
+                return coords @ np.asarray(info.matrix) if info.coordinate_mode == 'direct' else coords * np.asarray(info.cartesian_scale)
+            if (original.elements != normalized.elements or original.counts != normalized.counts or
+                    before_flags != after_flags or
+                    not np.allclose(original.matrix, normalized.matrix, rtol=0, atol=1e-10) or
+                    not np.allclose(cartesian(original), cartesian(normalized), rtol=0, atol=1e-8)):
+                raise BeAError('POSCAR 规范化改变了原子顺序、晶胞、坐标或有效 T/F；已阻止输出',
+                               code='POSCAR_NORMALIZATION_CHANGED')
+        except BeAError:
+            raise
         except Exception as exc:  # noqa: BLE001
             raise BeAError(
                 f"POSCAR normalization failed: {exc}",
                 code="UPSTREAM_OUTPUT_MISSING",
                 details={"reason": str(exc)},
             ) from exc
-        rendered = Poscar(poscar.structure, direct=True, significant_digits=8).get_text()
         return rendered.rstrip("\n") + "\n"

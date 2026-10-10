@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict
 
 from backend.input_validation import InputValidationError, PoscarInfo, validate_poscar
 from backend.app.schemas.generation import LatticeInfo, StructureContext
+from backend.app.schemas.surface import CatalysisBinding, SurfacePolicy
 
 
 class StructureSummary(BaseModel):
@@ -34,6 +35,8 @@ class StructureSummary(BaseModel):
     transition_metals: List[str] = []
     coordinate_mode: str = "direct"
     selective_dynamics: bool = False
+    catalysis_binding: Optional[CatalysisBinding] = None
+    surface_policy: Optional[SurfacePolicy] = None
 
 
 # d-block metals commonly checked for magnetism/DFT+U hints.
@@ -148,4 +151,6 @@ def to_structure_context(summary: StructureSummary) -> StructureContext:
         transition_metals=list(summary.transition_metals),
         coordinate_mode=summary.coordinate_mode,
         selective_dynamics=summary.selective_dynamics,
+        catalysis_binding=summary.catalysis_binding,
+        surface_policy=summary.surface_policy,
     )

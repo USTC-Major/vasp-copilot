@@ -14,13 +14,14 @@ from math import gcd
 import unicodedata
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator, model_serializer
 
 from backend.app.schemas.recipe import (
     ElectronicType,
     PrecisionLevel,
     TaskType,
 )
+from backend.app.schemas.surface import CatalysisBinding, SurfacePolicy
 
 
 class _StrictModel(BaseModel):
@@ -46,6 +47,7 @@ class ProvenanceSourceType(str, Enum):
     USER_PATCH = "user_patch"
     RULE_FIX = "rule_fix"
     SCHEDULER_PROFILE = "scheduler_profile"
+    SURFACE_POLICY = "surface_policy"
 
 
 class PatchValidationResult(_StrictModel):
@@ -126,6 +128,8 @@ class StructureContext(_StrictModel):
     source_sha256: Optional[str] = None
     source_material_id: Optional[str] = None
     transition_metals: List[str] = Field(default_factory=list)
+    catalysis_binding: Optional[CatalysisBinding] = None
+    surface_policy: Optional[SurfacePolicy] = None
 
     @model_validator(mode="after")
     def _consistent(self) -> "StructureContext":
@@ -295,6 +299,16 @@ class WorkflowBundleManifest(_StrictModel):
     created_at: Optional[str] = None
     generator_version: str = "0.1.0"
     potcar: Dict[str, Any] = Field(default_factory=dict)
+    catalysis_binding: Optional[CatalysisBinding] = None
+    surface_policy: Optional[SurfacePolicy] = None
+
+    @model_serializer(mode='wrap')
+    def _omit_absent_cat(self, handler):
+        value = handler(self)
+        if self.catalysis_binding is None:
+            value.pop('catalysis_binding', None)
+            value.pop('surface_policy', None)
+        return value
 
 
 class PotcarConfig(_StrictModel):

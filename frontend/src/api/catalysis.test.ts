@@ -2,6 +2,7 @@ import { http, HttpResponse } from 'msw';
 import { server } from '../mocks/server';
 import { catalysisApi } from './catalysis';
 import type { CatalysisDraft } from '../types/catalysis';
+import { catalysisWorkflowResponseFixture } from '../mocks/catalysisWorkflowFixture';
 
 it('omits empty names so the server default applies, and retains bulk/slab source semantics', async () => {
   const bodies: unknown[] = [];
@@ -9,6 +10,15 @@ it('omits empty names so the server default applies, and retains bulk/slab sourc
   await catalysisApi.create('', { kind: 'example', role: 'bulk' });
   await catalysisApi.create(' slab ', { kind: 'poscar', role: 'slab', content: 'synthetic POSCAR', name: 'POSCAR' });
   expect(bodies).toEqual([{ source: { kind: 'example', role: 'bulk' } }, { name: 'slab', source: { kind: 'poscar', role: 'slab', content: 'synthetic POSCAR', name: 'POSCAR' } }]);
+});
+
+it('binds exactly one explicit model at the current revision and retains the complete response', async () => {
+  const bodies: unknown[] = [], response = catalysisWorkflowResponseFixture();
+  server.use(http.post('/api/v1/toolbox/catalysis/drafts/:id/workflow-binding', async ({ request }) => { bodies.push(await request.json()); return HttpResponse.json(response); }));
+  const doc = { draft_id: 'cat-test', revision: 9 } as CatalysisDraft;
+  expect(await catalysisApi.workflowBinding(doc, { surface_id: 'surface-1' })).toEqual(response);
+  await catalysisApi.workflowBinding(doc, { candidate_id: 'candidate-1' });
+  expect(bodies).toEqual([{ revision: 9, surface_id: 'surface-1' }, { revision: 9, candidate_id: 'candidate-1' }]);
 });
 
 it('pins export and mutations to the current draft revision and surface', async () => {
