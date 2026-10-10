@@ -4,7 +4,9 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, StrictInt
 
 EnergyBasis = Literal['sigma_to_zero_ev', 'without_entropy_ev', 'free_energy_toten_ev']
+AnalysisKind = Literal['adsorption', 'formation']
 Role = Literal['clean_slab', 'adsorbate', 'adsorbed', 'material', 'element_reference']
+AssignmentOrigin = Literal['manual', 'auto']
 
 
 class Model(BaseModel):
@@ -19,10 +21,18 @@ class EnergyFields(Model):
 
 class Create(Model):
     title: str = Field(default='', max_length=120)
+    # Omission is reserved for compatibility with clients using the old groups UI.
+    analysis_kind: AnalysisKind | None = None
 
 
 class Revision(Model):
     expected_revision: int = Field(ge=0, strict=True)
+
+
+class CopyAnalysis(Revision):
+    analysis_kind: AnalysisKind
+    title: str | None = Field(default=None, max_length=120)
+    group_id: str | None = Field(default=None, max_length=80)
 
 
 class Manual(Revision):
@@ -31,7 +41,7 @@ class Manual(Revision):
     energy_fields: EnergyFields
     energy_basis: EnergyBasis
     unit: Literal['eV']
-    reference_note: str = Field(default='', max_length=2000)
+    reference_note: str = Field(default='', max_length=6000)
 
 
 class Override(Model):
@@ -50,6 +60,8 @@ class SampleConfirmation(Model):
     confirmed: bool = False
     accepted_warnings: bool = False
     override: Override | None = None
+    role_origin: AssignmentOrigin | None = None
+    included_origin: AssignmentOrigin | None = None
 
 
 class Target(Model):
@@ -69,6 +81,7 @@ class Group(Model):
     element_references: dict[str, str] = Field(default_factory=dict)
     targets: list[Target] = Field(default_factory=list, max_length=100)
     reference_note: str = Field(default='', max_length=2000)
+    reference_origins: dict[str, AssignmentOrigin] = Field(default_factory=dict)
 
 
 class Configuration(Revision):
@@ -92,3 +105,8 @@ class TaskImport(Revision):
 class Reuse(Revision):
     source_collection_id: str
     sample_id: str
+
+
+class RemoveSamples(Revision):
+    sample_ids: list[str] = Field(default_factory=list, max_length=100)
+    clear_all: bool = False

@@ -75,6 +75,7 @@ class EnergyTaskSources:
         return public
 
     def import_source(self, ident, revision, preview_id, name):
+        self.store.check_editable(ident, revision)
         import json
         import re
         if not re.fullmatch(r'epv_[a-f0-9]{32}', preview_id):

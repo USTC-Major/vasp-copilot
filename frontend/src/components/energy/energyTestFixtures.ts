@@ -1,4 +1,4 @@
-import type { EnergyCollection, EnergySample } from '../../api/energy';
+import type { EnergyCollection, EnergyCsvPreview, EnergySample } from '../../api/energy';
 
 export function energyFixture(withResult = false): EnergyCollection {
   const sample = (id: string, name: string, composition: Record<string, number>, value: number, role: EnergySample['role']): EnergySample => ({
@@ -13,4 +13,11 @@ export function energyFixture(withResult = false): EnergyCollection {
     limits: { max_file_bytes: 64 * 1024 ** 2, max_collection_bytes: 128 * 1024 ** 2, max_samples: 100 },
     result: withResult ? { schema_version: 'pp.energy.result.v1', input_fingerprint: 'synthetic-input', calculated_at: '2026-10-11T00:01:00Z', warnings: ['合成值，运行未完成或结束状态未知'], groups: [{ id: 'g_ads', name: groups[0].name, kind: 'adsorption', energy_basis: 'sigma_to_zero_ev', warnings: [], rows: [{ sample_id: 'es_target', name: '合成构型 A', delta_ev: -2, normalized_ev: -2, normalization: 'per_adsorbate', unit: 'eV/adsorbate', formula: 'E_target - E_clean - n * E_reference / m', terms: [{ sample_id: 'es_target', coefficient: 1, energy_ev: -112, contribution_ev: -112 }, { sample_id: 'es_clean', coefficient: -1, energy_ev: -100, contribution_ev: 100 }, { sample_id: 'es_reference', coefficient: -1, energy_ev: -10, contribution_ev: 10 }], warnings: ['合成构型 A：运行及收敛状态未知'] }] }] } : null,
   };
+}
+
+export function energyCsvFixture(): EnergyCsvPreview {
+  return { row_count: 3, valid_count: 3, can_import: true, issues: [], rows: energyFixture().samples.map((sample, index) => ({
+    row_number: index + 2, name: sample.name, composition: sample.parsed.composition, energy_basis: 'sigma_to_zero_ev',
+    energy_ev: sample.parsed.energy_fields.sigma_to_zero_ev, unit: 'eV', relative_path: '合成 中文/位点 A', reference_note: '测试合成值，不是科研数据', issues: [],
+  })) };
 }

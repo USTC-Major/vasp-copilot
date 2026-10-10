@@ -35,6 +35,21 @@ def response(doc):
     return {'mode': 'toolbox', 'collection': doc}
 
 
+async def csv_bytes(request):
+    data = bytearray()
+    async for chunk in request.stream():
+        if len(data) + len(chunk) > 1024 * 1024:
+            fail('CSV最多1 MiB', 'ENERGY_TOO_LARGE', 413)
+        data.extend(chunk)
+    return bytes(data)
+
+
+@router.get('/csv-template')
+def csv_template(energy_basis: schemas.EnergyBasis = 'sigma_to_zero_ev'):
+    return Response(EnergyStore.csv_template().encode('utf-8-sig'), media_type='text/csv',
+                    headers={'Content-Disposition': f'attachment; filename="energy-{energy_basis}-template.csv"'})
+
+
 @router.get('/collections')
 def listing(request: Request):
     return {'mode': 'toolbox', 'collections': store(request).list()}
@@ -42,7 +57,7 @@ def listing(request: Request):
 
 @router.post('/collections', status_code=201)
 def create(request: Request, body: schemas.Create):
-    return response(store(request).create(body.title))
+    return response(store(request).create(body.title, body.analysis_kind))
 
 
 @router.get('/collections/{ident}')
@@ -89,13 +104,27 @@ def manual(ident: str, request: Request, body: schemas.Manual):
 
 
 @router.post('/collections/{ident}/csv', status_code=201)
-async def csv_import(ident: str, request: Request, expected_revision: int = Query(ge=0)):
-    data = bytearray()
-    async for chunk in request.stream():
-        if len(data) + len(chunk) > 1024 * 1024:
-            fail('CSV最多1 MiB', 'ENERGY_TOO_LARGE', 413)
-        data.extend(chunk)
-    return response(await run_in_threadpool(store(request).csv_import, ident, expected_revision, bytes(data)))
+async def csv_import(ident: str, request: Request, expected_revision: int = Query(ge=0),
+                     energy_basis: schemas.EnergyBasis | None = None):
+    store(request).check_editable(ident, expected_revision)
+    data = await csv_bytes(request)
+    return response(await run_in_threadpool(store(request).csv_import, ident, expected_revision, data, energy_basis))
+
+
+@router.post('/collections/{ident}/csv/preview')
+async def csv_preview(ident: str, request: Request, expected_revision: int = Query(ge=0),
+                      energy_basis: schemas.EnergyBasis | None = None):
+    store(request).check_editable(ident, expected_revision)
+    data = await csv_bytes(request)
+    return {'mode': 'toolbox', 'preview': await run_in_threadpool(
+        store(request).csv_preview, ident, expected_revision, data, energy_basis)}
+
+
+@router.get('/collections/{ident}/samples.csv')
+def samples_csv(ident: str, request: Request, energy_basis: schemas.EnergyBasis,
+                value_source: Literal['original', 'effective'] = 'effective'):
+    return Response(store(request).samples_csv(ident, energy_basis, value_source).encode('utf-8-sig'),
+                    media_type='text/csv', headers={'Content-Disposition': f'attachment; filename="{ident}-samples-{value_source}.csv"'})
 
 
 @router.put('/collections/{ident}/configuration')
@@ -106,6 +135,39 @@ def configure(ident: str, request: Request, body: schemas.Configuration):
 @router.post('/collections/{ident}/calculate')
 def calculate(ident: str, request: Request, body: schemas.Revision):
     return response(store(request).calculate(ident, body.expected_revision))
+
+
+@router.post('/collections/{ident}/lock')
+def lock(ident: str, request: Request, body: schemas.Revision):
+    return response(store(request).lock(ident, body.expected_revision))
+
+
+@router.post('/collections/{ident}/unlock')
+def unlock(ident: str, request: Request, body: schemas.Revision):
+    return response(store(request).unlock(ident, body.expected_revision))
+
+
+@router.post('/collections/{ident}/copy', status_code=201)
+def copy_analysis(ident: str, request: Request, body: schemas.CopyAnalysis):
+    return response(store(request).copy_analysis(ident, body.expected_revision, body.analysis_kind,
+                                                body.title, body.group_id))
+
+
+@router.post('/collections/{ident}/autofill')
+def autofill(ident: str, request: Request, body: schemas.Revision):
+    return response(store(request).autofill(ident, body.expected_revision))
+
+
+@router.post('/collections/{ident}/samples/removal-preview')
+def removal_preview(ident: str, request: Request, body: schemas.RemoveSamples):
+    return {'mode': 'toolbox', 'removal': store(request).removal_preview(
+        ident, body.expected_revision, body.sample_ids, body.clear_all)}
+
+
+@router.post('/collections/{ident}/samples/remove')
+def remove_samples(ident: str, request: Request, body: schemas.RemoveSamples):
+    doc, removal = store(request).remove_samples(ident, body.expected_revision, body.sample_ids, body.clear_all)
+    return {**response(doc), 'removal': removal}
 
 
 @router.get('/collections/{ident}/export')

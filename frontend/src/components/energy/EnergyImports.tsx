@@ -1,19 +1,24 @@
 import { useState } from 'react';
 import { Alert, Button, Input, Select, Typography } from 'antd';
-import type { EnergyCollection, EnergyManualInput } from '../../api/energy';
-import { basisOptions, energyError, parseComposition, parseEnergy } from './energyDraft';
+import { energyApi, type EnergyBasis, type EnergyCollection, type EnergyCsvPreview, type EnergyManualInput } from '../../api/energy';
+import { basisLabel, basisOptions, compositionLabel, energyError, energyNumber, parseComposition, parseEnergy, saveEnergyBlob } from './energyDraft';
 
 export type LocalEnergyFile = { id: string; file: File; relativePath: string };
 type Props = {
-  collection: EnergyCollection; disabled: boolean;
+  collection: EnergyCollection; disabled: boolean; draftDirty: boolean;
   onFiles: (files: LocalEnergyFile[], onImported: (id: string) => void) => Promise<void>;
   onManual: (input: EnergyManualInput) => Promise<boolean>;
-  onCsv: (file: File) => Promise<boolean>;
+  onCsvPreview: (file: File, basis?: EnergyBasis) => Promise<{ preview: EnergyCsvPreview; revision: number }>;
+  onCsv: (file: File, basis: EnergyBasis | undefined, previewRevision: number) => Promise<boolean>;
 };
-export default function EnergyImports({ collection, disabled, onFiles, onManual, onCsv }: Props) {
+export default function EnergyImports({ collection, disabled, draftDirty, onFiles, onManual, onCsvPreview, onCsv }: Props) {
   const [mode, setMode] = useState<'local' | 'manual' | 'csv'>('local');
   const [files, setFiles] = useState<LocalEnergyFile[]>([]);
   const [csv, setCsv] = useState<File>();
+  const [csvBasis, setCsvBasis] = useState<EnergyBasis | 'file'>('file');
+  const [csvPreview, setCsvPreview] = useState<{ collectionId: string; file: File; basis: EnergyBasis | 'file'; revision: number; data: EnergyCsvPreview; invalidated?: boolean }>();
+  const [readingPreview, setReadingPreview] = useState(false);
+  const [downloadingTemplate, setDownloadingTemplate] = useState(false);
   const [name, setName] = useState('');
   const [composition, setComposition] = useState('');
   const [energy, setEnergy] = useState('');
@@ -25,6 +30,23 @@ export default function EnergyImports({ collection, disabled, onFiles, onManual,
   const selectionError = files.some(item => !item.file.size || item.file.size > collection.limits.max_file_bytes) ? '所选文件为空或超过单文件 64 MiB 上限。'
     : bytes + usedBytes > collection.limits.max_collection_bytes ? '所选文件与当前比较集缓存超过 128 MiB 上限。'
     : files.length + collection.samples.length > collection.limits.max_samples ? `当前比较集最多 ${collection.limits.max_samples} 个样本。` : '';
+  const previewCurrent = !!csvPreview && !csvPreview.invalidated && csvPreview.collectionId === collection.id && csvPreview.file === csv && csvPreview.basis === csvBasis && csvPreview.revision === collection.revision && !draftDirty;
+  const canImportCsv = previewCurrent && csvPreview.data.can_import && !csvPreview.data.issues.length && csvPreview.data.rows.every(row => !row.issues.length);
+  async function downloadTemplate() {
+    if (downloadingTemplate) return;
+    setDownloadingTemplate(true); setError('');
+    try { saveEnergyBlob(await energyApi.template(csvBasis === 'file' ? undefined : csvBasis), 'energy-samples-template.csv'); }
+    catch (cause) { setError(energyError(cause)); }
+    finally { setDownloadingTemplate(false); }
+  }
+  async function previewCsv() {
+    if (!csv || disabled || readingPreview) return;
+    const file = csv; const basis = csvBasis;
+    setReadingPreview(true); setError('');
+    try { const response = await onCsvPreview(file, basis === 'file' ? undefined : basis); setCsvPreview({ collectionId: collection.id, file, basis, revision: response.revision, data: response.preview }); }
+    catch (cause) { setError(energyError(cause)); setCsvPreview(undefined); }
+    finally { setReadingPreview(false); }
+  }
   async function addManual() {
     setError('');
     try {
@@ -65,11 +87,17 @@ export default function EnergyImports({ collection, disabled, onFiles, onManual,
       <Button type="primary" disabled={disabled} onClick={() => void addManual()}>添加手填样本</Button>
     </div>}
     {mode === 'csv' && <div className="energy-import-form">
-      <label className="energy-file-picker">导入 UTF-8 CSV<input aria-label="选择能量 CSV" type="file" accept=".csv,text/csv" disabled={disabled} onChange={event => { setCsv(event.target.files?.[0]); event.target.value = ''; }} /></label>
-      <Typography.Text type="secondary">列：name、relative_path、composition、energy_basis、energy_ev、unit、reference_note。组成填写 JSON，单位明确为 eV；能量字段使用对应键名。</Typography.Text>
-      <details className="energy-details"><summary>CSV 格式示例</summary><pre>{'name,relative_path,composition,energy_basis,energy_ev,unit,reference_note\n合成 Pt 表面,,"{""Pt"":4}",sigma_to_zero_ev,-100,eV,计量合成示例'}</pre><p>能量字段键名：sigma_to_zero_ev、without_entropy_ev、free_energy_toten_ev。示例只演示格式，不是科研结果。</p></details>
+      <Button disabled={downloadingTemplate} loading={downloadingTemplate} onClick={() => void downloadTemplate()}>下载 CSV 模板</Button>
+      <Typography.Text type="secondary">下载空白模板，填写名称、元素计数、能量（eV）与来源说明。元素计数例如 Pt:4 C:1 O:1。模板不含科研数值。</Typography.Text>
+      <label className="energy-file-picker">导入 UTF-8 CSV<input aria-label="选择能量 CSV" type="file" accept=".csv,text/csv" disabled={disabled} onChange={event => { setCsv(event.target.files?.[0]); setCsvPreview(previous => previous ? { ...previous, invalidated: true } : previous); event.target.value = ''; }} /></label>
+      <label className="energy-field">CSV 能量口径<Select aria-label="CSV 能量口径" value={csvBasis} disabled={disabled} options={[{ value: 'file', label: '按文件声明' }, ...basisOptions]} onChange={value => { setCsvBasis(value); setCsvPreview(previous => previous ? { ...previous, invalidated: true } : previous); }} /></label>
+      <Typography.Text type="secondary">按文件声明会逐行保留原口径。选择某个字段只补充未声明的行；文件已声明不同口径时会明确报冲突并阻止导入。旧 JSON 元素计数仍可读取。</Typography.Text>
       {csv && <Typography.Text>{csv.name}</Typography.Text>}
-      <Button type="primary" disabled={disabled || !csv} onClick={() => { if (csv) void onCsv(csv).then(succeeded => { if (succeeded) setCsv(undefined); }); }}>读取 CSV 并加入确认表</Button>
+      <Button disabled={disabled || !csv || readingPreview} loading={readingPreview} onClick={() => void previewCsv()}>{draftDirty ? '保存草稿并预览 CSV' : '预览 CSV'}</Button>
+      {csvPreview && !previewCurrent && <Alert type="warning" title="CSV 预览已失效，请重新预览。" description="文件、口径选择或当前分析修订发生变化后，旧预览不能用于导入。" />}
+      {previewCurrent && csvPreview && <section aria-label="CSV 导入预览"><Typography.Text>预览 {csvPreview.data.row_count} 行，{csvPreview.data.valid_count} 行通过检查。尚未导入。</Typography.Text>{!!csvPreview.data.issues.length && <Alert type="error" title="CSV 文件存在错误，不能导入。" description={<ul>{csvPreview.data.issues.map((issue, index) => <li key={`${issue.code}-${index}`}>{issue.message}</li>)}</ul>} />}<div className="energy-table-scroll"><table className="energy-csv-preview"><thead><tr><th>行号</th><th>名称</th><th>元素计数</th><th>能量口径</th><th>能量（eV）</th><th>来源说明</th><th>检查结果</th></tr></thead><tbody>{csvPreview.data.rows.map(row => <tr key={row.row_number}><td>{row.row_number}</td><td>{row.name || '缺失'}</td><td>{compositionLabel(row.composition) || '缺失'}</td><td>{row.energy_basis ? basisLabel(row.energy_basis) : '缺失'}</td><td>{energyNumber(row.energy_ev)}</td><td>{row.relative_path && <div>{row.relative_path}</div>}{row.reference_note || '未提供'}</td><td>{row.issues.length ? <ul className="energy-hard-error">{row.issues.map((issue, index) => <li key={`${issue.code}-${index}`}>{issue.message}</li>)}</ul> : '通过'}</td></tr>)}</tbody></table></div></section>}
+      <Button type="primary" disabled={disabled || !csv || !canImportCsv || readingPreview} onClick={() => { if (csv && csvPreview && canImportCsv) void onCsv(csv, csvBasis === 'file' ? undefined : csvBasis, csvPreview.revision).then(succeeded => { if (succeeded) { setCsv(undefined); setCsvPreview(undefined); } }); }}>确认导入预览中的 CSV</Button>
+      <p className="energy-note">CSV 回导仅建立新的表格来源，运行与收敛状态为未知；不会继承原分析的锁定、核对、风险接受或 OUTCAR 来源验证。</p>
     </div>}
     {error && <Alert type="error" title={error} />}
   </div>;
