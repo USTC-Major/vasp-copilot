@@ -23,6 +23,7 @@ const RemoteJobPage = lazy(() => import('./pages/RemoteJobPage'));
 const PotcarLibraryPage = lazy(() => import('./pages/PotcarLibraryPage'));
 const PotcarAssemblyPage = lazy(() => import('./pages/PotcarAssemblyPage'));
 const PostprocessingPage = lazy(() => import('./pages/PostprocessingPage'));
+const EnergyPage = lazy(() => import('./pages/EnergyPage'));
 const SurfaceBuilderPage = lazy(() => import('./pages/SurfaceBuilderPage'));
 
 const withSuspense = (element: React.ReactNode) => (
@@ -52,6 +53,7 @@ export const routes: RouteObject[] = [
       { path: 'toolbox/potcar', element: withSuspense(<PotcarLibraryPage />) },
       { path: 'toolbox/potcar/assemble', element: withSuspense(<PotcarAssemblyPage />) },
       { path: 'toolbox/postprocessing', element: withSuspense(<PostprocessingPage />) },
+      { path: 'toolbox/postprocessing/energy', element: withSuspense(<EnergyPage />) },
       { path: 'toolbox/surface-builder', element: withSuspense(<SurfaceBuilderPage />) },
       { index: true, element: <HomePage /> },
       { path: 'workflow', element: withSuspense(<WorkflowBuilderPage />) },

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Button, Card, Checkbox, Empty, Input, Progress, Select, Space, Spin, Tag, Typography } from 'antd';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import ReactECharts from 'echarts-for-react';
 import { ppApi, type PPDataset, type PPCurves, type PPTaskIdentity } from '../api/postprocessing';
 import { buildPlotOption, exportPostprocessingPng, fullEnergyWindow, SCIENTIFIC_PLOT_THEME } from '../components/postprocessing/plotting';
@@ -166,7 +166,7 @@ export default function PostprocessingPage() {
   }
   async function action(work: () => Promise<unknown>) { setError(''); try { await work(); } catch (e) { setError(errorText(e)); } }
   return <div className="wf-page pp-page">
-    <div className="wf-page-heading"><div><Typography.Title level={3}>结果后处理</Typography.Title><p>从任务结果或本地文件建立 DOS／能带分析；缓存后的解析与绘图无需连接超算。</p></div><Tag>任务取回 · 本地分析</Tag></div>
+    <div className="wf-page-heading"><div><Typography.Title level={3}>结果后处理</Typography.Title><p>从任务结果或本地文件建立 DOS／能带分析；缓存后的解析与绘图无需连接超算。</p></div><Space wrap><Link to="/toolbox/postprocessing/energy">吸附能与形成能</Link><Tag>任务取回 · 本地分析</Tag></Space></div>
     <div className="pp-grid">
       <aside>
         <Card title="导入新的分析">

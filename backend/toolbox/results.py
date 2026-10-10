@@ -18,7 +18,7 @@ _TERMINAL = frozenset({"completed", "failed", "not_converged"})
 _SLOTS = threading.BoundedSemaphore(2)
 
 
-def submitted_snapshot(svc, project_id: str, task_id: str, job_key: str, attempt_id: str):
+def submitted_snapshot(svc, project_id: str, task_id: str, job_key: str, attempt_id: str, *, allowed_states=None):
     """Shared identity boundary; callers independently restrict readable filenames."""
     if not job_key or not attempt_id:
         raise ToolboxError("RESULT_IDENTITY_REQUIRED", "必须指定当前作业与尝试", 400)
@@ -31,7 +31,7 @@ def submitted_snapshot(svc, project_id: str, task_id: str, job_key: str, attempt
     action_id = job.get("submission_action_id")
     action = ((flow.get("consent") or {}).get("actions") or {}).get(action_id)
     draft = job.get("draft")
-    if job.get("status") not in _TERMINAL or job.get("submission_state") != "submitted":
+    if job.get("status") not in (_TERMINAL if allowed_states is None else allowed_states) or job.get("submission_state") != "submitted":
         raise ToolboxError("RESULT_NOT_TERMINAL", "仅可取回已提交且终态的计算结果", 409)
     if not job.get("slurm_id") or not isinstance(draft, dict) or not isinstance(action, dict):
         raise ToolboxError("RESULT_ORIGIN_UNVERIFIED", "缺少本次提交的持久身份", 409)

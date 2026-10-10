@@ -711,6 +711,76 @@
         }
       }
     },
+    "/api/v1/workflows/{workflow_id}/potcar/preview": {
+      "post": {
+        "tags": [
+          "workflows"
+        ],
+        "summary": "Potcar Preview",
+        "operationId": "potcar_preview_api_v1_workflows__workflow_id__potcar_preview_post",
+        "parameters": [
+          {
+            "name": "workflow_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workflow Id"
+            }
+          },
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Request-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/workflows/recent": {
       "get": {
         "tags": [
@@ -1112,6 +1182,61 @@
                 }
               ],
               "title": "Cursor"
+            }
+          },
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Request-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/structure/{structure_id}/geometry": {
+      "get": {
+        "summary": "Geometry",
+        "operationId": "geometry_api_v1_structure__structure_id__geometry_get",
+        "parameters": [
+          {
+            "name": "structure_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Structure Id"
             }
           },
           {
@@ -1734,6 +1859,2793 @@
                 "schema": {
                   "$ref": "#/components/schemas/ApiEnvelope"
                 }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/potcar/discover": {
+      "post": {
+        "tags": [
+          "Toolbox execution",
+          "Local POTCAR libraries"
+        ],
+        "summary": "Discover",
+        "operationId": "discover_api_v1_toolbox_potcar_discover_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Payload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/potcar/libraries": {
+      "get": {
+        "tags": [
+          "Toolbox execution",
+          "Local POTCAR libraries"
+        ],
+        "summary": "Libraries",
+        "operationId": "libraries_api_v1_toolbox_potcar_libraries_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Toolbox execution",
+          "Local POTCAR libraries"
+        ],
+        "summary": "Register",
+        "operationId": "register_api_v1_toolbox_potcar_libraries_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Payload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/potcar/libraries/{library_id}": {
+      "get": {
+        "tags": [
+          "Toolbox execution",
+          "Local POTCAR libraries"
+        ],
+        "summary": "Library",
+        "operationId": "library_api_v1_toolbox_potcar_libraries__library_id__get",
+        "parameters": [
+          {
+            "name": "library_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Library Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Toolbox execution",
+          "Local POTCAR libraries"
+        ],
+        "summary": "Patch",
+        "operationId": "patch_api_v1_toolbox_potcar_libraries__library_id__patch",
+        "parameters": [
+          {
+            "name": "library_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Library Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Toolbox execution",
+          "Local POTCAR libraries"
+        ],
+        "summary": "Delete",
+        "operationId": "delete_api_v1_toolbox_potcar_libraries__library_id__delete",
+        "parameters": [
+          {
+            "name": "library_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Library Id"
+            }
+          },
+          {
+            "name": "expected_revision",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "title": "Expected Revision"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/potcar/default-library": {
+      "put": {
+        "tags": [
+          "Toolbox execution",
+          "Local POTCAR libraries"
+        ],
+        "summary": "Default",
+        "operationId": "default_api_v1_toolbox_potcar_default_library_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Payload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/potcar/libraries/{library_id}/relink": {
+      "post": {
+        "tags": [
+          "Toolbox execution",
+          "Local POTCAR libraries"
+        ],
+        "summary": "Relink",
+        "operationId": "relink_api_v1_toolbox_potcar_libraries__library_id__relink_post",
+        "parameters": [
+          {
+            "name": "library_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Library Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/potcar/libraries/{library_id}/replace-source": {
+      "post": {
+        "tags": [
+          "Toolbox execution",
+          "Local POTCAR libraries"
+        ],
+        "summary": "Replace",
+        "operationId": "replace_api_v1_toolbox_potcar_libraries__library_id__replace_source_post",
+        "parameters": [
+          {
+            "name": "library_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Library Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/potcar/libraries/{library_id}/scans": {
+      "post": {
+        "tags": [
+          "Toolbox execution",
+          "Local POTCAR libraries"
+        ],
+        "summary": "Start Scan",
+        "operationId": "start_scan_api_v1_toolbox_potcar_libraries__library_id__scans_post",
+        "parameters": [
+          {
+            "name": "library_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Library Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/potcar/scans/{scan_id}": {
+      "get": {
+        "tags": [
+          "Toolbox execution",
+          "Local POTCAR libraries"
+        ],
+        "summary": "Scan",
+        "operationId": "scan_api_v1_toolbox_potcar_scans__scan_id__get",
+        "parameters": [
+          {
+            "name": "scan_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Scan Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/potcar/scans/{scan_id}/cancel": {
+      "post": {
+        "tags": [
+          "Toolbox execution",
+          "Local POTCAR libraries"
+        ],
+        "summary": "Cancel",
+        "operationId": "cancel_api_v1_toolbox_potcar_scans__scan_id__cancel_post",
+        "parameters": [
+          {
+            "name": "scan_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Scan Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/potcar/libraries/{library_id}/datasets": {
+      "get": {
+        "tags": [
+          "Toolbox execution",
+          "Local POTCAR libraries"
+        ],
+        "summary": "Datasets",
+        "operationId": "datasets_api_v1_toolbox_potcar_libraries__library_id__datasets_get",
+        "parameters": [
+          {
+            "name": "library_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Library Id"
+            }
+          },
+          {
+            "name": "element",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Element"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/potcar/previews": {
+      "post": {
+        "tags": [
+          "Toolbox execution",
+          "Local POTCAR libraries"
+        ],
+        "summary": "Preview",
+        "operationId": "preview_api_v1_toolbox_potcar_previews_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Payload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/potcar/artifacts": {
+      "post": {
+        "tags": [
+          "Toolbox execution",
+          "Local POTCAR libraries"
+        ],
+        "summary": "Generate",
+        "operationId": "generate_api_v1_toolbox_potcar_artifacts_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Payload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/potcar/artifacts/{artifact_id}": {
+      "get": {
+        "tags": [
+          "Toolbox execution",
+          "Local POTCAR libraries"
+        ],
+        "summary": "Artifact",
+        "operationId": "artifact_api_v1_toolbox_potcar_artifacts__artifact_id__get",
+        "parameters": [
+          {
+            "name": "artifact_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Artifact Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/potcar/artifacts/{artifact_id}/download": {
+      "get": {
+        "tags": [
+          "Toolbox execution",
+          "Local POTCAR libraries"
+        ],
+        "summary": "Download",
+        "operationId": "download_api_v1_toolbox_potcar_artifacts__artifact_id__download_get",
+        "parameters": [
+          {
+            "name": "artifact_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Artifact Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/postprocessing/task-sources/preview": {
+      "post": {
+        "tags": [
+          "Toolbox execution",
+          "Local post-processing"
+        ],
+        "summary": "Preview Task",
+        "operationId": "preview_task_api_v1_toolbox_postprocessing_task_sources_preview_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/backend__toolbox__postprocessing__api__TaskPreview"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/postprocessing/task-sources/import": {
+      "post": {
+        "tags": [
+          "Toolbox execution",
+          "Local post-processing"
+        ],
+        "summary": "Import Task",
+        "operationId": "import_task_api_v1_toolbox_postprocessing_task_sources_import_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/backend__toolbox__postprocessing__api__TaskImport"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/postprocessing/datasets/{ident}/retry-download": {
+      "post": {
+        "tags": [
+          "Toolbox execution",
+          "Local post-processing"
+        ],
+        "summary": "Retry Download",
+        "operationId": "retry_download_api_v1_toolbox_postprocessing_datasets__ident__retry_download_post",
+        "parameters": [
+          {
+            "name": "ident",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ident"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/postprocessing/datasets": {
+      "get": {
+        "tags": [
+          "Toolbox execution",
+          "Local post-processing"
+        ],
+        "summary": "Listing",
+        "operationId": "listing_api_v1_toolbox_postprocessing_datasets_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Toolbox execution",
+          "Local post-processing"
+        ],
+        "summary": "Create",
+        "operationId": "create_api_v1_toolbox_postprocessing_datasets_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/backend__toolbox__postprocessing__api__Create"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/postprocessing/datasets/{ident}": {
+      "get": {
+        "tags": [
+          "Toolbox execution",
+          "Local post-processing"
+        ],
+        "summary": "Detail",
+        "operationId": "detail_api_v1_toolbox_postprocessing_datasets__ident__get",
+        "parameters": [
+          {
+            "name": "ident",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ident"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Toolbox execution",
+          "Local post-processing"
+        ],
+        "summary": "Delete",
+        "operationId": "delete_api_v1_toolbox_postprocessing_datasets__ident__delete",
+        "parameters": [
+          {
+            "name": "ident",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ident"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/postprocessing/datasets/{ident}/files/{name}": {
+      "put": {
+        "tags": [
+          "Toolbox execution",
+          "Local post-processing"
+        ],
+        "summary": "Upload",
+        "operationId": "upload_api_v1_toolbox_postprocessing_datasets__ident__files__name__put",
+        "parameters": [
+          {
+            "name": "ident",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ident"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/postprocessing/datasets/{ident}/analyses": {
+      "post": {
+        "tags": [
+          "Toolbox execution",
+          "Local post-processing"
+        ],
+        "summary": "Analyze",
+        "operationId": "analyze_api_v1_toolbox_postprocessing_datasets__ident__analyses_post",
+        "parameters": [
+          {
+            "name": "ident",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ident"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/postprocessing/datasets/{ident}/cancel": {
+      "post": {
+        "tags": [
+          "Toolbox execution",
+          "Local post-processing"
+        ],
+        "summary": "Cancel",
+        "operationId": "cancel_api_v1_toolbox_postprocessing_datasets__ident__cancel_post",
+        "parameters": [
+          {
+            "name": "ident",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ident"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/postprocessing/datasets/{ident}/view": {
+      "patch": {
+        "tags": [
+          "Toolbox execution",
+          "Local post-processing"
+        ],
+        "summary": "View",
+        "operationId": "view_api_v1_toolbox_postprocessing_datasets__ident__view_patch",
+        "parameters": [
+          {
+            "name": "ident",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ident"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/View"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/postprocessing/datasets/{ident}/fit-axes": {
+      "post": {
+        "tags": [
+          "Toolbox execution",
+          "Local post-processing"
+        ],
+        "summary": "Fit",
+        "operationId": "fit_api_v1_toolbox_postprocessing_datasets__ident__fit_axes_post",
+        "parameters": [
+          {
+            "name": "ident",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ident"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/View"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/postprocessing/datasets/{ident}/curves": {
+      "get": {
+        "tags": [
+          "Toolbox execution",
+          "Local post-processing"
+        ],
+        "summary": "Curves",
+        "operationId": "curves_api_v1_toolbox_postprocessing_datasets__ident__curves_get",
+        "parameters": [
+          {
+            "name": "ident",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ident"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/postprocessing/datasets/{ident}/export": {
+      "get": {
+        "tags": [
+          "Toolbox execution",
+          "Local post-processing"
+        ],
+        "summary": "Export",
+        "operationId": "export_api_v1_toolbox_postprocessing_datasets__ident__export_get",
+        "parameters": [
+          {
+            "name": "ident",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ident"
+            }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "csv",
+                "json"
+              ],
+              "type": "string",
+              "default": "json",
+              "title": "Format"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/postprocessing/preferences": {
+      "get": {
+        "tags": [
+          "Toolbox execution",
+          "Plot preferences"
+        ],
+        "summary": "Read Preferences",
+        "operationId": "read_preferences_api_v1_toolbox_postprocessing_preferences_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Toolbox execution",
+          "Plot preferences"
+        ],
+        "summary": "Save Preferences",
+        "operationId": "save_preferences_api_v1_toolbox_postprocessing_preferences_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SavePreferences"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/postprocessing/energy/collections": {
+      "get": {
+        "tags": [
+          "Toolbox execution",
+          "Energy post-processing"
+        ],
+        "summary": "Listing",
+        "operationId": "listing_api_v1_toolbox_postprocessing_energy_collections_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Toolbox execution",
+          "Energy post-processing"
+        ],
+        "summary": "Create",
+        "operationId": "create_api_v1_toolbox_postprocessing_energy_collections_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/backend__toolbox__postprocessing__energy__schemas__Create"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/postprocessing/energy/collections/{ident}": {
+      "get": {
+        "tags": [
+          "Toolbox execution",
+          "Energy post-processing"
+        ],
+        "summary": "Detail",
+        "operationId": "detail_api_v1_toolbox_postprocessing_energy_collections__ident__get",
+        "parameters": [
+          {
+            "name": "ident",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ident"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Toolbox execution",
+          "Energy post-processing"
+        ],
+        "summary": "Delete",
+        "operationId": "delete_api_v1_toolbox_postprocessing_energy_collections__ident__delete",
+        "parameters": [
+          {
+            "name": "ident",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ident"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/postprocessing/energy/collections/{ident}/outcar": {
+      "post": {
+        "tags": [
+          "Toolbox execution",
+          "Energy post-processing"
+        ],
+        "summary": "Upload",
+        "operationId": "upload_api_v1_toolbox_postprocessing_energy_collections__ident__outcar_post",
+        "parameters": [
+          {
+            "name": "ident",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ident"
+            }
+          },
+          {
+            "name": "expected_revision",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "title": "Expected Revision"
+            }
+          },
+          {
+            "name": "name",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "OUTCAR",
+              "title": "Name"
+            }
+          },
+          {
+            "name": "relative_path",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Relative Path"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/postprocessing/energy/collections/{ident}/manual": {
+      "post": {
+        "tags": [
+          "Toolbox execution",
+          "Energy post-processing"
+        ],
+        "summary": "Manual",
+        "operationId": "manual_api_v1_toolbox_postprocessing_energy_collections__ident__manual_post",
+        "parameters": [
+          {
+            "name": "ident",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ident"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Manual"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/postprocessing/energy/collections/{ident}/csv": {
+      "post": {
+        "tags": [
+          "Toolbox execution",
+          "Energy post-processing"
+        ],
+        "summary": "Csv Import",
+        "operationId": "csv_import_api_v1_toolbox_postprocessing_energy_collections__ident__csv_post",
+        "parameters": [
+          {
+            "name": "ident",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ident"
+            }
+          },
+          {
+            "name": "expected_revision",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "title": "Expected Revision"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/postprocessing/energy/collections/{ident}/configuration": {
+      "put": {
+        "tags": [
+          "Toolbox execution",
+          "Energy post-processing"
+        ],
+        "summary": "Configure",
+        "operationId": "configure_api_v1_toolbox_postprocessing_energy_collections__ident__configuration_put",
+        "parameters": [
+          {
+            "name": "ident",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ident"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Configuration"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/postprocessing/energy/collections/{ident}/calculate": {
+      "post": {
+        "tags": [
+          "Toolbox execution",
+          "Energy post-processing"
+        ],
+        "summary": "Calculate",
+        "operationId": "calculate_api_v1_toolbox_postprocessing_energy_collections__ident__calculate_post",
+        "parameters": [
+          {
+            "name": "ident",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ident"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Revision"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/postprocessing/energy/collections/{ident}/export": {
+      "get": {
+        "tags": [
+          "Toolbox execution",
+          "Energy post-processing"
+        ],
+        "summary": "Export",
+        "operationId": "export_api_v1_toolbox_postprocessing_energy_collections__ident__export_get",
+        "parameters": [
+          {
+            "name": "ident",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ident"
+            }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "json",
+                "csv"
+              ],
+              "type": "string",
+              "default": "json",
+              "title": "Format"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/postprocessing/energy/task-sources/preview": {
+      "post": {
+        "tags": [
+          "Toolbox execution",
+          "Energy post-processing"
+        ],
+        "summary": "Preview",
+        "operationId": "preview_api_v1_toolbox_postprocessing_energy_task_sources_preview_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/backend__toolbox__postprocessing__energy__schemas__TaskPreview"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/postprocessing/energy/collections/{ident}/task-sources/import": {
+      "post": {
+        "tags": [
+          "Toolbox execution",
+          "Energy post-processing"
+        ],
+        "summary": "Import Task",
+        "operationId": "import_task_api_v1_toolbox_postprocessing_energy_collections__ident__task_sources_import_post",
+        "parameters": [
+          {
+            "name": "ident",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ident"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/backend__toolbox__postprocessing__energy__schemas__TaskImport"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/postprocessing/energy/collections/{ident}/reuse": {
+      "post": {
+        "tags": [
+          "Toolbox execution",
+          "Energy post-processing"
+        ],
+        "summary": "Reuse",
+        "operationId": "reuse_api_v1_toolbox_postprocessing_energy_collections__ident__reuse_post",
+        "parameters": [
+          {
+            "name": "ident",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ident"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Reuse"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/catalysis/drafts/{draft_id}/workflow-binding": {
+      "post": {
+        "tags": [
+          "Toolbox execution",
+          "Catalysis preparation"
+        ],
+        "summary": "Bind Workflow",
+        "operationId": "bind_workflow_api_v1_toolbox_catalysis_drafts__draft_id__workflow_binding_post",
+        "parameters": [
+          {
+            "name": "draft_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Draft Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BindWorkflow"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowBindingResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/catalysis/drafts": {
+      "get": {
+        "tags": [
+          "Toolbox execution",
+          "Catalysis preparation"
+        ],
+        "summary": "List Drafts",
+        "operationId": "list_drafts_api_v1_toolbox_catalysis_drafts_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DraftListResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Toolbox execution",
+          "Catalysis preparation"
+        ],
+        "summary": "Create Draft",
+        "operationId": "create_draft_api_v1_toolbox_catalysis_drafts_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateDraft"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DraftResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/catalysis/drafts/{draft_id}": {
+      "get": {
+        "tags": [
+          "Toolbox execution",
+          "Catalysis preparation"
+        ],
+        "summary": "Get Draft",
+        "operationId": "get_draft_api_v1_toolbox_catalysis_drafts__draft_id__get",
+        "parameters": [
+          {
+            "name": "draft_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Draft Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DraftResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Toolbox execution",
+          "Catalysis preparation"
+        ],
+        "summary": "Patch Draft",
+        "operationId": "patch_draft_api_v1_toolbox_catalysis_drafts__draft_id__patch",
+        "parameters": [
+          {
+            "name": "draft_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Draft Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchDraft"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DraftResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/catalysis/drafts/{draft_id}/surfaces": {
+      "post": {
+        "tags": [
+          "Toolbox execution",
+          "Catalysis preparation"
+        ],
+        "summary": "Build Surfaces",
+        "operationId": "build_surfaces_api_v1_toolbox_catalysis_drafts__draft_id__surfaces_post",
+        "parameters": [
+          {
+            "name": "draft_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Draft Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BuildSurfaces"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DraftResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/catalysis/drafts/{draft_id}/constraints": {
+      "post": {
+        "tags": [
+          "Toolbox execution",
+          "Catalysis preparation"
+        ],
+        "summary": "Set Constraints",
+        "operationId": "set_constraints_api_v1_toolbox_catalysis_drafts__draft_id__constraints_post",
+        "parameters": [
+          {
+            "name": "draft_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Draft Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetConstraints"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DraftResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/catalysis/drafts/{draft_id}/geometry": {
+      "get": {
+        "tags": [
+          "Toolbox execution",
+          "Catalysis preparation"
+        ],
+        "summary": "Get Geometry",
+        "operationId": "get_geometry_api_v1_toolbox_catalysis_drafts__draft_id__geometry_get",
+        "parameters": [
+          {
+            "name": "draft_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Draft Id"
+            }
+          },
+          {
+            "name": "revision",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "Revision"
+            }
+          },
+          {
+            "name": "surface_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 80
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Surface Id"
+            }
+          },
+          {
+            "name": "candidate_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 80
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Candidate Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/catalysis/drafts/{draft_id}/export": {
+      "get": {
+        "tags": [
+          "Toolbox execution",
+          "Catalysis preparation"
+        ],
+        "summary": "Export Draft",
+        "operationId": "export_draft_api_v1_toolbox_catalysis_drafts__draft_id__export_get",
+        "parameters": [
+          {
+            "name": "draft_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Draft Id"
+            }
+          },
+          {
+            "name": "revision",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "Revision"
+            }
+          },
+          {
+            "name": "surface_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 80
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Surface Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/catalysis/drafts/{draft_id}/adsorbate": {
+      "post": {
+        "tags": [
+          "Toolbox execution",
+          "Catalysis preparation"
+        ],
+        "summary": "Set Adsorbate",
+        "operationId": "set_adsorbate_api_v1_toolbox_catalysis_drafts__draft_id__adsorbate_post",
+        "parameters": [
+          {
+            "name": "draft_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Draft Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetAdsorbate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DraftResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/catalysis/drafts/{draft_id}/adsorption/sites": {
+      "post": {
+        "tags": [
+          "Toolbox execution",
+          "Catalysis preparation"
+        ],
+        "summary": "Find Adsorption Sites",
+        "operationId": "find_adsorption_sites_api_v1_toolbox_catalysis_drafts__draft_id__adsorption_sites_post",
+        "parameters": [
+          {
+            "name": "draft_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Draft Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FindAdsorptionSites"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DraftResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/catalysis/drafts/{draft_id}/adsorption/candidates": {
+      "post": {
+        "tags": [
+          "Toolbox execution",
+          "Catalysis preparation"
+        ],
+        "summary": "Build Adsorption Candidates",
+        "operationId": "build_adsorption_candidates_api_v1_toolbox_catalysis_drafts__draft_id__adsorption_candidates_post",
+        "parameters": [
+          {
+            "name": "draft_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Draft Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BuildAdsorptionCandidates"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DraftResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/catalysis/drafts/{draft_id}/adsorption/selection": {
+      "patch": {
+        "tags": [
+          "Toolbox execution",
+          "Catalysis preparation"
+        ],
+        "summary": "Select Adsorption Candidates",
+        "operationId": "select_adsorption_candidates_api_v1_toolbox_catalysis_drafts__draft_id__adsorption_selection_patch",
+        "parameters": [
+          {
+            "name": "draft_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Draft Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SelectAdsorptionCandidates"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DraftResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/catalysis/drafts/{draft_id}/adsorption/export": {
+      "post": {
+        "tags": [
+          "Toolbox execution",
+          "Catalysis preparation"
+        ],
+        "summary": "Export Adsorption Candidates",
+        "operationId": "export_adsorption_candidates_api_v1_toolbox_catalysis_drafts__draft_id__adsorption_export_post",
+        "parameters": [
+          {
+            "name": "draft_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Draft Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExportAdsorptionCandidates"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
               }
             }
           },
@@ -3377,737 +6289,6 @@
           }
         }
       }
-    },
-    "/api/v1/toolbox/catalysis/drafts": {
-      "get": {
-        "tags": [
-          "Toolbox execution",
-          "Catalysis preparation"
-        ],
-        "summary": "List Drafts",
-        "operationId": "list_drafts_api_v1_toolbox_catalysis_drafts_get",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DraftListResponse"
-                }
-              }
-            }
-          }
-        }
-      },
-      "post": {
-        "tags": [
-          "Toolbox execution",
-          "Catalysis preparation"
-        ],
-        "summary": "Create Draft",
-        "operationId": "create_draft_api_v1_toolbox_catalysis_drafts_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CreateDraft"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DraftResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/toolbox/catalysis/drafts/{draft_id}": {
-      "get": {
-        "tags": [
-          "Toolbox execution",
-          "Catalysis preparation"
-        ],
-        "summary": "Get Draft",
-        "operationId": "get_draft_api_v1_toolbox_catalysis_drafts__draft_id__get",
-        "parameters": [
-          {
-            "name": "draft_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Draft Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DraftResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "patch": {
-        "tags": [
-          "Toolbox execution",
-          "Catalysis preparation"
-        ],
-        "summary": "Patch Draft",
-        "operationId": "patch_draft_api_v1_toolbox_catalysis_drafts__draft_id__patch",
-        "parameters": [
-          {
-            "name": "draft_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Draft Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PatchDraft"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DraftResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/toolbox/catalysis/drafts/{draft_id}/surfaces": {
-      "post": {
-        "tags": [
-          "Toolbox execution",
-          "Catalysis preparation"
-        ],
-        "summary": "Build Surfaces",
-        "operationId": "build_surfaces_api_v1_toolbox_catalysis_drafts__draft_id__surfaces_post",
-        "parameters": [
-          {
-            "name": "draft_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Draft Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/BuildSurfaces"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DraftResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/toolbox/catalysis/drafts/{draft_id}/constraints": {
-      "post": {
-        "tags": [
-          "Toolbox execution",
-          "Catalysis preparation"
-        ],
-        "summary": "Set Constraints",
-        "operationId": "set_constraints_api_v1_toolbox_catalysis_drafts__draft_id__constraints_post",
-        "parameters": [
-          {
-            "name": "draft_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Draft Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SetConstraints"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DraftResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/toolbox/catalysis/drafts/{draft_id}/geometry": {
-      "get": {
-        "tags": [
-          "Toolbox execution",
-          "Catalysis preparation"
-        ],
-        "summary": "Get Geometry",
-        "operationId": "get_geometry_api_v1_toolbox_catalysis_drafts__draft_id__geometry_get",
-        "parameters": [
-          {
-            "name": "draft_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Draft Id"
-            }
-          },
-          {
-            "name": "revision",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "title": "Revision"
-            }
-          },
-          {
-            "name": "surface_id",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "maxLength": 80
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Surface Id"
-            }
-          },
-          {
-            "name": "candidate_id",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "maxLength": 80
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Candidate Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/toolbox/catalysis/drafts/{draft_id}/export": {
-      "get": {
-        "tags": [
-          "Toolbox execution",
-          "Catalysis preparation"
-        ],
-        "summary": "Export Draft",
-        "operationId": "export_draft_api_v1_toolbox_catalysis_drafts__draft_id__export_get",
-        "parameters": [
-          {
-            "name": "draft_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Draft Id"
-            }
-          },
-          {
-            "name": "revision",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "title": "Revision"
-            }
-          },
-          {
-            "name": "surface_id",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "maxLength": 80
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Surface Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/toolbox/catalysis/drafts/{draft_id}/adsorbate": {
-      "post": {
-        "tags": [
-          "Toolbox execution",
-          "Catalysis preparation"
-        ],
-        "summary": "Set Adsorbate",
-        "operationId": "set_adsorbate_api_v1_toolbox_catalysis_drafts__draft_id__adsorbate_post",
-        "parameters": [
-          {
-            "name": "draft_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Draft Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SetAdsorbate"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DraftResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/toolbox/catalysis/drafts/{draft_id}/adsorption/sites": {
-      "post": {
-        "tags": [
-          "Toolbox execution",
-          "Catalysis preparation"
-        ],
-        "summary": "Find Adsorption Sites",
-        "operationId": "find_adsorption_sites_api_v1_toolbox_catalysis_drafts__draft_id__adsorption_sites_post",
-        "parameters": [
-          {
-            "name": "draft_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Draft Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/FindAdsorptionSites"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DraftResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/toolbox/catalysis/drafts/{draft_id}/adsorption/candidates": {
-      "post": {
-        "tags": [
-          "Toolbox execution",
-          "Catalysis preparation"
-        ],
-        "summary": "Build Adsorption Candidates",
-        "operationId": "build_adsorption_candidates_api_v1_toolbox_catalysis_drafts__draft_id__adsorption_candidates_post",
-        "parameters": [
-          {
-            "name": "draft_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Draft Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/BuildAdsorptionCandidates"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DraftResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/toolbox/catalysis/drafts/{draft_id}/adsorption/selection": {
-      "patch": {
-        "tags": [
-          "Toolbox execution",
-          "Catalysis preparation"
-        ],
-        "summary": "Select Adsorption Candidates",
-        "operationId": "select_adsorption_candidates_api_v1_toolbox_catalysis_drafts__draft_id__adsorption_selection_patch",
-        "parameters": [
-          {
-            "name": "draft_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Draft Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SelectAdsorptionCandidates"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DraftResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/toolbox/catalysis/drafts/{draft_id}/adsorption/export": {
-      "post": {
-        "tags": [
-          "Toolbox execution",
-          "Catalysis preparation"
-        ],
-        "summary": "Export Adsorption Candidates",
-        "operationId": "export_adsorption_candidates_api_v1_toolbox_catalysis_drafts__draft_id__adsorption_export_post",
-        "parameters": [
-          {
-            "name": "draft_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Draft Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ExportAdsorptionCandidates"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/toolbox/catalysis/drafts/{draft_id}/workflow-binding": {
-      "post": {
-        "tags": [
-          "Toolbox execution",
-          "Catalysis preparation"
-        ],
-        "summary": "Bind Workflow",
-        "operationId": "bind_workflow_api_v1_toolbox_catalysis_drafts__draft_id__workflow_binding_post",
-        "parameters": [
-          {
-            "name": "draft_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Draft Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/BindWorkflow"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/WorkflowBindingResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
     }
   },
   "components": {
@@ -4795,6 +6976,53 @@
         ],
         "title": "AtomSnapshot"
       },
+      "AxisSettings": {
+        "properties": {
+          "version": {
+            "type": "string",
+            "const": "pp.axes.v1",
+            "title": "Version"
+          },
+          "x_min": {
+            "type": "number",
+            "title": "X Min"
+          },
+          "x_max": {
+            "type": "number",
+            "title": "X Max"
+          },
+          "x_interval": {
+            "type": "number",
+            "exclusiveMinimum": 0.0,
+            "title": "X Interval"
+          },
+          "y_min": {
+            "type": "number",
+            "title": "Y Min"
+          },
+          "y_max": {
+            "type": "number",
+            "title": "Y Max"
+          },
+          "y_interval": {
+            "type": "number",
+            "exclusiveMinimum": 0.0,
+            "title": "Y Interval"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "version",
+          "x_min",
+          "x_max",
+          "x_interval",
+          "y_min",
+          "y_max",
+          "y_interval"
+        ],
+        "title": "AxisSettings"
+      },
       "BandGapRange": {
         "properties": {
           "min": {
@@ -4825,6 +7053,47 @@
         "additionalProperties": false,
         "type": "object",
         "title": "BandGapRange"
+      },
+      "BindWorkflow": {
+        "properties": {
+          "revision": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Revision"
+          },
+          "surface_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 80,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Surface Id"
+          },
+          "candidate_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 80,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidate Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "revision"
+        ],
+        "title": "BindWorkflow"
       },
       "Body_upload_api_v1_diagnosis_upload_post": {
         "properties": {
@@ -4995,6 +7264,179 @@
         ],
         "title": "CandidateValidation"
       },
+      "CatalysisBinding": {
+        "properties": {
+          "schema_version": {
+            "type": "integer",
+            "const": 1,
+            "title": "Schema Version",
+            "default": 1
+          },
+          "binding_id": {
+            "type": "string",
+            "title": "Binding Id"
+          },
+          "draft_id": {
+            "type": "string",
+            "title": "Draft Id"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Revision"
+          },
+          "model_kind": {
+            "type": "string",
+            "enum": [
+              "clean_surface",
+              "adsorption_candidate"
+            ],
+            "title": "Model Kind"
+          },
+          "surface_id": {
+            "type": "string",
+            "title": "Surface Id"
+          },
+          "candidate_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidate Id"
+          },
+          "snapshot_id": {
+            "type": "string",
+            "title": "Snapshot Id"
+          },
+          "snapshot_sha256": {
+            "type": "string",
+            "title": "Snapshot Sha256"
+          },
+          "parent_clean_snapshot_id": {
+            "type": "string",
+            "title": "Parent Clean Snapshot Id"
+          },
+          "parent_clean_snapshot_sha256": {
+            "type": "string",
+            "title": "Parent Clean Snapshot Sha256"
+          },
+          "poscar_sha256": {
+            "type": "string",
+            "title": "Poscar Sha256"
+          },
+          "poscar_row_mapping": {
+            "items": {
+              "$ref": "#/components/schemas/PoscarRowMapping"
+            },
+            "type": "array",
+            "title": "Poscar Row Mapping"
+          },
+          "selective_flags_basis": {
+            "type": "string",
+            "const": "direct_lattice_vectors",
+            "title": "Selective Flags Basis",
+            "default": "direct_lattice_vectors"
+          },
+          "source": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Source"
+          },
+          "parameters": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parameters"
+          },
+          "surface": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Surface"
+          },
+          "transform": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Transform"
+          },
+          "adsorbate": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Adsorbate"
+          },
+          "candidate": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidate"
+          },
+          "snapshot": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Snapshot"
+          },
+          "parent_clean_snapshot": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Parent Clean Snapshot"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Warnings"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "binding_id",
+          "draft_id",
+          "revision",
+          "model_kind",
+          "surface_id",
+          "candidate_id",
+          "snapshot_id",
+          "snapshot_sha256",
+          "parent_clean_snapshot_id",
+          "parent_clean_snapshot_sha256",
+          "poscar_sha256",
+          "poscar_row_mapping",
+          "source",
+          "parameters",
+          "surface",
+          "transform",
+          "adsorbate",
+          "candidate",
+          "snapshot",
+          "parent_clean_snapshot",
+          "warnings"
+        ],
+        "title": "CatalysisBinding"
+      },
       "ChatHistoryRequest": {
         "properties": {
           "messages": {
@@ -5047,6 +7489,49 @@
           "message"
         ],
         "title": "ChatRequest"
+      },
+      "Configuration": {
+        "properties": {
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Expected Revision"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 120
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "samples": {
+            "items": {
+              "$ref": "#/components/schemas/SampleConfirmation"
+            },
+            "type": "array",
+            "maxItems": 100,
+            "title": "Samples"
+          },
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/Group"
+            },
+            "type": "array",
+            "maxItems": 100,
+            "title": "Groups"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "expected_revision"
+        ],
+        "title": "Configuration"
       },
       "CreateDraft": {
         "properties": {
@@ -5391,6 +7876,46 @@
         ],
         "title": "ElectronicType"
       },
+      "EnergyFields": {
+        "properties": {
+          "sigma_to_zero_ev": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sigma To Zero Ev"
+          },
+          "without_entropy_ev": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Without Entropy Ev"
+          },
+          "free_energy_toten_ev": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Free Energy Toten Ev"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "EnergyFields"
+      },
       "ErrorBody": {
         "properties": {
           "code": {
@@ -5505,6 +8030,103 @@
           "revision"
         ],
         "title": "FindAdsorptionSites"
+      },
+      "Group": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "maxLength": 80,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "adsorption",
+              "formation"
+            ],
+            "title": "Kind"
+          },
+          "energy_basis": {
+            "type": "string",
+            "enum": [
+              "sigma_to_zero_ev",
+              "without_entropy_ev",
+              "free_energy_toten_ev"
+            ],
+            "title": "Energy Basis"
+          },
+          "basis_confirmed": {
+            "type": "boolean",
+            "title": "Basis Confirmed",
+            "default": false
+          },
+          "clean_sample_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Clean Sample Id"
+          },
+          "adsorbate_sample_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Adsorbate Sample Id"
+          },
+          "reference_units": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Reference Units",
+            "default": 1
+          },
+          "element_references": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Element References"
+          },
+          "targets": {
+            "items": {
+              "$ref": "#/components/schemas/Target"
+            },
+            "type": "array",
+            "maxItems": 100,
+            "title": "Targets"
+          },
+          "reference_note": {
+            "type": "string",
+            "maxLength": 2000,
+            "title": "Reference Note",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "kind",
+          "energy_basis"
+        ],
+        "title": "Group"
       },
       "HTTPValidationError": {
         "properties": {
@@ -5758,6 +8380,62 @@
         "type": "object",
         "title": "LlmTestRequest"
       },
+      "Manual": {
+        "properties": {
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Expected Revision"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "composition": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Composition"
+          },
+          "energy_fields": {
+            "$ref": "#/components/schemas/EnergyFields"
+          },
+          "energy_basis": {
+            "type": "string",
+            "enum": [
+              "sigma_to_zero_ev",
+              "without_entropy_ev",
+              "free_energy_toten_ev"
+            ],
+            "title": "Energy Basis"
+          },
+          "unit": {
+            "type": "string",
+            "const": "eV",
+            "title": "Unit"
+          },
+          "reference_note": {
+            "type": "string",
+            "maxLength": 2000,
+            "title": "Reference Note",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "expected_revision",
+          "name",
+          "composition",
+          "energy_fields",
+          "energy_basis",
+          "unit"
+        ],
+        "title": "Manual"
+      },
       "ManualSite": {
         "properties": {
           "label": {
@@ -5893,6 +8571,99 @@
         "additionalProperties": false,
         "type": "object",
         "title": "MaterialCriteria"
+      },
+      "Override": {
+        "properties": {
+          "composition": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "integer"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Composition"
+          },
+          "energy_fields": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EnergyFields"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "energy_basis": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "sigma_to_zero_ev",
+                  "without_entropy_ev",
+                  "free_energy_toten_ev"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Energy Basis"
+          },
+          "unit": {
+            "type": "string",
+            "const": "eV",
+            "title": "Unit"
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Note"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "unit",
+          "note"
+        ],
+        "title": "Override"
+      },
+      "Palette": {
+        "properties": {
+          "preset": {
+            "type": "string",
+            "enum": [
+              "scientific",
+              "blue_orange",
+              "muted",
+              "print",
+              "custom"
+            ],
+            "title": "Preset"
+          },
+          "colors": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 16,
+            "minItems": 2,
+            "title": "Colors"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "preset",
+          "colors"
+        ],
+        "title": "Palette"
       },
       "ParameterPatch": {
         "properties": {
@@ -6115,6 +8886,60 @@
         "type": "object",
         "title": "Placement"
       },
+      "PoscarRowMapping": {
+        "properties": {
+          "poscar_row": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Poscar Row"
+          },
+          "snapshot_index": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Snapshot Index"
+          },
+          "atom_id": {
+            "type": "string",
+            "title": "Atom Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "poscar_row",
+          "snapshot_index",
+          "atom_id"
+        ],
+        "title": "PoscarRowMapping"
+      },
+      "PotcarConfig": {
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "omit",
+              "include"
+            ],
+            "title": "Mode",
+            "default": "omit"
+          },
+          "artifact_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[0-9a-f]{32}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Artifact Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "PotcarConfig"
+      },
       "PrecisionLevel": {
         "type": "string",
         "enum": [
@@ -6123,6 +8948,46 @@
           "high"
         ],
         "title": "PrecisionLevel"
+      },
+      "Reuse": {
+        "properties": {
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Expected Revision"
+          },
+          "source_collection_id": {
+            "type": "string",
+            "title": "Source Collection Id"
+          },
+          "sample_id": {
+            "type": "string",
+            "title": "Sample Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "expected_revision",
+          "source_collection_id",
+          "sample_id"
+        ],
+        "title": "Reuse"
+      },
+      "Revision": {
+        "properties": {
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Expected Revision"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "expected_revision"
+        ],
+        "title": "Revision"
       },
       "RunRequest": {
         "properties": {
@@ -6180,6 +9045,95 @@
           "diagnosis_id"
         ],
         "title": "RunRequest"
+      },
+      "SampleConfirmation": {
+        "properties": {
+          "sample_id": {
+            "type": "string",
+            "title": "Sample Id"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 256,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "role": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "clean_slab",
+                  "adsorbate",
+                  "adsorbed",
+                  "material",
+                  "element_reference"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Role"
+          },
+          "included": {
+            "type": "boolean",
+            "title": "Included",
+            "default": false
+          },
+          "confirmed": {
+            "type": "boolean",
+            "title": "Confirmed",
+            "default": false
+          },
+          "accepted_warnings": {
+            "type": "boolean",
+            "title": "Accepted Warnings",
+            "default": false
+          },
+          "override": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Override"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "sample_id"
+        ],
+        "title": "SampleConfirmation"
+      },
+      "SavePreferences": {
+        "properties": {
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Expected Revision"
+          },
+          "palette": {
+            "$ref": "#/components/schemas/Palette"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "expected_revision",
+          "palette"
+        ],
+        "title": "SavePreferences"
       },
       "SchedulerSettings": {
         "properties": {
@@ -7091,507 +10045,6 @@
         "type": "object",
         "title": "SurfaceParams"
       },
-      "TaskType": {
-        "type": "string",
-        "enum": [
-          "relax",
-          "static",
-          "dos",
-          "band"
-        ],
-        "title": "TaskType"
-      },
-      "ValidationError": {
-        "properties": {
-          "loc": {
-            "items": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "integer"
-                }
-              ]
-            },
-            "type": "array",
-            "title": "Location"
-          },
-          "msg": {
-            "type": "string",
-            "title": "Message"
-          },
-          "type": {
-            "type": "string",
-            "title": "Error Type"
-          },
-          "input": {
-            "title": "Input"
-          },
-          "ctx": {
-            "type": "object",
-            "title": "Context"
-          }
-        },
-        "type": "object",
-        "required": [
-          "loc",
-          "msg",
-          "type"
-        ],
-        "title": "ValidationError"
-      },
-      "WorkflowApiRequest": {
-        "properties": {
-          "workflow_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Workflow Id"
-          },
-          "diagnosis_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Diagnosis Id"
-          },
-          "structure_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Structure Id"
-          },
-          "goals": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Goals"
-          },
-          "assumptions": {
-            "anyOf": [
-              {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Assumptions"
-          },
-          "patches": {
-            "anyOf": [
-              {
-                "items": {
-                  "$ref": "#/components/schemas/ParameterPatch"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Patches"
-          },
-          "workflow": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/WorkflowConfig"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "type": "object",
-        "title": "WorkflowApiRequest"
-      },
-      "WorkflowConfig": {
-        "properties": {
-          "workflow_id": {
-            "type": "string",
-            "title": "Workflow Id",
-            "default": "wf_local"
-          },
-          "sample_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Sample Name"
-          },
-          "structure": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/StructureContext"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "requested_tasks": {
-            "items": {
-              "$ref": "#/components/schemas/TaskType"
-            },
-            "type": "array",
-            "title": "Requested Tasks"
-          },
-          "goal_text": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Goal Text"
-          },
-          "material_assumptions": {
-            "$ref": "#/components/schemas/MaterialAssumptions"
-          },
-          "precision": {
-            "$ref": "#/components/schemas/PrecisionLevel",
-            "default": "standard"
-          },
-          "dftu": {
-            "$ref": "#/components/schemas/DftuSettings"
-          },
-          "scheduler": {
-            "$ref": "#/components/schemas/SchedulerSettings"
-          },
-          "patches": {
-            "items": {
-              "$ref": "#/components/schemas/ParameterPatch"
-            },
-            "type": "array",
-            "title": "Patches"
-          },
-          "element_initial_moments": {
-            "additionalProperties": {
-              "type": "number"
-            },
-            "type": "object",
-            "title": "Element Initial Moments"
-          },
-          "enable_band_workflow": {
-            "type": "boolean",
-            "title": "Enable Band Workflow",
-            "default": false
-          },
-          "confirm": {
-            "type": "boolean",
-            "title": "Confirm",
-            "default": true
-          }
-        },
-        "type": "object",
-        "title": "WorkflowConfig",
-        "description": "WorkflowGenerateRequest relaxed request mirror.\n\n``structure`` is optional so clients may rely on ``structure_id`` /\n``diagnosis_id``; the resolver fills it in before building the strict\nrequest."
-      },
-      "BindWorkflow": {
-        "properties": {
-          "revision": {
-            "type": "integer",
-            "minimum": 1.0,
-            "title": "Revision"
-          },
-          "surface_id": {
-            "anyOf": [
-              {
-                "type": "string",
-                "maxLength": 80,
-                "minLength": 1
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Surface Id"
-          },
-          "candidate_id": {
-            "anyOf": [
-              {
-                "type": "string",
-                "maxLength": 80,
-                "minLength": 1
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Candidate Id"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "revision"
-        ],
-        "title": "BindWorkflow"
-      },
-      "WorkflowBindingResponse": {
-        "properties": {
-          "mode": {
-            "type": "string",
-            "const": "toolbox",
-            "title": "Mode",
-            "default": "toolbox"
-          },
-          "structure_id": {
-            "type": "string",
-            "title": "Structure Id"
-          },
-          "summary": {
-            "additionalProperties": true,
-            "type": "object",
-            "title": "Summary"
-          },
-          "binding": {
-            "$ref": "#/components/schemas/CatalysisBinding"
-          },
-          "surface_policy": {
-            "$ref": "#/components/schemas/SurfacePolicy"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "structure_id",
-          "summary",
-          "binding",
-          "surface_policy"
-        ],
-        "title": "WorkflowBindingResponse"
-      },
-      "CatalysisBinding": {
-        "properties": {
-          "schema_version": {
-            "type": "integer",
-            "const": 1,
-            "title": "Schema Version",
-            "default": 1
-          },
-          "binding_id": {
-            "type": "string",
-            "title": "Binding Id"
-          },
-          "draft_id": {
-            "type": "string",
-            "title": "Draft Id"
-          },
-          "revision": {
-            "type": "integer",
-            "minimum": 1.0,
-            "title": "Revision"
-          },
-          "model_kind": {
-            "type": "string",
-            "enum": [
-              "clean_surface",
-              "adsorption_candidate"
-            ],
-            "title": "Model Kind"
-          },
-          "surface_id": {
-            "type": "string",
-            "title": "Surface Id"
-          },
-          "candidate_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Candidate Id"
-          },
-          "snapshot_id": {
-            "type": "string",
-            "title": "Snapshot Id"
-          },
-          "snapshot_sha256": {
-            "type": "string",
-            "title": "Snapshot Sha256"
-          },
-          "parent_clean_snapshot_id": {
-            "type": "string",
-            "title": "Parent Clean Snapshot Id"
-          },
-          "parent_clean_snapshot_sha256": {
-            "type": "string",
-            "title": "Parent Clean Snapshot Sha256"
-          },
-          "poscar_sha256": {
-            "type": "string",
-            "title": "Poscar Sha256"
-          },
-          "poscar_row_mapping": {
-            "items": {
-              "$ref": "#/components/schemas/PoscarRowMapping"
-            },
-            "type": "array",
-            "title": "Poscar Row Mapping"
-          },
-          "selective_flags_basis": {
-            "type": "string",
-            "const": "direct_lattice_vectors",
-            "title": "Selective Flags Basis",
-            "default": "direct_lattice_vectors"
-          },
-          "source": {
-            "additionalProperties": true,
-            "type": "object",
-            "title": "Source"
-          },
-          "parameters": {
-            "anyOf": [
-              {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Parameters"
-          },
-          "surface": {
-            "additionalProperties": true,
-            "type": "object",
-            "title": "Surface"
-          },
-          "transform": {
-            "additionalProperties": true,
-            "type": "object",
-            "title": "Transform"
-          },
-          "adsorbate": {
-            "anyOf": [
-              {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Adsorbate"
-          },
-          "candidate": {
-            "anyOf": [
-              {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Candidate"
-          },
-          "snapshot": {
-            "additionalProperties": true,
-            "type": "object",
-            "title": "Snapshot"
-          },
-          "parent_clean_snapshot": {
-            "additionalProperties": true,
-            "type": "object",
-            "title": "Parent Clean Snapshot"
-          },
-          "warnings": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Warnings"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "binding_id",
-          "draft_id",
-          "revision",
-          "model_kind",
-          "surface_id",
-          "candidate_id",
-          "snapshot_id",
-          "snapshot_sha256",
-          "parent_clean_snapshot_id",
-          "parent_clean_snapshot_sha256",
-          "poscar_sha256",
-          "poscar_row_mapping",
-          "source",
-          "parameters",
-          "surface",
-          "transform",
-          "adsorbate",
-          "candidate",
-          "snapshot",
-          "parent_clean_snapshot",
-          "warnings"
-        ],
-        "title": "CatalysisBinding"
-      },
-      "PoscarRowMapping": {
-        "properties": {
-          "poscar_row": {
-            "type": "integer",
-            "minimum": 1.0,
-            "title": "Poscar Row"
-          },
-          "snapshot_index": {
-            "type": "integer",
-            "minimum": 0.0,
-            "title": "Snapshot Index"
-          },
-          "atom_id": {
-            "type": "string",
-            "title": "Atom Id"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "poscar_row",
-          "snapshot_index",
-          "atom_id"
-        ],
-        "title": "PoscarRowMapping"
-      },
       "SurfacePolicy": {
         "properties": {
           "policy_id": {
@@ -7678,6 +10131,645 @@
           "warnings"
         ],
         "title": "SurfacePolicy"
+      },
+      "Target": {
+        "properties": {
+          "sample_id": {
+            "type": "string",
+            "title": "Sample Id"
+          },
+          "adsorbate_count": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Adsorbate Count",
+            "default": 1
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "sample_id"
+        ],
+        "title": "Target"
+      },
+      "TaskType": {
+        "type": "string",
+        "enum": [
+          "relax",
+          "static",
+          "dos",
+          "band"
+        ],
+        "title": "TaskType"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      },
+      "View": {
+        "properties": {
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Expected Revision"
+          },
+          "view": {
+            "$ref": "#/components/schemas/ViewSettings"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "expected_revision",
+          "view"
+        ],
+        "title": "View"
+      },
+      "ViewSettings": {
+        "properties": {
+          "reference": {
+            "type": "string",
+            "enum": [
+              "raw",
+              "fermi",
+              "custom",
+              "legacy_absolute"
+            ],
+            "title": "Reference"
+          },
+          "reference_ev": {
+            "type": "number",
+            "title": "Reference Ev"
+          },
+          "mirror_down": {
+            "type": "boolean",
+            "title": "Mirror Down"
+          },
+          "atoms": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "maxItems": 10000,
+            "title": "Atoms"
+          },
+          "orbitals": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 50,
+            "title": "Orbitals"
+          },
+          "band_start": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Band Start"
+          },
+          "band_end": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Band End"
+          },
+          "axes": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AxisSettings"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "pp.view.v2"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          },
+          "energy_min_ev": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Energy Min Ev"
+          },
+          "energy_max_ev": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Energy Max Ev"
+          },
+          "elements": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 118,
+            "title": "Elements"
+          },
+          "projection_grouping": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "element",
+                  "combined"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Projection Grouping"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "reference",
+          "reference_ev",
+          "mirror_down",
+          "atoms",
+          "orbitals",
+          "band_start",
+          "band_end"
+        ],
+        "title": "ViewSettings"
+      },
+      "WorkflowApiRequest": {
+        "properties": {
+          "workflow_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workflow Id"
+          },
+          "diagnosis_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Diagnosis Id"
+          },
+          "structure_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Structure Id"
+          },
+          "goals": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Goals"
+          },
+          "assumptions": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assumptions"
+          },
+          "patches": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ParameterPatch"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Patches"
+          },
+          "workflow": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WorkflowConfig"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "potcar": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PotcarConfig"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "WorkflowApiRequest"
+      },
+      "WorkflowBindingResponse": {
+        "properties": {
+          "mode": {
+            "type": "string",
+            "const": "toolbox",
+            "title": "Mode",
+            "default": "toolbox"
+          },
+          "structure_id": {
+            "type": "string",
+            "title": "Structure Id"
+          },
+          "summary": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Summary"
+          },
+          "binding": {
+            "$ref": "#/components/schemas/CatalysisBinding"
+          },
+          "surface_policy": {
+            "$ref": "#/components/schemas/SurfacePolicy"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "structure_id",
+          "summary",
+          "binding",
+          "surface_policy"
+        ],
+        "title": "WorkflowBindingResponse"
+      },
+      "WorkflowConfig": {
+        "properties": {
+          "workflow_id": {
+            "type": "string",
+            "title": "Workflow Id",
+            "default": "wf_local"
+          },
+          "sample_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sample Name"
+          },
+          "structure": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StructureContext"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "requested_tasks": {
+            "items": {
+              "$ref": "#/components/schemas/TaskType"
+            },
+            "type": "array",
+            "title": "Requested Tasks"
+          },
+          "goal_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Goal Text"
+          },
+          "material_assumptions": {
+            "$ref": "#/components/schemas/MaterialAssumptions"
+          },
+          "precision": {
+            "$ref": "#/components/schemas/PrecisionLevel",
+            "default": "standard"
+          },
+          "dftu": {
+            "$ref": "#/components/schemas/DftuSettings"
+          },
+          "scheduler": {
+            "$ref": "#/components/schemas/SchedulerSettings"
+          },
+          "patches": {
+            "items": {
+              "$ref": "#/components/schemas/ParameterPatch"
+            },
+            "type": "array",
+            "title": "Patches"
+          },
+          "element_initial_moments": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Element Initial Moments"
+          },
+          "enable_band_workflow": {
+            "type": "boolean",
+            "title": "Enable Band Workflow",
+            "default": false
+          },
+          "confirm": {
+            "type": "boolean",
+            "title": "Confirm",
+            "default": true
+          },
+          "potcar": {
+            "$ref": "#/components/schemas/PotcarConfig"
+          }
+        },
+        "type": "object",
+        "title": "WorkflowConfig",
+        "description": "WorkflowGenerateRequest relaxed request mirror.\n\n``structure`` is optional so clients may rely on ``structure_id`` /\n``diagnosis_id``; the resolver fills it in before building the strict\nrequest."
+      },
+      "backend__toolbox__postprocessing__api__Create": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "dos",
+              "band"
+            ],
+            "title": "Kind"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 120,
+            "title": "Title",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "kind"
+        ],
+        "title": "Create"
+      },
+      "backend__toolbox__postprocessing__api__TaskImport": {
+        "properties": {
+          "preview_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 40
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preview Id"
+          },
+          "files": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array",
+                "maxItems": 7
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Files"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 120,
+            "title": "Title",
+            "default": ""
+          },
+          "reuse_dataset_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 40
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reuse Dataset Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "TaskImport"
+      },
+      "backend__toolbox__postprocessing__api__TaskPreview": {
+        "properties": {
+          "project_id": {
+            "type": "string",
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Project Id"
+          },
+          "task_id": {
+            "type": "string",
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Task Id"
+          },
+          "job_key": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Job Key"
+          },
+          "attempt_id": {
+            "type": "string",
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Attempt Id"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "dos",
+              "band"
+            ],
+            "title": "Kind"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "project_id",
+          "task_id",
+          "job_key",
+          "attempt_id",
+          "kind"
+        ],
+        "title": "TaskPreview"
+      },
+      "backend__toolbox__postprocessing__energy__schemas__Create": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "maxLength": 120,
+            "title": "Title",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "Create"
+      },
+      "backend__toolbox__postprocessing__energy__schemas__TaskImport": {
+        "properties": {
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Expected Revision"
+          },
+          "preview_id": {
+            "type": "string",
+            "title": "Preview Id"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Name",
+            "default": "OUTCAR"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "expected_revision",
+          "preview_id"
+        ],
+        "title": "TaskImport"
+      },
+      "backend__toolbox__postprocessing__energy__schemas__TaskPreview": {
+        "properties": {
+          "project_id": {
+            "type": "string",
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Project Id"
+          },
+          "task_id": {
+            "type": "string",
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Task Id"
+          },
+          "job_key": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Job Key"
+          },
+          "attempt_id": {
+            "type": "string",
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Attempt Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "project_id",
+          "task_id",
+          "job_key",
+          "attempt_id"
+        ],
+        "title": "TaskPreview"
       }
     }
   }

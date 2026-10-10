@@ -26,6 +26,7 @@ RESULT_LIMIT = 32 * 1024 * 1024
 RESULT_CHUNK = 32 * 1024
 RESULT_NAMES = frozenset({"OUTCAR", "OSZICAR", "CONTCAR"})
 PP_NAMES = frozenset({"vasprun.xml", "DOSCAR", "EIGENVAL", "KPOINTS", "POSCAR", "CONTCAR", "INCAR"})
+ENERGY_NAMES = frozenset({"OUTCAR"})
 PP_LIMIT = 64 * 1024 * 1024
 CHUNK = 1024 * 1024
 RESERVED = ".vasp-doctor-"
@@ -382,7 +383,7 @@ class ResultReader:
             self.directory_fd = None
 
 
-def pp_preview(root):
+def pp_preview(root, *, allowed_names=PP_NAMES):
     """Only fixed PP names, metadata only, no links or special-file reads."""
     require(isinstance(root, dict) and root.get("resolution_chain") == []
             and root.get("requested_path") == root.get("canonical_path"),
@@ -393,7 +394,7 @@ def pp_preview(root):
         require(identity_matches(metadata(os.fstat(fd)), root["identity"], stable=True),
                 "ROOT_CHANGED", "Post-processing directory changed")
         files = []
-        for name in sorted(PP_NAMES):
+        for name in sorted(allowed_names):
             try:
                 info = metadata(os.stat(name, dir_fd=fd, follow_symlinks=False))
             except FileNotFoundError:
@@ -426,6 +427,10 @@ class PPReader(ResultReader):
         except BaseException:
             self.close()
             raise
+
+
+class EnergyReader(PPReader):
+    allowed_names = ENERGY_NAMES
 
 
 def rename_noreplace(parent_fd, source, target):
@@ -1058,7 +1063,9 @@ def main():
                 require(isinstance(request, dict) and isinstance(request.get("op"), str))
                 op = request["op"]
                 if result_reader is not None:
-                    require(op in ({"pp_next", "pp_abort"} if pp_session else {"result_next", "result_abort"}), "PROTOCOL_ERROR",
+                    continuation = ({"energy_next", "energy_abort"} if pp_session == 'energy' else
+                                    {"pp_next", "pp_abort"} if pp_session else {"result_next", "result_abort"})
+                    require(op in continuation, "PROTOCOL_ERROR",
                             "Only result continuation or abort is accepted")
                 if op == "probe" and transaction is None:
                     require(set(request) == {"op"})
@@ -1083,16 +1090,17 @@ def main():
                     require(request["max_bytes"] == RESULT_LIMIT)
                     result_reader = ResultReader(request["root"], request["name"])
                     _reply({"state": "ready", "size": result_reader.info["size"]})
-                elif op == "pp_preview" and transaction is None and result_reader is None:
+                elif op in {"pp_preview", "energy_preview"} and transaction is None and result_reader is None:
                     require(set(request) == {"op", "root"})
-                    _reply(pp_preview(request["root"]))
-                elif op == "pp_begin" and transaction is None and result_reader is None:
+                    _reply(pp_preview(request["root"], allowed_names=ENERGY_NAMES if op == 'energy_preview' else PP_NAMES))
+                elif op in {"pp_begin", "energy_begin"} and transaction is None and result_reader is None:
                     require(set(request) == {"op", "root", "name", "metadata", "max_bytes"})
                     require(request["max_bytes"] == PP_LIMIT)
-                    result_reader = PPReader(request["root"], request["name"], request["metadata"])
-                    pp_session = True
+                    reader_class = EnergyReader if op == 'energy_begin' else PPReader
+                    result_reader = reader_class(request["root"], request["name"], request["metadata"])
+                    pp_session = 'energy' if op == 'energy_begin' else True
                     _reply({"state": "ready", "size": result_reader.info["size"]})
-                elif op in {"result_next", "pp_next"} and transaction is None and result_reader is not None:
+                elif op in {"result_next", "pp_next", "energy_next"} and transaction is None and result_reader is not None:
                     require(set(request) == {"op"})
                     result = result_reader.next()
                     _reply(result)
@@ -1100,7 +1108,7 @@ def main():
                         result_reader.close()
                         result_reader = None
                         break
-                elif op in {"result_abort", "pp_abort"} and transaction is None and result_reader is not None:
+                elif op in {"result_abort", "pp_abort", "energy_abort"} and transaction is None and result_reader is not None:
                     require(set(request) == {"op"})
                     result_reader.close()
                     result_reader = None

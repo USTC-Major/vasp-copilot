@@ -82,6 +82,8 @@ async def lifespan(_app: FastAPI):
                 pass
         if hasattr(_app.state, 'postprocessing'):
             _app.state.postprocessing.close()
+        if hasattr(_app.state, 'energy'):
+            _app.state.energy.close()
         _app.state.toolbox.close()
 
 

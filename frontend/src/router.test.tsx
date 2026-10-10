@@ -22,6 +22,13 @@ const renderRoute = (path: string) => {
 };
 
 describe('路由懒加载', () => {
+  it('基础能量可从独立工具箱入口进入', async () => {
+    server.use(http.get('/api/v1/toolbox/postprocessing/energy/collections', () => HttpResponse.json({ mode: 'toolbox', collections: [] })));
+    renderRoute('/toolbox/postprocessing/energy');
+    expect(await screen.findByRole('heading', { name: '基础能量' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '基础能量' })).toHaveAttribute('aria-current', 'page');
+    expect(await screen.findByText('尚无能量比较集')).toBeInTheDocument();
+  });
   it('表面构建页可从工具箱独立进入', async () => {
     server.use(http.get('/api/v1/toolbox/catalysis/drafts', () => HttpResponse.json({ mode: 'toolbox', drafts: [] })));
     renderRoute('/toolbox/surface-builder');
