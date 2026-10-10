@@ -202,3 +202,24 @@ it('cancels a late ZIP download when input changes while export is pending', asy
   expect(createUrl).not.toHaveBeenCalled();
   vi.unstubAllGlobals();
 });
+
+it('synchronizes clean parent surface fields after an adsorption conflict refresh and keeps pending adsorption input', async () => {
+  vi.spyOn(catalysisApi, 'adsorbate').mockRejectedValueOnce(new ApiError('CAT_REVISION_CONFLICT', '其他窗口更新了终止面', false, 409));
+  mount(); await screen.findByTestId('cat-geometry');
+  fireEvent.change(screen.getByLabelText('初始锚点高度 (Å)'), { target: { value: '3.4' } });
+  fireEvent.click(screen.getByRole('button', { name: '应用并保存吸附物' })); await screen.findByText('草稿 revision 已变化，吸附输入已保留');
+  doc = { ...doc, revision: 8, name: '另一窗口名称', active_surface_id: 'surface-2', surfaces: doc.surfaces.map(s => s.surface_id === 'surface-2' ? { ...s, surface: { ...s.surface, bottom_fixed_layers: 1, reset_existing: true } } : s) };
+  fireEvent.click(screen.getByRole('button', { name: '保留输入并读取最新草稿' }));
+  await screen.findByText(/已读取最新草稿并保留吸附输入/);
+  expect(screen.getByLabelText('草稿名称')).toHaveValue('另一窗口名称'); expect(screen.getByLabelText('底部固定层数')).toHaveValue('1');
+  expect(screen.getByRole('checkbox', { name: '先释放所有已有约束，再应用本页固定层和例外' })).toBeChecked();
+  expect(screen.getByLabelText('初始锚点高度 (Å)')).toHaveValue('3.4'); expect(screen.getByRole('button', { name: '应用并保存吸附物' })).toBeEnabled();
+});
+
+it('retains a parent name edit typed during an adsorption save response', async () => {
+  const pending = deferred<{ draft: CatalysisDraft }>(); vi.spyOn(catalysisApi, 'adsorbate').mockImplementationOnce(() => pending.promise);
+  mount(); await screen.findByTestId('cat-geometry'); fireEvent.click(screen.getByRole('button', { name: '应用并保存吸附物' }));
+  fireEvent.change(screen.getByLabelText('草稿名称'), { target: { value: '期间的新名称' } });
+  await act(async () => pending.resolve({ draft: { ...doc, revision: 4 } }));
+  expect(screen.getByLabelText('草稿名称')).toHaveValue('期间的新名称'); expect(screen.getByRole('button', { name: '导出 POSCAR + metadata ZIP' })).toBeDisabled();
+});

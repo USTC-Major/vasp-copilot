@@ -11,10 +11,12 @@ import uuid
 import zipfile
 from pathlib import Path
 
+import numpy as np
 from numpy.linalg import LinAlgError
+from pymatgen.core import Lattice
 
 from ..contracts import ToolboxError
-from . import science
+from . import science, adsorption
 from .schemas import SurfaceParams
 
 _LOCKS: dict[str, threading.RLock] = {}
@@ -76,10 +78,14 @@ class CatalysisService:
             draft = json.loads(raw)
             if draft['draft_id'] != draft_id or draft['revision'] != revision or draft['schema_version'] != 1:
                 raise ValueError('identity')
-            for snap in [draft['input_snapshot'], *(s['snapshot'] for s in draft['surfaces'])]:
+            for snap in [draft['input_snapshot'], *(s['snapshot'] for s in draft['surfaces']),
+                         *(c['snapshot'] for c in (draft.get('adsorption') or {}).get('candidates', []))]:
                 payload = {k: v for k, v in snap.items() if k != 'sha256'}
                 if science.sha(science.canonical(payload)) != snap['sha256']:
                     raise ValueError('snapshot hash')
+                ids = [a['atom_id'] for a in snap['atoms']]
+                if len(set(ids)) != len(ids):
+                    raise ValueError('snapshot atom identities')
             return draft
         except FileNotFoundError as exc:
             raise CatalysisError('CAT_DRAFT_NOT_FOUND', '草稿不存在或存储记录缺失', 404) from exc
@@ -209,13 +215,16 @@ class CatalysisService:
                     raise CatalysisError('CAT_SOURCE_ROLE_INVALID', '已有 slab 不进行切面参数修改')
                 parameters = body.parameters.model_dump(mode='json') if body.parameters else None
                 if parameters != draft['parameters']:
+                    self._invalidate_adsorption(draft, '表面生成参数已改变，请重新生成位点和候选')
                     draft['parameters'] = parameters
                     draft['surfaces'] = []
                     draft['active_surface_id'] = None
             if 'active_surface_id' in fields:
                 if not any(s['surface_id'] == body.active_surface_id for s in draft['surfaces']):
                     raise CatalysisError('CAT_SURFACE_NOT_FOUND', '终止面已过期或不存在', 409)
-                draft['active_surface_id'] = body.active_surface_id
+                if draft['active_surface_id'] != body.active_surface_id:
+                    self._invalidate_adsorption(draft, '选中终止面已改变，请重新生成位点和候选')
+                    draft['active_surface_id'] = body.active_surface_id
             return self._next(draft)
 
     def build(self, draft_id, body):
@@ -232,6 +241,7 @@ class CatalysisService:
             except (ValueError, RuntimeError, TypeError, LinAlgError) as exc:
                 raise CatalysisError('CAT_SURFACE_GENERATION_FAILED', '当前输入无法可靠生成表面；原草稿保留') from exc
             draft['parameters'] = params.model_dump(mode='json')
+            self._invalidate_adsorption(draft, '表面快照已重新生成，请重新生成位点和候选')
             draft['surfaces'] = surfaces
             draft['active_surface_id'] = surfaces[0]['surface_id']
             return self._next(draft)
@@ -272,12 +282,19 @@ class CatalysisService:
                                                     atom_ids=[a['atom_id'] for a in snap['atoms']])
             selected['surface'].update(bottom_fixed_layers=body.bottom_fixed_layers,
                                        atom_overrides=body.atom_overrides, reset_existing=body.reset_existing)
+            self._invalidate_adsorption(draft, '表面约束快照已改变，请重新生成位点和候选')
             return self._next(draft)
 
-    def geometry(self, draft_id, revision, surface_id=None):
+    def geometry(self, draft_id, revision, surface_id=None, candidate_id=None):
         with self.lock:
             draft = self._read(draft_id)
             self._check_revision(draft, revision)
+            if candidate_id:
+                if surface_id:
+                    raise CatalysisError('CAT_GEOMETRY_SELECTION_INVALID', '预览须选择表面或候选其中一个')
+                candidate = self._candidate(draft, candidate_id)
+                return {'mode': 'toolbox', 'revision': revision, 'candidate_id': candidate_id,
+                        'surface_id': candidate['parent_surface_id'], 'geometry': science.viewer_geometry(candidate['snapshot'])}
             selected = self.selected(draft, surface_id)
             return {'mode': 'toolbox', 'revision': revision, 'surface_id': selected['surface_id'],
                     'geometry': science.viewer_geometry(selected['snapshot'])}
@@ -305,4 +322,142 @@ class CatalysisService:
                 bundle.writestr('POSCAR', poscar)
                 bundle.writestr('metadata.json', encoded)
                 bundle.writestr('manifest.json', manifest)
+            return output.getvalue()
+
+    def _adsorption(self, draft):
+        # Only opt into new optional fields when an adsorption action occurs.
+        # Reading old schema-1 drafts must not reserialize/hash old snapshots.
+        if draft.get('adsorption') is None:
+            draft['adsorption'] = {'adsorbate': None, 'sites': [], 'selected_site_ids': [],
+                                   'candidates': [], 'selected_candidate_ids': [], 'warnings': []}
+        return draft['adsorption']
+
+    def _invalidate_adsorption(self, draft, reason):
+        state = draft.get('adsorption')
+        if not state:
+            return
+        state.update(sites=[], selected_site_ids=[], selected_candidate_ids=[],
+                     site_parent_snapshot_sha256=None, site_parent_surface_id=None, site_parent_revision=None, frame=None,
+                     site_surface_atoms=[], site_map_origin_cartesian=None)
+        for candidate in state['candidates']:
+            candidate.update(status='stale', invalidation_reason=reason)
+        state['warnings'] = [reason] if state['candidates'] else []
+
+    def set_adsorbate(self, draft_id, body):
+        with self.lock:
+            draft = self._read(draft_id)
+            self._check_revision(draft, body.revision)
+            self.selected(draft)
+            record = adsorption.parse_adsorbate(body.source, body.anchor_index)
+            self._invalidate_adsorption(draft, '吸附物来源或锚点已改变，请重新生成位点和候选')
+            self._adsorption(draft)['adsorbate'] = record
+            return self._next(draft)
+
+    def find_adsorption_sites(self, draft_id, body):
+        with self.lock:
+            draft = self._read(draft_id)
+            self._check_revision(draft, body.revision)
+            surface = self.selected(draft)
+            sites, frame = adsorption.find_sites(surface, body)
+            self._invalidate_adsorption(draft, '位点设置已重新生成，请重新生成候选')
+            state = self._adsorption(draft)
+            state.update(sites=sites, frame=frame, site_parent_snapshot_sha256=surface['snapshot']['sha256'],
+                         site_parent_surface_id=surface['surface_id'], site_parent_revision=body.revision,
+                         site_settings=body.model_dump(mode='json', exclude={'revision'}))
+            matrix, _, unwrapped = adsorption.frame_and_unwrapped(surface)
+            lattice = Lattice(matrix)
+            top_ids = set(surface['surface']['layers'][-1]['atom_ids'])
+            state['site_surface_atoms'] = [{'atom_id': atom['atom_id'], 'element': atom['element'],
+                'cartesian': adsorption.canonical_ab(point, lattice)[0].tolist()}
+                for atom, point in zip(surface['snapshot']['atoms'], unwrapped) if atom['atom_id'] in top_ids]
+            top_height = float((unwrapped @ np.array(frame['z'])).max())
+            state['site_map_origin_cartesian'] = (matrix[2] * top_height / surface['surface']['normal_period_angstrom']).tolist()
+            state['warnings'] = ['自动位点仅按已保存顶层的几何节点/边中点/锐角三角形重心识别；不判定 fcc/hcp、成键、能量或稳定性。']
+            return self._next(draft)
+
+    def build_adsorption_candidates(self, draft_id, body):
+        with self.lock:
+            draft = self._read(draft_id)
+            self._check_revision(draft, body.revision)
+            surface = self.selected(draft)
+            state = self._adsorption(draft)
+            record = state.get('adsorbate')
+            if not record:
+                raise CatalysisError('CAT_ADSORBATE_REQUIRED', '请先保存单原子或 XYZ 吸附物及锚点')
+            if state.get('site_parent_snapshot_sha256') != surface['snapshot']['sha256'] or state.get('site_parent_surface_id') != surface['surface_id']:
+                raise CatalysisError('CAT_ADSORPTION_SITES_STALE', '位点不属于当前表面快照，请重新生成', 409)
+            by_id = {site['site_id']: site for site in state['sites']}
+            if any(ident not in by_id for ident in body.site_ids):
+                raise CatalysisError('CAT_ADSORPTION_SITE_NOT_FOUND', '所选位点已过期或不存在，请重新生成并选择', 409)
+            total_atoms = (len(surface['snapshot']['atoms']) + len(record['atoms'])) * len(body.site_ids)
+            if total_atoms > adsorption.MAX_CANDIDATE_ATOMS:
+                raise CatalysisError('CAT_CANDIDATE_BUDGET_LIMIT', f'本批次总原子预算 {total_atoms} 超过 8192；请减少所选位点或缩小表面')
+            candidates = []
+            for ident in body.site_ids:
+                try:
+                    candidates.append(adsorption.build_candidate(surface, record, by_id[ident], body.placement, body.revision))
+                except ToolboxError as exc:
+                    message = f"位点 {by_id[ident]['label']}（{ident}）：{exc}；本批次未发布，原候选保留"
+                    raise CatalysisError(exc.code, message, exc.status,
+                                         details={'site_id': ident, 'site_label': by_id[ident]['label'],
+                                                  'requested_count': len(body.site_ids), 'published_count': 0}) from exc
+            # Replace the current batch atomically. Previous immutable revision
+            # files keep their snapshots; no unbounded append or silent skips.
+            state.update(candidates=candidates, placement=body.placement.model_dump(mode='json'),
+                         selected_site_ids=list(body.site_ids), selected_candidate_ids=[c['candidate_id'] for c in candidates])
+            state['warnings'] = ['成功生成的每个候选含一个吸附物；距离筛查不是普适成键或稳定性判据。']
+            return self._next(draft)
+
+    def _candidate(self, draft, candidate_id):
+        state = draft.get('adsorption') or {}
+        candidate = next((c for c in state.get('candidates', []) if c['candidate_id'] == candidate_id), None)
+        if candidate is None:
+            raise CatalysisError('CAT_CANDIDATE_NOT_FOUND', '候选不存在或已被新批次替换', 409)
+        surface = next((s for s in draft['surfaces'] if s['surface_id'] == draft['active_surface_id']), None)
+        record = state.get('adsorbate')
+        if (candidate['status'] != 'valid' or surface is None or record is None or
+                candidate['parent_surface_id'] != surface['surface_id'] or
+                candidate['parent_snapshot_sha256'] != surface['snapshot']['sha256'] or
+                candidate['adsorbate_source_id'] != record['source_id']):
+            raise CatalysisError('CAT_CANDIDATE_STALE', '候选的来源表面、约束或吸附物已改变，请重新生成', 409)
+        return candidate
+
+    def select_adsorption_candidates(self, draft_id, body):
+        with self.lock:
+            draft = self._read(draft_id)
+            self._check_revision(draft, body.revision)
+            for ident in body.selected_candidate_ids:
+                self._candidate(draft, ident)
+            self._adsorption(draft)['selected_candidate_ids'] = list(body.selected_candidate_ids)
+            return self._next(draft)
+
+    def export_adsorption_candidates(self, draft_id, body):
+        with self.lock:
+            draft = self._read(draft_id)
+            self._check_revision(draft, body.revision)
+            candidates = [self._candidate(draft, ident) for ident in body.candidate_ids]
+            surface = self.selected(draft)
+            output = io.BytesIO()
+            files = {}
+            with zipfile.ZipFile(output, 'w', compression=zipfile.ZIP_DEFLATED) as bundle:
+                for candidate in candidates:
+                    prefix = candidate['candidate_id'] + '/'
+                    text, rows = science.poscar_export(candidate['snapshot'])
+                    poscar = text.encode('utf-8')
+                    metadata = {'schema_version': 1, 'draft_id': draft_id, 'revision': body.revision,
+                                'source': draft['source'], 'parameters': draft['parameters'],
+                                'input_snapshot': draft['input_snapshot'], 'parent_surface': surface,
+                                'adsorbate': draft['adsorption']['adsorbate'], 'candidate': candidate,
+                                'poscar_sha256': science.sha(poscar), 'poscar_row_mapping': rows,
+                                'selective_flags_basis': 'direct_lattice_vectors',
+                                'warnings': draft['warnings'] + candidate['validation']['warnings'],
+                                'identity_restore_rule': 'Only restore IDs after verifying POSCAR and metadata hashes; external edits require fresh import.'}
+                    for filename, content in (('POSCAR', poscar), ('metadata.json', science.canonical(metadata))):
+                        path = prefix + filename
+                        bundle.writestr(path, content)
+                        files[path] = {'sha256': science.sha(content)}
+                manifest = {'schema_version': 1, 'draft_id': draft_id, 'revision': body.revision,
+                            'candidate_ids': list(body.candidate_ids), 'candidate_count': len(candidates),
+                            'files': files, 'purpose': 'independent_geometric_candidates; no_energy_ranking_or_job_execution'}
+                bundle.writestr('manifest.json', science.canonical(manifest))
             return output.getvalue()

@@ -25,3 +25,12 @@ it('preserves revision-conflict errors, including during ZIP download', async ()
   server.use(http.get('/api/v1/toolbox/catalysis/drafts/:id/export', () => HttpResponse.json({ error: { code: 'CAT_REVISION_CONFLICT', message: '草稿已变化' } }, { status: 409 })));
   await expect(catalysisApi.export({ draft_id: 'cat-test', revision: 1 } as CatalysisDraft, 'surface-1')).rejects.toEqual(expect.objectContaining({ code: 'CAT_REVISION_CONFLICT', status: 409 }));
 });
+
+it('pins adsorption requests, candidate previews and multi-export to revision and explicit IDs', async () => {
+  const doc = { draft_id: 'cat-ads', revision: 12 } as CatalysisDraft, calls: unknown[] = [];
+  server.use(http.post('/api/v1/toolbox/catalysis/drafts/:id/adsorbate', async ({ request }) => { calls.push(await request.json()); return HttpResponse.json({ draft: doc }); }), http.post('/api/v1/toolbox/catalysis/drafts/:id/adsorption/candidates', async ({ request }) => { calls.push(await request.json()); return HttpResponse.json({ draft: doc }); }), http.patch('/api/v1/toolbox/catalysis/drafts/:id/adsorption/selection', async ({ request }) => { calls.push(await request.json()); return HttpResponse.json({ draft: doc }); }), http.get('/api/v1/toolbox/catalysis/drafts/:id/geometry', ({ request }) => { calls.push(Object.fromEntries(new URL(request.url).searchParams)); return HttpResponse.json({ revision: 12, candidate_id: 'c2', geometry: {} }); }), http.post('/api/v1/toolbox/catalysis/drafts/:id/adsorption/export', async ({ request }) => { calls.push(await request.json()); return new HttpResponse('ZIP'); }));
+  await catalysisApi.adsorbate(doc, { kind: 'xyz', content: '2\nCO\nC 0 0 0\nO 0 0 1.15', name: 'CO 分子.xyz' }, 1);
+  await catalysisApi.candidates(doc, ['s1', 's2'], { height_angstrom: 2, rotation_degrees: [0, 90, 0], screening_distance_angstrom: .8 });
+  await catalysisApi.selection(doc, ['c2']); await catalysisApi.candidateGeometry(doc.draft_id, 'c2', 12); await catalysisApi.exportCandidates(doc, ['c1', 'c2']);
+  expect(calls).toEqual([{ revision: 12, source: { kind: 'xyz', content: '2\nCO\nC 0 0 0\nO 0 0 1.15', name: 'CO 分子.xyz' }, anchor_index: 1 }, { revision: 12, site_ids: ['s1', 's2'], placement: { height_angstrom: 2, rotation_degrees: [0, 90, 0], screening_distance_angstrom: .8 } }, { revision: 12, selected_candidate_ids: ['c2'] }, { revision: '12', candidate_id: 'c2' }, { revision: 12, candidate_ids: ['c1', 'c2'] }]);
+});

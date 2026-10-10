@@ -29,5 +29,29 @@
 .cat-atom-list label { display:grid; grid-template-columns:minmax(0,1fr) minmax(170px,1fr); gap:10px; align-items:center; font-size:12px; }
 .cat-atom-list code { display:block; color:var(--wf-muted); font-size:10px; overflow-wrap:anywhere; }
 .cat-page .ant-btn { max-width:100%; }
+.cat-adsorption { display:grid; gap:18px; }
+.cat-molecule-preview, .cat-frame { border:1px solid var(--wf-border); border-radius:6px; padding:10px; margin:12px 0; color:var(--wf-muted); }
+.cat-molecule-preview summary, .cat-frame summary { cursor:pointer; }
+.cat-molecule-atoms { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; max-height:240px; overflow:auto; margin-top:10px; font-size:12px; }
+.cat-molecule-atoms code { display:block; font-variant-numeric:tabular-nums; }
+.cat-site-map { margin:16px 0; border:1px solid var(--wf-border); border-radius:6px; background:var(--wf-field); }
+.cat-site-map svg { display:block; width:100%; max-height:380px; }
+.cat-site-point { cursor:pointer; }
+.cat-site-point[aria-disabled=true] { cursor:default; opacity:.6; }
+.cat-site-point:focus { outline:none; }
+.cat-site-point:focus circle { stroke:var(--wf-text); stroke-width:4; }
+.cat-site-legend { display:flex; gap:18px; flex-wrap:wrap; padding:10px 16px; border-top:1px solid var(--wf-border); color:var(--wf-muted); font-size:12px; }
+.cat-site-legend span { display:flex; align-items:center; gap:6px; }
+.cat-site-legend i { width:8px; height:8px; border-radius:50%; }
+.cat-site-list { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; margin:16px 0; max-height:260px; overflow:auto; padding:3px; }
+.cat-site-list .ant-checkbox-wrapper { margin:0; align-items:start; font-size:12px; }
+.cat-site-list small { display:block; color:var(--wf-muted); overflow-wrap:anywhere; }
+.cat-candidate-list { display:grid; gap:10px; max-height:420px; overflow:auto; margin-bottom:16px; }
+.cat-candidate-row { display:flex; gap:12px; align-items:center; border:1px solid var(--wf-border); border-radius:6px; padding:12px; }
+.cat-candidate-row > div { flex:1; min-width:0; }
+.cat-candidate-row strong, .cat-candidate-row small { display:block; overflow-wrap:anywhere; }
+.cat-candidate-row small { color:var(--wf-muted); font-size:12px; margin-top:4px; }
+.cat-candidate-active { border-color:var(--wf-blue); background:var(--wf-soft); }
+.cat-compact-empty { margin:20px 0; }
 @media(max-width:1050px) { .cat-grid { grid-template-columns:minmax(0,1fr); } .cat-grid > aside { grid-template-columns:repeat(2,minmax(0,1fr)); } }
-@media(max-width:640px) { .cat-grid > aside, .cat-controls, .cat-metrics { grid-template-columns:minmax(0,1fr); } .cat-atom-list label { grid-template-columns:minmax(0,1fr); } .cat-page .ant-card-head-wrapper { flex-wrap:wrap; gap:8px; } .cat-page .ant-btn { white-space:normal; height:auto; min-height:34px; } }
+@media(max-width:640px) { .cat-grid > aside, .cat-controls, .cat-metrics, .cat-site-list { grid-template-columns:minmax(0,1fr); } .cat-molecule-atoms { grid-template-columns:repeat(2,minmax(0,1fr)); } .cat-candidate-row { flex-wrap:wrap; } .cat-atom-list label { grid-template-columns:minmax(0,1fr); } .cat-page .ant-card-head-wrapper { flex-wrap:wrap; gap:8px; } .cat-page .ant-btn { white-space:normal; height:auto; min-height:34px; } }

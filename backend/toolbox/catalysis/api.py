@@ -3,7 +3,9 @@ from fastapi import APIRouter, Query, Request
 from fastapi.responses import Response
 
 from ..contracts import ToolboxError
-from .schemas import CreateDraft, PatchDraft, BuildSurfaces, SetConstraints, DraftResponse, DraftListResponse
+from .schemas import (CreateDraft, PatchDraft, BuildSurfaces, SetConstraints, DraftResponse, DraftListResponse,
+                      SetAdsorbate, FindAdsorptionSites, BuildAdsorptionCandidates,
+                      SelectAdsorptionCandidates, ExportAdsorptionCandidates)
 from .service import CatalysisService
 
 router = APIRouter(prefix='/catalysis', tags=['Catalysis preparation'])
@@ -60,8 +62,9 @@ def set_constraints(draft_id: str, request: Request, body: SetConstraints):
 
 @router.get('/drafts/{draft_id}/geometry')
 def get_geometry(draft_id: str, request: Request, revision: int = Query(..., ge=1),
-                 surface_id: str | None = Query(None, max_length=80)):
-    return service(request).geometry(draft_id, revision, surface_id)
+                 surface_id: str | None = Query(None, max_length=80),
+                 candidate_id: str | None = Query(None, max_length=80)):
+    return service(request).geometry(draft_id, revision, surface_id, candidate_id)
 
 
 @router.get('/drafts/{draft_id}/export')
@@ -70,4 +73,32 @@ def export_draft(draft_id: str, request: Request, revision: int = Query(..., ge=
     content = service(request).export(draft_id, revision, surface_id)
     return Response(content=content, media_type='application/zip', headers={
         'Content-Disposition': f'attachment; filename="{draft_id}-r{revision}.zip"',
+        'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'})
+
+
+@router.post('/drafts/{draft_id}/adsorbate', response_model=DraftResponse, response_model_exclude_unset=True)
+def set_adsorbate(draft_id: str, request: Request, body: SetAdsorbate):
+    return {'mode': 'toolbox', 'draft': service(request).set_adsorbate(draft_id, body)}
+
+
+@router.post('/drafts/{draft_id}/adsorption/sites', response_model=DraftResponse, response_model_exclude_unset=True)
+def find_adsorption_sites(draft_id: str, request: Request, body: FindAdsorptionSites):
+    return {'mode': 'toolbox', 'draft': service(request).find_adsorption_sites(draft_id, body)}
+
+
+@router.post('/drafts/{draft_id}/adsorption/candidates', response_model=DraftResponse, response_model_exclude_unset=True)
+def build_adsorption_candidates(draft_id: str, request: Request, body: BuildAdsorptionCandidates):
+    return {'mode': 'toolbox', 'draft': service(request).build_adsorption_candidates(draft_id, body)}
+
+
+@router.patch('/drafts/{draft_id}/adsorption/selection', response_model=DraftResponse, response_model_exclude_unset=True)
+def select_adsorption_candidates(draft_id: str, request: Request, body: SelectAdsorptionCandidates):
+    return {'mode': 'toolbox', 'draft': service(request).select_adsorption_candidates(draft_id, body)}
+
+
+@router.post('/drafts/{draft_id}/adsorption/export')
+def export_adsorption_candidates(draft_id: str, request: Request, body: ExportAdsorptionCandidates):
+    content = service(request).export_adsorption_candidates(draft_id, body)
+    return Response(content=content, media_type='application/zip', headers={
+        'Content-Disposition': f'attachment; filename="{draft_id}-adsorption-r{body.revision}.zip"',
         'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'})
