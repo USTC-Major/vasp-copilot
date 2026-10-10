@@ -12,7 +12,7 @@ import { adsorptionEditorFor, parseXYZ, placementInput, siteInput, storeAdsorpti
 import { catalysisWorkflowResponseFixture } from '../mocks/catalysisWorkflowFixture';
 import { getWorkflowDraft, resetWorkflowDraft } from '../stores/workflowDraft';
 
-vi.mock('../components/structure/CrystalViewer', () => ({ CrystalGeometryViewer: ({ data }: { data: StructureGeometry }) => <div>候选几何 {data.structure_id}</div> }));
+vi.mock('../components/structure/CrystalViewer', () => ({ CrystalGeometryViewer: ({ data, markers = [] }: { data: StructureGeometry; markers?: { id: string; label: string }[] }) => <div>候选几何 {data.structure_id}{markers.map(marker => <span key={marker.id} data-site-marker={marker.id} data-site-label={marker.label} />)}</div> }));
 const snapshot = { snapshot_id: 'snap', coordinate_mode: 'cartesian' as const, lattice: [[4, 0, 0], [0, 4, 0], [0, 0, 20]] as StructureGeometry['basis_cartesian_angstrom'], sha256: 'a'.repeat(64), atoms: [{ atom_id: 'pt-1', element: 'Pt', fractional: [0, 0, .25] as [number, number, number], cartesian: [0, 0, 5] as [number, number, number], selective_dynamics: [false, false, false] as [boolean, boolean, boolean], provenance: {} }] };
 function fixture(): CatalysisDraft {
   return { draft_id: 'cat-ads-test', schema_version: 1, revision: 4, name: '合成吸附草稿', created_at: '', updated_at: '', source: { kind: 'poscar', role: 'slab' }, input_snapshot: snapshot, parameters: null, active_surface_id: 'surface', surfaces: [{ surface_id: 'surface', snapshot, termination_shift: null, transform: {}, surface: { normal: [0, 0, 1], normal_period_angstrom: 20, actual_nuclei_span_angstrom: 0, periodic_vacuum_gap_angstrom: 20, in_plane_lengths_angstrom: [4, 4], layer_tolerance: .1, bottom_fixed_layers: 1, atom_overrides: {}, reset_existing: false, flag_basis: 'direct_lattice_vectors', layers: [{ layer_index: 0, atom_ids: ['pt-1'], projection_angstrom: 5 }] } }], warnings: [], adsorption: { adsorbate: { source_id: 'co-1', source_sha256: 'b'.repeat(64), source: { kind: 'co_example' }, atoms: [{ atom_id: 'C1', element: 'C', cartesian: [0, 0, 0] }, { atom_id: 'O1', element: 'O', cartesian: [0, 0, 1.15] }], anchor_index: 0 }, sites: [{ site_id: 'top', kind: 'ontop', label: '顶位', fractional: [0, 0, .25], cartesian: [0, 0, 5], source_atom_ids: ['pt-1'] }, { site_id: 'manual', kind: 'manual', label: '我的位置', fractional: [.5, .5, .25], cartesian: [2, 2, 5], source_atom_ids: [] }], site_parent_surface_id: 'surface', site_parent_snapshot_sha256: snapshot.sha256, site_parent_revision: 4, selected_site_ids: [], selected_candidate_ids: [], candidates: [], warnings: [], frame: { x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1], rotation_convention: 'fixed_surface_xyz_X_then_Y_then_Z' } } };
@@ -20,9 +20,9 @@ function fixture(): CatalysisDraft {
 const candidate = (id: string, site: string): AdsorptionCandidate => ({ candidate_id: id, site_id: site, label: site, parent_revision: 4, parent_surface_id: 'surface', parent_snapshot_sha256: snapshot.sha256, adsorbate_source_id: 'co-1', status: 'valid', snapshot, placement: { height_angstrom: 2, rotation_degrees: [0, 0, 0], screening_distance_angstrom: .8 }, transform: {}, validation: { minimum_adsorbate_surface_distance_angstrom: 2, minimum_periodic_self_image_distance_angstrom: 4, screening_distance_angstrom: .8, screening_passed: true, warnings: [] } });
 const deferred = <T,>() => { let resolve!: (value: T) => void; const promise = new Promise<T>(r => { resolve = r; }); return { promise, resolve }; };
 let doc: CatalysisDraft, client: QueryClient;
-function mount(upstream = false) {
+function mount(upstream = false, surfaceGeometry?: StructureGeometry) {
   client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
-  function Harness() { const [current, setCurrent] = useState(doc); return <AdsorptionBuilder doc={current} upstreamDirty={upstream} parentBusy={false} parentConflict={false} onUpdate={setCurrent} onBusy={() => undefined} />; }
+  function Harness() { const [current, setCurrent] = useState(doc); return <AdsorptionBuilder doc={current} upstreamDirty={upstream} parentBusy={false} parentConflict={false} {...(surfaceGeometry ? { surfaceGeometry } : {})} onUpdate={setCurrent} onBusy={() => undefined} />; }
   return render(<ConfigProvider theme={{ token: { motion: false } }}><QueryClientProvider client={client}><MemoryRouter><Harness /></MemoryRouter></QueryClientProvider></ConfigProvider>);
 }
 beforeEach(() => {
@@ -37,6 +37,52 @@ beforeEach(() => {
   vi.spyOn(catalysisApi, 'workflowBinding').mockImplementation(async (_base, target) => catalysisWorkflowResponseFixture(doc, target.candidate_id));
 });
 afterEach(() => { cleanup(); client?.clear(); vi.restoreAllMocks(); });
+
+it('shows only selected 3D site markers with stable labels while keeping every map and list option', () => {
+  mount(false, { structure_id: 'surface-preview' } as StructureGeometry);
+  const markerIds = () => Array.from(document.querySelectorAll('[data-site-marker]'), marker => marker.getAttribute('data-site-marker'));
+  const expectAllSites = () => {
+    expect(screen.getByRole('button', { name: '位点 S1 顶位' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '位点 S2 手动' })).toBeInTheDocument();
+    expect(screen.getByText('S1 · 顶位')).toBeInTheDocument();
+    expect(screen.getByText('S2 · 手动')).toBeInTheDocument();
+  };
+
+  expect(markerIds()).toEqual([]);
+  expect(screen.getByText('三维预览仅显示已选 0 个位点，请先在平面图或列表中选择位点。')).toBeInTheDocument();
+  expectAllSites();
+
+  fireEvent.click(screen.getByRole('button', { name: '位点 S2 手动' }));
+  expect(markerIds()).toEqual(['manual']);
+  expect(document.querySelector('[data-site-marker="manual"]')).toHaveAttribute('data-site-label', 'S2');
+  expect(screen.getByText('三维预览仅显示已选 1 个位点，全部位点请在平面图或列表中选择。')).toBeInTheDocument();
+  expectAllSites();
+
+  fireEvent.click(screen.getByText('S1 · 顶位').closest('label')!);
+  expect(markerIds()).toEqual(['top', 'manual']);
+  expect(document.querySelector('[data-site-marker="top"]')).toHaveAttribute('data-site-label', 'S1');
+  expect(document.querySelector('[data-site-marker="manual"]')).toHaveAttribute('data-site-label', 'S2');
+  expect(screen.getByText('三维预览仅显示已选 2 个位点，全部位点请在平面图或列表中选择。')).toBeInTheDocument();
+  expectAllSites();
+
+  fireEvent.click(screen.getByText('S2 · 手动').closest('label')!);
+  expect(markerIds()).toEqual(['top']);
+  expect(document.querySelector('[data-site-marker="top"]')).toHaveAttribute('data-site-label', 'S1');
+  expect(screen.getByText('三维预览仅显示已选 1 个位点，全部位点请在平面图或列表中选择。')).toBeInTheDocument();
+  expectAllSites();
+});
+
+it('keeps the raw structure clean when the site geometry overlay no longer matches the surface', () => {
+  doc.adsorption!.site_surface_atoms = [{ atom_id: 'pt-1', cartesian: [1, 0, 5] }];
+  mount(false, { structure_id: 'surface-preview' } as StructureGeometry);
+
+  expect(document.querySelector('[data-site-marker]')).not.toBeInTheDocument();
+  expect(screen.queryByText('候选几何 surface-preview')).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: '位点 S1 顶位' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: '位点 S2 手动' })).toBeInTheDocument();
+  expect(screen.getByText('S1 · 顶位')).toBeInTheDocument();
+  expect(screen.getByText('S2 · 手动')).toBeInTheDocument();
+});
 
 it('hands off only the explicitly previewed candidate while multi-selection remains a ZIP selection', async () => {
   mount();
