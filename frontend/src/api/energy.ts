@@ -34,7 +34,10 @@ export type EnergySample = {
   warning_acceptance_fingerprint?: string | null;
   role_origin?: EnergyAssignmentOrigin; included_origin?: EnergyAssignmentOrigin; assignment_reasons?: string[];
 };
-type EnergyGroupCommon = { id: string; name: string; energy_basis: EnergyBasis; basis_confirmed: boolean; reference_note: string; reference_origins?: Record<string, Exclude<EnergyAssignmentOrigin, null>> };
+type EnergyGroupCommon = { id: string; name: string; energy_basis: EnergyBasis; basis_confirmed: boolean; reference_note: string; reference_origins?: Record<string, Exclude<EnergyAssignmentOrigin, null>>;
+  locked?: boolean; confirmed?: boolean; confirmation_fingerprint?: string | null; risk_accepted?: boolean; risk_acceptance_fingerprint?: string | null; result?: EnergyResult | null; status?: 'draft' | 'locked' | 'result' | 'stale';
+  risks?: { sample_id: string; name: string; warnings: string[] }[]; assignment_report?: EnergyCollection['assignment_report'];
+};
 export type AdsorptionEnergyGroup = EnergyGroupCommon & {
   kind: 'adsorption'; clean_sample_id: string; adsorbate_sample_id: string; reference_units: number;
   targets: { sample_id: string; adsorbate_count: number }[];
@@ -51,9 +54,10 @@ export type EnergyResult = {
   groups: { id: string; kind: 'adsorption' | 'formation'; name: string; energy_basis: EnergyBasis; rows: EnergyResultRow[]; warnings: string[] }[];
 };
 export type EnergyCollection = {
-  id: string; schema_version: 'pp.energy.v1'; title: string; revision: number; created_at: string; updated_at: string;
+  id: string; schema_version: 'pp.energy.v1' | 'pp.energy.v2'; title: string; revision: number; created_at: string; updated_at: string;
   samples: EnergySample[]; groups: EnergyGroup[]; result: EnergyResult | null;
   analysis_kind?: EnergyAnalysisKind | null; legacy_mode?: boolean; locked?: boolean; lock_fingerprint?: string | null;
+  workflow?: 'cards'; card_projection?: EnergyGroup[]; card_migration?: { required: boolean; read_only: boolean; reason: string | null };
   assignment_report?: { state: 'ready' | 'pending' | 'ambiguous'; issues: { code: string; message: string; sample_ids: string[] }[] } | null;
   limits: { max_file_bytes: number; max_collection_bytes: number; max_samples: number };
 };
@@ -68,7 +72,10 @@ const base = '/toolbox/postprocessing/energy';
 const collectionPath = (id: string) => `${base}/collections/${encodeURIComponent(id)}`;
 type CollectionResponse = { mode: 'toolbox'; collection: EnergyCollection };
 export type EnergyRemovalRequest = { sample_ids: string[]; clear_all?: never } | { clear_all: true; sample_ids?: never };
-export type EnergyRemoval = { sample_ids: string[]; removed_count: number; affected_target_ids: string[]; cleared_reference_keys: string[] };
+export type EnergyRemoval = { sample_ids: string[]; removed_count: number; affected_target_ids: string[]; cleared_reference_keys: string[]; impact?: EnergyImpact };
+export type EnergyImpact = { preview_id: string; expected_revision: number; sample_ids: string[]; affected_cards: { card_id: string; name: string; locked: boolean }[]; requires_acknowledgement: boolean };
+export type EnergySamplePatch = { sample_id: string; name?: string; override?: EnergyOverride | null };
+export type EnergyFieldError = { card_id?: string | null; sample_id?: string | null; field: string; code: string; message: string };
 export type EnergyCsvPreview = { row_count: number; valid_count: number; can_import: boolean; issues: { code: string; message: string }[]; rows: { row_number: number; name: string; composition: EnergyComposition | null; energy_basis: EnergyBasis | null; energy_ev: number | null; unit: string; relative_path: string; reference_note: string; csv_metadata?: EnergyCsvMetadata; issues: { code: string; message: string }[] }[] };
 export type EnergySampleValueSource = 'original' | 'effective';
 
@@ -82,7 +89,7 @@ async function uploadRaw<T = CollectionResponse>(path: string, body: File, signa
 export const energyApi = {
   list: (signal?: AbortSignal) => request<{ mode: 'toolbox'; collections: EnergyCollection[] }>(`${base}/collections`, { signal }),
   get: (id: string, signal?: AbortSignal) => request<CollectionResponse>(collectionPath(id), { signal }),
-  create: (title: string, analysisKind: EnergyAnalysisKind) => request<CollectionResponse>(`${base}/collections`, { method: 'POST', body: { title, analysis_kind: analysisKind } }),
+  create: (title: string, analysisKind: EnergyAnalysisKind) => request<CollectionResponse>(`${base}/collections`, { method: 'POST', body: { title, analysis_kind: analysisKind, workflow: 'cards' } }),
   remove: (id: string) => request<{ deleted: true }>(collectionPath(id), { method: 'DELETE' }),
   upload: (collection: EnergyCollection, file: File, relativePath: string, signal?: AbortSignal) => {
     const query = new URLSearchParams({ name: file.name, expected_revision: String(collection.revision) });
@@ -103,13 +110,25 @@ export const energyApi = {
   calculate: (collection: EnergyCollection) => request<CollectionResponse>(`${collectionPath(collection.id)}/calculate`, { method: 'POST', body: { expected_revision: collection.revision } }),
   lock: (collection: EnergyCollection) => request<CollectionResponse>(`${collectionPath(collection.id)}/lock`, { method: 'POST', body: { expected_revision: collection.revision } }),
   unlock: (collection: EnergyCollection) => request<CollectionResponse>(`${collectionPath(collection.id)}/unlock`, { method: 'POST', body: { expected_revision: collection.revision } }),
-  copy: (collection: EnergyCollection, analysisKind: EnergyAnalysisKind, groupId?: string) => request<CollectionResponse>(`${collectionPath(collection.id)}/copy`, { method: 'POST', body: { expected_revision: collection.revision, analysis_kind: analysisKind, ...(groupId ? { group_id: groupId } : {}) } }),
+  copy: (collection: EnergyCollection, analysisKind: EnergyAnalysisKind, groupId?: string) => request<CollectionResponse>(`${collectionPath(collection.id)}/copy`, { method: 'POST', body: { expected_revision: collection.revision, analysis_kind: analysisKind, workflow: 'cards', ...(groupId ? { group_id: groupId } : {}) } }),
   autofill: (collection: EnergyCollection) => request<CollectionResponse>(`${collectionPath(collection.id)}/autofill`, { method: 'POST', body: { expected_revision: collection.revision } }),
-  previewRemoval: (collection: EnergyCollection, input: EnergyRemovalRequest) => request<{ mode: 'toolbox'; removal: EnergyRemoval }>(`${collectionPath(collection.id)}/samples/removal-preview`, { method: 'POST', body: { expected_revision: collection.revision, ...input } }),
+  previewRemoval: (collection: EnergyCollection, input: EnergyRemovalRequest) => request<{ mode: 'toolbox'; removal: EnergyRemoval }>(`${collectionPath(collection.id)}/samples/removal-preview`, { method: 'POST', body: { expected_revision: collection.revision, ...input, workflow: 'cards' } }),
   removeSamples: (collection: EnergyCollection, input: EnergyRemovalRequest) => request<CollectionResponse & { removal: EnergyRemoval }>(`${collectionPath(collection.id)}/samples/remove`, { method: 'POST', body: { expected_revision: collection.revision, ...input } }),
   previewTask: (identity: PPTaskIdentity, signal?: AbortSignal) => request<{ mode: 'toolbox'; preview: EnergyTaskPreview }>(`${base}/task-sources/preview`, { method: 'POST', body: identity, signal }),
   importTask: (collection: EnergyCollection, previewId: string, name?: string) => request<CollectionResponse>(`${collectionPath(collection.id)}/task-sources/import`, { method: 'POST', body: { expected_revision: collection.revision, preview_id: previewId, name } }),
   reuse: (collection: EnergyCollection, sourceCollectionId: string, sampleId: string) => request<CollectionResponse>(`${collectionPath(collection.id)}/reuse`, { method: 'POST', body: { expected_revision: collection.revision, source_collection_id: sourceCollectionId, sample_id: sampleId } }),
   download: (id: string, format: 'csv' | 'json') => request<Blob>(`${collectionPath(id)}/export?format=${format}`, { responseType: 'blob' }),
   downloadSamples: (collection: EnergyCollection, basis: EnergyBasis, valueSource: EnergySampleValueSource) => request<Blob>(`${collectionPath(collection.id)}/samples.csv?${new URLSearchParams({ energy_basis: basis, value_source: valueSource })}`, { responseType: 'blob' }),
+  addCard: (collection: EnergyCollection, card: EnergyGroup) => request<CollectionResponse>(`${collectionPath(collection.id)}/cards`, { method: 'POST', body: { expected_revision: collection.revision, card } }),
+  saveCard: (collection: EnergyCollection, card: EnergyGroup) => request<CollectionResponse>(`${collectionPath(collection.id)}/cards/${encodeURIComponent(card.id)}`, { method: 'PUT', body: { expected_revision: collection.revision, card } }),
+  copyCard: (collection: EnergyCollection, cardId: string) => request<CollectionResponse>(`${collectionPath(collection.id)}/cards/${encodeURIComponent(cardId)}/copy`, { method: 'POST', body: { expected_revision: collection.revision } }),
+  deleteCard: (collection: EnergyCollection, cardId: string) => request<CollectionResponse>(`${collectionPath(collection.id)}/cards/${encodeURIComponent(cardId)}`, { method: 'DELETE', body: { expected_revision: collection.revision } }),
+  autofillCard: (collection: EnergyCollection, cardId: string) => request<CollectionResponse>(`${collectionPath(collection.id)}/cards/${encodeURIComponent(cardId)}/autofill`, { method: 'POST', body: { expected_revision: collection.revision } }),
+  lockCard: (collection: EnergyCollection, cardId: string, acceptedWarnings: boolean) => request<CollectionResponse>(`${collectionPath(collection.id)}/cards/${encodeURIComponent(cardId)}/lock`, { method: 'POST', body: { expected_revision: collection.revision, accepted_warnings: acceptedWarnings } }),
+  unlockCard: (collection: EnergyCollection, cardId: string) => request<CollectionResponse>(`${collectionPath(collection.id)}/cards/${encodeURIComponent(cardId)}/unlock`, { method: 'POST', body: { expected_revision: collection.revision } }),
+  calculateCard: (collection: EnergyCollection, cardId: string) => request<CollectionResponse>(`${collectionPath(collection.id)}/cards/${encodeURIComponent(cardId)}/calculate`, { method: 'POST', body: { expected_revision: collection.revision } }),
+  downloadCard: (collectionId: string, cardId: string, format: 'csv' | 'json') => request<Blob>(`${collectionPath(collectionId)}/cards/${encodeURIComponent(cardId)}/export?format=${format}`, { responseType: 'blob' }),
+  previewSampleChange: (collection: EnergyCollection, samples: EnergySamplePatch[], title?: string) => request<{ mode: 'toolbox'; impact: EnergyImpact }>(`${collectionPath(collection.id)}/samples/change-preview`, { method: 'POST', body: { expected_revision: collection.revision, samples, ...(title === undefined ? {} : { title }) } }),
+  saveSamples: (collection: EnergyCollection, samples: EnergySamplePatch[], impact: EnergyImpact, title?: string) => request<CollectionResponse>(`${collectionPath(collection.id)}/samples/configuration`, { method: 'PUT', body: { expected_revision: collection.revision, samples, preview_id: impact.preview_id, acknowledge_locked_cards: true, ...(title === undefined ? {} : { title }) } }),
+  removeSamplesWithImpact: (collection: EnergyCollection, input: EnergyRemovalRequest, impact: EnergyImpact) => request<CollectionResponse & { removal: EnergyRemoval }>(`${collectionPath(collection.id)}/samples/remove`, { method: 'POST', body: { expected_revision: collection.revision, ...input, workflow: 'cards', preview_id: impact.preview_id, acknowledge_locked_cards: true } }),
 };

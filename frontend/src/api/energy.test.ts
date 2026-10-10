@@ -2,6 +2,7 @@ import { expect, it, afterEach, vi } from 'vitest';
 import { ApiError } from './client';
 import { energyApi } from './energy';
 import { energyFixture } from '../components/energy/energyTestFixtures';
+import { cardConfiguration } from '../components/energy/energyCards';
 
 afterEach(() => vi.restoreAllMocks());
 it('uses independent collection/sample identities and encodes duplicate filename metadata', async () => {
@@ -31,20 +32,20 @@ it('propagates raw-upload revision conflicts with their API code and status', as
 it('sends explicit analysis types and revisions for create, lock, unlock and per-group legacy copy', async () => {
   const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response('{}', { status: 200 }));
   await energyApi.create('形成能分析', 'formation');
-  expect(fetch).toHaveBeenLastCalledWith('/api/v1/toolbox/postprocessing/energy/collections', expect.objectContaining({ body: JSON.stringify({ title: '形成能分析', analysis_kind: 'formation' }) }));
+  expect(fetch).toHaveBeenLastCalledWith('/api/v1/toolbox/postprocessing/energy/collections', expect.objectContaining({ body: JSON.stringify({ title: '形成能分析', analysis_kind: 'formation', workflow: 'cards' }) }));
   await energyApi.lock(energyFixture());
   expect(fetch).toHaveBeenLastCalledWith('/api/v1/toolbox/postprocessing/energy/collections/ec_fixture/lock', expect.objectContaining({ body: JSON.stringify({ expected_revision: 4 }) }));
   await energyApi.unlock(energyFixture());
   expect(fetch).toHaveBeenLastCalledWith('/api/v1/toolbox/postprocessing/energy/collections/ec_fixture/unlock', expect.objectContaining({ body: JSON.stringify({ expected_revision: 4 }) }));
   await energyApi.copy(energyFixture(), 'adsorption', 'g_ads');
-  expect(fetch).toHaveBeenLastCalledWith('/api/v1/toolbox/postprocessing/energy/collections/ec_fixture/copy', expect.objectContaining({ body: JSON.stringify({ expected_revision: 4, analysis_kind: 'adsorption', group_id: 'g_ads' }) }));
+  expect(fetch).toHaveBeenLastCalledWith('/api/v1/toolbox/postprocessing/energy/collections/ec_fixture/copy', expect.objectContaining({ body: JSON.stringify({ expected_revision: 4, analysis_kind: 'adsorption', workflow: 'cards', group_id: 'g_ads' }) }));
 });
 it('revises batch assignment and keeps removal preview separate from atomic removal', async () => {
   const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response('{}', { status: 200 }));
   await energyApi.autofill(energyFixture());
   expect(fetch).toHaveBeenLastCalledWith('/api/v1/toolbox/postprocessing/energy/collections/ec_fixture/autofill', expect.objectContaining({ body: JSON.stringify({ expected_revision: 4 }) }));
   await energyApi.previewRemoval(energyFixture(), { sample_ids: ['es_clean'] });
-  expect(fetch).toHaveBeenLastCalledWith('/api/v1/toolbox/postprocessing/energy/collections/ec_fixture/samples/removal-preview', expect.objectContaining({ body: JSON.stringify({ expected_revision: 4, sample_ids: ['es_clean'] }) }));
+  expect(fetch).toHaveBeenLastCalledWith('/api/v1/toolbox/postprocessing/energy/collections/ec_fixture/samples/removal-preview', expect.objectContaining({ body: JSON.stringify({ expected_revision: 4, sample_ids: ['es_clean'], workflow: 'cards' }) }));
   await energyApi.removeSamples({ ...energyFixture(), revision: 5 }, { clear_all: true });
   expect(fetch).toHaveBeenLastCalledWith('/api/v1/toolbox/postprocessing/energy/collections/ec_fixture/samples/remove', expect.objectContaining({ body: JSON.stringify({ expected_revision: 5, clear_all: true }) }));
 });
@@ -68,4 +69,18 @@ it('downloads a blank template and saved sample values independently of result e
   expect(fetch).toHaveBeenLastCalledWith('/api/v1/toolbox/postprocessing/energy/collections/ec_fixture/samples.csv?energy_basis=sigma_to_zero_ev&value_source=effective', expect.objectContaining({ method: 'GET' }));
   await energyApi.downloadSamples(energyFixture(), 'without_entropy_ev', 'original');
   expect(fetch).toHaveBeenLastCalledWith('/api/v1/toolbox/postprocessing/energy/collections/ec_fixture/samples.csv?energy_basis=without_entropy_ev&value_source=original', expect.objectContaining({ method: 'GET' }));
+});
+it('uses per-card revision and explicit risk acceptance plus the exact shared-impact token', async () => {
+  const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response('{}', { status: 200 }));
+  const collection = energyFixture(), card = cardConfiguration(collection.groups[0]);
+  await energyApi.saveCard(collection, card);
+  expect(fetch).toHaveBeenLastCalledWith('/api/v1/toolbox/postprocessing/energy/collections/ec_fixture/cards/g_ads', expect.objectContaining({ method: 'PUT', body: JSON.stringify({ expected_revision: 4, card }) }));
+  await energyApi.lockCard(collection, 'g_ads', true);
+  expect(fetch).toHaveBeenLastCalledWith('/api/v1/toolbox/postprocessing/energy/collections/ec_fixture/cards/g_ads/lock', expect.objectContaining({ body: JSON.stringify({ expected_revision: 4, accepted_warnings: true }) }));
+  await energyApi.calculateCard(collection, 'g_ads');
+  expect(fetch).toHaveBeenLastCalledWith('/api/v1/toolbox/postprocessing/energy/collections/ec_fixture/cards/g_ads/calculate', expect.objectContaining({ body: JSON.stringify({ expected_revision: 4 }) }));
+  const patches = [{ sample_id: 'es_clean', override: null }];
+  const impact = { preview_id: 'bound-token', expected_revision: 4, sample_ids: ['es_clean'], affected_cards: [{ card_id: 'g_ads', name: 'A', locked: true }], requires_acknowledgement: true };
+  await energyApi.saveSamples(collection, patches, impact);
+  expect(fetch).toHaveBeenLastCalledWith('/api/v1/toolbox/postprocessing/energy/collections/ec_fixture/samples/configuration', expect.objectContaining({ body: JSON.stringify({ expected_revision: 4, samples: patches, preview_id: 'bound-token', acknowledge_locked_cards: true }) }));
 });

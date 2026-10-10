@@ -70,6 +70,8 @@ class EnergyStore:
         self.guard = threading.RLock()
         self.uploads = {}
         self.task_sources = None
+        from .cards import EnergyCards
+        self.cards = EnergyCards(self)
         # A previous process never publishes temporary sources as samples.
         for temp in self.root.glob('*.upload'):
             temp.unlink(missing_ok=True)
@@ -123,7 +125,7 @@ class EnergyStore:
                     doc['result']['input_fingerprint'] = input_fingerprint(doc)
                 if lock_current:
                     doc['lock_fingerprint'] = input_fingerprint(doc)
-                return doc
+                return self.cards.project(doc)
             except FileNotFoundError:
                 fail('能量比较集不存在', 'ENERGY_NOT_FOUND', 404)
 
@@ -138,10 +140,33 @@ class EnergyStore:
             return sorted(docs, key=lambda doc: doc['updated_at'], reverse=True)
 
     def save(self, doc):
+        path = self.directory(doc['id']) / 'metadata.json'
+        if doc.get('workflow') == 'cards' and path.is_file():
+            original = path.read_bytes()
+            if json.loads(original).get('schema_version') != 'pp.energy.v2':
+                backup = path.with_name('metadata.pp.energy.v1.backup.json')
+                if not backup.exists():
+                    # Preserve exact original bytes before the versioned atomic
+                    # replacement. A failed replacement leaves the original live.
+                    if self.committed_bytes() + len(original) + sum(self.uploads.values()) > MAX_STORE:
+                        fail('本地空间不足以保留可恢复迁移原件', 'ENERGY_QUOTA', 413)
+                    if shutil.disk_usage(self.root).free < len(original) + self.pending_disk_bytes():
+                        fail('本地空间不足以保留可恢复迁移原件', 'ENERGY_DISK_FULL', 413)
+                    temporary = backup.with_name(backup.name + '.' + uuid.uuid4().hex + '.tmp')
+                    try:
+                        with temporary.open('xb') as stream:
+                            stream.write(original)
+                            stream.flush()
+                            os.fsync(stream.fileno())
+                        os.replace(temporary, backup)
+                    finally:
+                        temporary.unlink(missing_ok=True)
+        doc.pop('card_projection', None)
+        doc.pop('card_migration', None)
         doc['revision'] += 1
         doc['updated_at'] = now()
-        self.write_json(self.directory(doc['id']) / 'metadata.json', doc)
-        return doc
+        self.write_json(path, doc)
+        return self.cards.project(doc)
 
     def committed_bytes(self):
         return sum(p.stat().st_size for p in self.root.rglob('*')
@@ -162,8 +187,10 @@ class EnergyStore:
                 fail('本地空间不足以原子保存能量记录', 'ENERGY_DISK_FULL', 413)
             atomic(path, value)
 
-    def create(self, title, analysis_kind=None):
+    def create(self, title, analysis_kind=None, workflow=None):
         with self.guard:
+            if workflow == 'cards' and analysis_kind is None:
+                fail('新计算卡分析必须明确选择分析类型', 'ENERGY_ANALYSIS_KIND_REQUIRED')
             if len(self.list()) >= 100:
                 fail('最多保存100个能量比较集', 'ENERGY_QUOTA', 413)
             ident = 'ec_' + uuid.uuid4().hex
@@ -173,6 +200,8 @@ class EnergyStore:
                    'result': None, 'limits': LIMITS, 'analysis_kind': analysis_kind,
                    'legacy_mode': analysis_kind is None, 'locked': False, 'lock_fingerprint': None,
                    'assignment_report': None}
+            if workflow == 'cards':
+                doc.update(schema_version='pp.energy.v2', workflow='cards', legacy_mode=False)
             try:
                 return self.save(doc)
             except BaseException:
@@ -186,8 +215,19 @@ class EnergyStore:
 
     @staticmethod
     def editable(doc):
+        if doc.get('workflow') == 'cards':
+            return
+        if (doc.get('card_migration') or {}).get('read_only') and doc['groups']:
+            fail('旧混合类型分析只读，请按明确类型复制', 'ENERGY_LEGACY_READ_ONLY', 409)
         if doc.get('locked'):
             fail('分析已锁定，请先解锁编辑', 'ENERGY_LOCKED', 409)
+
+    @staticmethod
+    def legacy_api(doc):
+        if doc.get('workflow') == 'cards':
+            fail('多计算卡分析请使用指定卡接口', 'ENERGY_CARD_WORKFLOW_REQUIRED', 409)
+        if (doc.get('card_migration') or {}).get('read_only') and doc['groups']:
+            fail('旧混合类型分析只读，请按明确类型复制', 'ENERGY_LEGACY_READ_ONLY', 409)
 
     def check_editable(self, ident, revision):
         with self.guard:
@@ -422,6 +462,7 @@ class EnergyStore:
         with self.guard:
             doc = self.read(ident)
             self.expect(doc, body['expected_revision'])
+            self.legacy_api(doc)
             self.editable(doc)
             old = copy.deepcopy(doc)
             if body.get('title') is not None:
@@ -526,6 +567,7 @@ class EnergyStore:
         from .assignment import plan
         with self.guard:
             doc = self.check_editable(ident, revision)
+            self.legacy_api(doc)
             if doc['legacy_mode']:
                 fail('旧分析请先按明确比较关系复制为所选类型，再自动分配', 'ENERGY_LEGACY_ASSIGNMENT', 409)
             if len(doc['groups']) > 1:
@@ -610,6 +652,7 @@ class EnergyStore:
         with self.guard:
             doc = self.read(ident)
             self.expect(doc, revision)
+            self.legacy_api(doc)
             self.verify_sources(doc)
             for sample in doc['samples']:
                 if sample['included'] and not groups_for(sample['id'], doc['groups']):
@@ -625,24 +668,26 @@ class EnergyStore:
         with self.guard:
             doc = self.read(ident)
             self.expect(doc, revision)
+            self.legacy_api(doc)
             doc['locked'] = False
             doc['lock_fingerprint'] = None
             return self.save(doc)
 
-    def copy_analysis(self, ident, revision, analysis_kind, title=None, group_id=None):
+    def copy_analysis(self, ident, revision, analysis_kind, title=None, group_id=None, workflow=None):
         with self.guard:
             source = self.read(ident)
             self.expect(source, revision)
             selected = [group for group in source['groups'] if group['kind'] == analysis_kind and
                         (group_id is None or group['id'] == group_id)]
-            if not selected:
+            empty_typed_copy = workflow == 'cards' and not source['groups'] and group_id is None
+            if not selected and not empty_typed_copy:
                 fail('所选类型或比较关系不存在', 'ENERGY_GROUP_INVALID')
-            if len(selected) > 1:
+            if len(selected) > 1 and workflow != 'cards':
                 fail('旧分析含多个参考条件，请明确选择一个比较关系复制', 'ENERGY_COPY_GROUP_REQUIRED', 409)
-            used = {sample['id'] for sample in source['samples'] if groups_for(sample['id'], selected)}
+            used = {sample['id'] for sample in source['samples'] if empty_typed_copy or groups_for(sample['id'], selected)}
             projected = {**source, 'samples': [s for s in source['samples'] if s['id'] in used]}
             self.verify_sources(projected)
-            doc = self.create(title or source['title'], analysis_kind)
+            doc = self.create(title or source['title'], analysis_kind, workflow)
             directory = self.directory(doc['id'])
             try:
                 mapping = {}
@@ -673,6 +718,9 @@ class EnergyStore:
                                                     (group.get('element_references') or {}).items()}
                     for target in group['targets']:
                         target['sample_id'] = mapping.get(target['sample_id'], target['sample_id'])
+                if workflow == 'cards':
+                    from .cards import fresh, CONFIG
+                    doc['groups'] = [fresh({key: group.get(key) for key in CONFIG}) for group in doc['groups']]
                 return self.save(doc)
             except BaseException:
                 shutil.rmtree(directory)
@@ -684,12 +732,15 @@ class EnergyStore:
                 path = self.directory(doc['id']) / (sample['id'] + '.bin')
                 if path.is_symlink() or not path.is_file() or self.file_fingerprint(path) != (
                         sample['source']['size_bytes'], sample['source']['sha256']):
-                    fail('原始来源缓存缺失或指纹改变，需重新导入', 'ENERGY_SOURCE_CHANGED', 409)
+                    from .errors import EnergyError
+                    raise EnergyError('ENERGY_SOURCE_CHANGED', '原始来源缓存缺失或指纹改变，需重新导入', 409,
+                                      sample_id=sample['id'], field='samples.' + sample['id'] + '.source')
 
     def calculate(self, ident, revision):
         with self.guard:
             doc = self.read(ident)
             self.expect(doc, revision)
+            self.legacy_api(doc)
             self.verify_sources(doc)
             self.valid_lock(doc)
             doc['result'] = {**calculate(doc), 'calculated_at': now()}
@@ -728,6 +779,7 @@ class EnergyStore:
     def export(self, ident):
         with self.guard:
             doc = self.read(ident)
+            self.legacy_api(doc)
             self.verify_sources(doc)
             self.valid_lock(doc)
             if not doc['result'] or doc['result']['input_fingerprint'] != input_fingerprint(doc):

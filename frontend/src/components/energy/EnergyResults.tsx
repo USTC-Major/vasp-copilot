@@ -3,7 +3,7 @@ import { Alert, Button, Space, Tag, Typography } from 'antd';
 import { energyApi, type EnergyCollection } from '../../api/energy';
 import { basisLabel, energyError, energyNumber, saveEnergyBlob } from './energyDraft';
 
-export default function EnergyResults({ collection, valid, expired }: { collection: EnergyCollection; valid: boolean; expired?: boolean }) {
+export default function EnergyResults({ collection, valid, expired, showExports = true }: { collection: EnergyCollection; valid: boolean; expired?: boolean; showExports?: boolean }) {
   const [error, setError] = useState('');
   const [downloading, setDownloading] = useState(false);
   const warnings = collection.result ? [...new Set([...collection.result.warnings, ...collection.result.groups.flatMap(group => [...group.warnings, ...group.rows.flatMap(row => row.warnings)])])] : [];
@@ -15,7 +15,7 @@ export default function EnergyResults({ collection, valid, expired }: { collecti
     finally { setDownloading(false); }
   }
   return <>
-    <Space wrap><Button disabled={!valid || downloading} onClick={() => void download('csv')}>导出能量 CSV</Button><Button disabled={!valid || downloading} onClick={() => void download('json')}>导出能量 JSON</Button></Space>
+    {showExports && <Space wrap><Button disabled={!valid || downloading} onClick={() => void download('csv')}>导出能量 CSV</Button><Button disabled={!valid || downloading} onClick={() => void download('json')}>导出能量 JSON</Button></Space>}
     {valid && collection.result ? <>
       <Typography.Paragraph type="secondary">计算时间：{collection.result.calculated_at}。负值表示相对于所选参考能量降低；不证明全局最优、热力学稳定或相对于所有竞争相稳定。</Typography.Paragraph>
       {!!warnings.length && <Alert type="warning" title={`包含 ${warnings.length} 项状态与可比性提示`} description={<details className="energy-details"><summary>展开完整提示（导出保留全部状态标记）</summary><ul>{warnings.map(warning => <li key={warning}>{warning}</li>)}</ul></details>} />}
