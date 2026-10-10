@@ -72,4 +72,8 @@
 
 验收中另修正脚本对脏草稿按钮、空分析重开和弹窗 loading 的定位假设；不是产品修复。保留各次失败截图和请求记录，按已完成场景恢复，未重复已成功主流程或 CSV 场景。最终机器记录为 `.tmp/pp22-retest-evidence/acceptance/browser-final-retry1/browser-results.json`；测试包为 `.tmp/pp22-retest-user-testpack`。
 
-集成只提交一次最终候选，复用 GitHub 当前提交的三个必需检查 `frontend`、`remote-file-posix`、`docker-smoke`。CI 和合并事实在 PR／内部交付回执补充；不提前把待运行 CI 记为通过。
+初次集成候选为 `4bce980` / PR #64，复用 GitHub 当前提交的三个必需检查 `frontend`、`remote-file-posix`、`docker-smoke`。CI 和合并事实在 PR／内部交付回执补充；不提前把待运行 CI 记为通过。
+
+首次 CI 后端集成和 Docker smoke 通过；前端625通过、2失败：路由测试仍断言旧空列表文案，另一个未改的工作流赝势测试在请求开始后立即断言 React 后续 effect 已取消请求。按具体失败补测与修正，不盲目重跑同一提交；已通过的产品浏览器证据继续复用。
+
+补修仅更新两处测试：路由核对新空分析说明、两种分析类型及类型选择前的禁用状态；赝势测试等待取消请求的 effect，再保留全部晚到响应不能恢复选择的断言。一次筛选命令得到2 passed／17 skipped，无产品修改，因此不重复构建或浏览器验收。更新候选后由现有工作流自动执行必需 CI，未手动重跑旧失败提交。

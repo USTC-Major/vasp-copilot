@@ -27,7 +27,10 @@ describe('路由懒加载', () => {
     renderRoute('/toolbox/postprocessing/energy');
     expect(await screen.findByRole('heading', { name: '基础能量' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: '基础能量' })).toHaveAttribute('aria-current', 'page');
-    expect(await screen.findByText('尚无能量比较集')).toBeInTheDocument();
+    expect(await screen.findByText('尚无能量分析')).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: '吸附能' })).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: '材料形成能' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '创建分析并导入数据' })).toBeDisabled();
   });
   it('表面构建页可从工具箱独立进入', async () => {
     server.use(http.get('/api/v1/toolbox/catalysis/drafts', () => HttpResponse.json({ mode: 'toolbox', drafts: [] })));
