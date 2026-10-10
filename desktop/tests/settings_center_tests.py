@@ -47,8 +47,9 @@ for scenario in ('ready', 'failure', 'webview-missing') + (('browser',) if args.
                 browser_result = json.loads((state/'browser-results.json').read_text(encoding='utf-8'))
             finally:
                 (state/'browser-done').touch()
-    assert child.wait(timeout=170)==0, scenario
+    exit_code = child.wait(timeout=170)
     result = json.loads((state/'results.json').read_text(encoding='utf-8-sig'))
+    assert exit_code == 0, result
     assert result['passed'] or result['missingRuntime'], result
     results.append(result)
 summary = {'passed':all(r['passed'] for r in results), 'actualWebViewUnavailable':any(r['missingRuntime'] for r in results),

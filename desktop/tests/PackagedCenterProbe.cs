@@ -49,7 +49,7 @@ class PackagedCenterProbe
                     Require(!buttons.Contains("工作流") && new[]{"设置","关于","重试启动","退出"}.All(buttons.Contains),"Top buttons incorrect");
                     if (args[3] == "failure" || args[3] == "webview-missing")
                     {
-                        await Wait(()=>Flag(form,"startupFailed"),60000,"missing Python did not fail");
+                        await Wait(()=>Flag(form,"startupFailed") && settingsButton.Enabled && ((Task)Field(form,"startup")).IsCompleted,60000,"failed startup did not finish cleanup and enable settings");
                         int opened=0;
                         using (var ui = new System.Windows.Forms.Timer { Interval=50 })
                         {
