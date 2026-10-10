@@ -1,10 +1,11 @@
-import React, { useContext, useState } from 'react';
+import React, { useContext, useEffect, useState } from 'react';
 import { ConfigProvider, Button, theme } from 'antd';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { HomeOutlined, BuildOutlined, BugOutlined, RobotOutlined, ToolOutlined, SettingOutlined, SunOutlined, MoonOutlined, CloudUploadOutlined } from '@ant-design/icons';
 import './scientific-workflow.css';
 import { hasScientificContent, workspaceLocation } from './scientificNavigation';
 import { readWorkflowTheme, WORKFLOW_THEME_KEY, type WorkflowTheme } from './workflowTheme';
+import { connectDesktopSettings, useDesktopSettings } from '../../utils/desktopSettings';
 
 const links = [
   { to: '/', label: '首页', icon: <HomeOutlined /> },
@@ -13,13 +14,15 @@ const links = [
   { to: '/toolbox/postprocessing', label: '结果后处理', icon: <ToolOutlined /> },
   { to: '/workflow', label: '生成工作流', icon: <BuildOutlined /> },
   { to: '/diagnosis/upload', label: '诊断计算', icon: <BugOutlined /> },
-  { to: '/toolbox/settings', label: '执行设置', icon: <SettingOutlined /> },
 ];
 
 /** Shared navigation theme; other tools keep the enclosing application's content theme. */
 export default function ScientificWorkflowShell({ children, auxiliary, fakeHpcEnabled = false }: { children: React.ReactNode; auxiliary?: React.ReactNode; fakeHpcEnabled?: boolean }) {
   const { theme: contentTheme } = useContext(ConfigProvider.ConfigContext);
   const { pathname } = useLocation();
+  const navigate = useNavigate();
+  const desktop = useDesktopSettings();
+  useEffect(() => connectDesktopSettings(() => navigate('/settings')), [navigate]);
   const position = workspaceLocation(pathname);
   const scientificContent = hasScientificContent(pathname);
   const navigation = fakeHpcEnabled ? [...links, { to: '/hpc/deploy', label: '远程部署（离线演示）', icon: <CloudUploadOutlined /> }] : links;
@@ -64,7 +67,7 @@ export default function ScientificWorkflowShell({ children, auxiliary, fakeHpcEn
             <span className="wf-breadcrumb" aria-label="当前位置">{position.group}<span>/</span><strong>{position.title}</strong></span>
             <div className="wf-topbar-actions">
               <Button type="text" icon={dark ? <SunOutlined /> : <MoonOutlined />} onClick={toggleTheme} aria-label={dark ? '切换浅色主题' : '切换深色主题'}>{dark ? '浅色' : '深色'}</Button>
-              <Link to="/ai/settings" aria-label="智能设置" aria-current={position.current === '/ai/settings' ? 'page' : undefined}><SettingOutlined /></Link>
+              {!desktop && <Link to="/settings" aria-label="设置" aria-current={position.current === '/settings' ? 'page' : undefined}><SettingOutlined /><span>设置</span></Link>}
             </div>
           </header>
           <main id="workspace-content" tabIndex={-1} className={`wf-main${scientificContent ? ' scientific-workflow' : ' wf-tool-content'}`}>

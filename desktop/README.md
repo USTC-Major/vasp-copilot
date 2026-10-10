@@ -10,6 +10,8 @@ v0.4.1 支持标准 Windows x64 CPython 3.11–3.14，改进注册信息、PATH�
 
 ## 前提
 
+正常桌面的全局按钮为“设置 / 关于 / 重试启动 / 退出”。设置通过受控消息软切换到 `/settings`，嵌入网页不再显示重复齿轮，两种环境都移除侧栏执行设置。中心复用现有模型/材料/超算表单；AI 不可达时使用既有 Toolbox 接口。原生启动表单在故障时直接回退可用，保存真正改变启动配置前说明重启影响并确认；未改变配置不重新加载当前文档。
+
 - 64 位 Windows，已安装 .NET Framework 4.8 或更高版本及其 Framework64 C# 编译器。
 - Node.js 24 和 npm。前端依赖由既有 `frontend/package-lock.json` 固定；不新增或升级依赖。
 - 运行桌面时已有 WebView2 Runtime；SDK 是编译依赖，不能代替 Runtime。脚本不安装 Runtime。
@@ -29,6 +31,8 @@ v0.4.1 支持标准 Windows x64 CPython 3.11–3.14，改进注册信息、PATH�
 ```
 
 `-FrontendDependencies existing` 仅供已恢复依赖后的增量构建，不是干净检出证明。干净检出无需旧 `node_modules`、`dist`、DLL、EXE 或本机 `.tmp` 目录。前端目录存在 `.env*` 文件时构建明确拒绝，避免读取个人构建配置。
+
+`desktop/test.ps1` 包含实际包设置中心探针：生产 EXE 的原生壳/表单、生产前端、合成数据与真实本地服务，检查入口、草稿、故障配置恢复、基础保存和未配置 SSH 反馈。WebView2 缺失会明确记为实际 UI 未执行，不能据此宣称界面验收通过。独立浏览器可另执行 `python desktop/tests/settings_center_tests.py --browser 'C:/path/to/chrome.exe'`，使用已安装 Chromium 和 Node 24、独立临时 profile 与固定本地服务，阻断外部请求，无新增测试依赖。
 
 ## 自动运行环境
 

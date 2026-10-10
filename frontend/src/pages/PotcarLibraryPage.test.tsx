@@ -273,6 +273,6 @@ it('延迟旧库详情在选择另一库后到达，不污染当前详情', asyn
 
 it('POTCAR路由精确继承科研主题，不把未知子路由纳入', () => {
   expect(hasScientificContent('/Toolbox/Potcar/')).toBe(true);
-  expect(workspaceLocation('/toolbox/potcar')).toEqual({ current: '/toolbox/settings', group: '工具箱', title: '本地赝势库' });
+  expect(workspaceLocation('/toolbox/potcar')).toEqual({ current: '/settings', group: '工具箱', title: '本地赝势库' });
   expect(hasScientificContent('/toolbox/potcar/unknown')).toBe(false);
 });

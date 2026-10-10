@@ -272,6 +272,6 @@ it('本地文件读取支持UTF8和2MiB上限，旧文件读响应不得覆盖�
 
 it('拼接路由精确匹配科研深浅主题，未知子路由不匹配', () => {
   expect(hasScientificContent('/Toolbox/Potcar/Assemble/')).toBe(true);
-  expect(workspaceLocation('/toolbox/potcar/assemble')).toEqual({ current: '/toolbox/settings', group: '工具箱', title: '拼接 POTCAR' });
+  expect(workspaceLocation('/toolbox/potcar/assemble')).toEqual({ current: '/settings', group: '工具箱', title: '拼接 POTCAR' });
   expect(hasScientificContent('/toolbox/potcar/assemble/unknown')).toBe(false);
 });

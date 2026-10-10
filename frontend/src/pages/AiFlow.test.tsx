@@ -562,7 +562,9 @@ describe('AI 前端整合（M12）', () => {
 
   it('设置页渲染全局设置表单与连通测试入口', async () => {
     renderPath('/ai/settings');
-    expect(await screen.findByText('智能体设置')).toBeInTheDocument();
+    expect(await screen.findByRole('textbox', { name: '模型名称' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '设置', level: 1 })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '模型与材料' })).toBeInTheDocument();
     expect(screen.getByText('最大作业数')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /测试 LLM/ })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /保存设置/ })).toBeInTheDocument();

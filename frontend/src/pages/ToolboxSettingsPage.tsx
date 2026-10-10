@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, Button, Card, Col, Form, Input, InputNumber, Modal, Row, Select, Space, Spin, Typography, message } from 'antd';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
@@ -33,7 +33,7 @@ const toForm = (settings: ToolboxSettings): SettingsForm => ({
   scheduler_backend: settings.ssh.scheduler_backend ?? 'slurm',
 });
 
-const ToolboxSettingsPage: React.FC = () => {
+const ToolboxSettingsPage: React.FC<{ embedded?: boolean; modelNotice?: React.ReactNode; onDirtyChange?: (dirty: boolean) => void }> = ({ embedded = false, modelNotice, onDirtyChange }) => {
   const [modal, contextHolder] = Modal.useModal();
   const [form] = Form.useForm<SettingsForm>();
   const settingsQuery = useQuery({ queryKey: ['toolboxSettings'], queryFn: () => toolboxApi.getSettings(), retry: false });
@@ -43,6 +43,15 @@ const ToolboxSettingsPage: React.FC = () => {
   const [mpSecret, setMpSecret] = useState('');
   // 页面加载时服务端给过的值，用于保存前判断“是否已被他处改动”。
   const loadedRef = useRef<SettingsForm | null>(null);
+  const pendingSecrets = useRef(false);
+  pendingSecrets.current = Boolean(sshPassword || mpSecret);
+  const reportDirty = useCallback(() => {
+    const snapshot = loadedRef.current;
+    const values = form.getFieldsValue();
+    onDirtyChange?.(Boolean(sshPassword || mpSecret || (snapshot && (Object.keys(snapshot) as (keyof SettingsForm)[])
+      .some(key => String(values[key]) !== String(snapshot[key])))));
+  }, [form, sshPassword, mpSecret, onDirtyChange]);
+  useEffect(reportDirty, [reportDirty]);
 
   useEffect(() => {
     const settings = settingsQuery.data?.settings;
@@ -50,7 +59,8 @@ const ToolboxSettingsPage: React.FC = () => {
     const next = toForm(settings);
     form.setFieldsValue(next);
     loadedRef.current = next;
-  }, [form, settingsQuery.data]);
+    onDirtyChange?.(pendingSecrets.current);
+  }, [form, settingsQuery.data, onDirtyChange]);
 
   const confirmOverwrite = (conflicts: string[]) =>
     new Promise<boolean>((resolve) => {
@@ -125,11 +135,12 @@ const ToolboxSettingsPage: React.FC = () => {
     }
   };
 
-  if (settingsQuery.isPending) return <div className="scientific-settings settings-loading" role="status">{contextHolder}<Spin aria-label="Toolbox 设置加载中" /><Text type="secondary">正在读取执行设置…</Text></div>;
+  if (settingsQuery.isPending) return <div className="scientific-settings settings-loading" role="status">{contextHolder}{embedded && <><Title level={2} id="settings-models" tabIndex={-1}>模型与材料</Title>{modelNotice}<Title level={2} id="settings-execution" tabIndex={-1}>超算与执行</Title></>}<Spin aria-label="Toolbox 设置加载中" /><Text type="secondary">正在读取执行设置…</Text></div>;
   if (settingsQuery.isError || !settingsQuery.data?.settings) {
     return <div className="scientific-settings settings-unavailable">
       {contextHolder}
-      <div className="settings-heading"><Title level={1}>Toolbox 执行设置</Title></div>
+      {embedded && <><Title level={2} id="settings-models" tabIndex={-1}>模型与材料</Title>{modelNotice}</>}
+      <div className="settings-heading"><Title level={embedded ? 2 : 1} id={embedded ? 'settings-execution' : undefined} tabIndex={-1}>{embedded ? '超算与执行' : 'Toolbox 执行设置'}</Title></div>
       <Alert type="error" showIcon message="无法读取 Toolbox 设置" description="设置尚未读取成功，请检查 Toolbox 服务后重试。" />
       <Button onClick={() => void settingsQuery.refetch()} loading={settingsQuery.isFetching}>重试读取设置</Button>
       <Link to="/toolbox/potcar">管理本地 POTCAR 赝势库</Link>
@@ -139,9 +150,20 @@ const ToolboxSettingsPage: React.FC = () => {
   return (
     <div className="scientific-settings settings-toolbox">
       {contextHolder}
-      <div className="settings-heading"><Title level={1}>Toolbox 执行设置</Title><Paragraph type="secondary">这些设置不依赖模型或智能模式。SSH 测试只检查连接，不提交作业。</Paragraph></div>
+      {!embedded && <div className="settings-heading"><Title level={1}>Toolbox 执行设置</Title><Paragraph type="secondary">这些设置不依赖模型或智能模式。SSH 测试只检查连接，不提交作业。</Paragraph></div>}
       <Paragraph><Link to="/toolbox/potcar">管理本地 POTCAR 赝势库</Link>（登记、扫描与默认库，不改变 SSH 或模型设置）</Paragraph>
-      <Form form={form} layout="vertical" onFinish={(values) => void save(values)}>
+      {embedded && <Title level={2} id="settings-models" tabIndex={-1}>模型与材料</Title>}
+      {modelNotice}
+      <Row gutter={[18, 18]}>
+        <Col xs={24} lg={12}>
+          <Card title="Materials Project 密钥">
+            <Text type="secondary">仅用于既有 MP 搜索与导入；基础本地任务不要求配置。</Text>
+            <Space.Compact className="settings-secret-controls" style={{ width: '100%', marginTop: 12 }}><Input.Password aria-label="新的 Materials Project 密钥" value={mpSecret} onChange={(event) => setMpSecret(event.target.value)} placeholder={settingsQuery.data?.settings.materials_project.configured ? '已配置；输入新值可替换' : '未配置'} /><Button disabled={!mpSecret} onClick={() => void saveSecret('mp', mpSecret)}>保存</Button><Button danger onClick={() => void saveSecret('mp', '')}>清除</Button></Space.Compact>
+          </Card>
+        </Col>
+      </Row>
+      {embedded && <Title level={2} id="settings-execution" tabIndex={-1}>超算与执行</Title>}
+      <Form form={form} layout="vertical" onValuesChange={reportDirty} onFinish={(values) => void save(values)}>
         <Row gutter={[18, 18]}>
           <Col xs={24} lg={10}>
             <Card title="监控与并发">
@@ -172,12 +194,7 @@ const ToolboxSettingsPage: React.FC = () => {
             <Space.Compact className="settings-secret-controls" style={{ width: '100%', marginTop: 12 }}><Input.Password aria-label="新的 SSH 密码" value={sshPassword} onChange={(event) => setSshPassword(event.target.value)} placeholder="输入新密码以替换" /><Button disabled={!sshPassword} onClick={() => void saveSecret('ssh', sshPassword)}>保存</Button><Button danger onClick={() => void saveSecret('ssh', '')}>清除</Button></Space.Compact>
           </Card>
         </Col>
-        <Col xs={24} lg={12}>
-          <Card title="Materials Project 密钥">
-            <Text type="secondary">仅用于既有 MP 搜索与导入；基础本地任务不要求配置。</Text>
-            <Space.Compact className="settings-secret-controls" style={{ width: '100%', marginTop: 12 }}><Input.Password aria-label="新的 Materials Project 密钥" value={mpSecret} onChange={(event) => setMpSecret(event.target.value)} placeholder={settingsQuery.data?.settings.materials_project.configured ? '已配置；输入新值可替换' : '未配置'} /><Button disabled={!mpSecret} onClick={() => void saveSecret('mp', mpSecret)}>保存</Button><Button danger onClick={() => void saveSecret('mp', '')}>清除</Button></Space.Compact>
-          </Card>
-        </Col>
+
       </Row>
     </div>
   );
