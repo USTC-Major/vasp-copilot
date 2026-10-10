@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Matrix3, Vec3 } from '../../types/structure-geometry';
-import { alongAxis, cellCorners, dot, multiply, norm, project, projectionLayout, rotate, standardCrystalOrientation, unit } from './crystalMath';
+import { alongAxis, cellCorners, centeredProjectionLayout, dot, multiply, norm, project, projectionExtent, projectionLayout, rotate, standardCrystalOrientation, unit, wheelZoomFactor, zoomByFactor } from './crystalMath';
 
 const hex: Matrix3 = [[5,0,0],[-2.5,5*Math.sqrt(3)/2,0],[0,0,13.7]];
 const triclinic: Matrix3 = [[3,.2,.1],[1,4,.3],[.2,.8,5]];
@@ -42,5 +42,39 @@ describe('approved crystal projection math',()=>{
       const xy=projectionLayout(points,width,height,compact);
       for(const p of points){const [x,y]=xy(p);expect(x).toBeGreaterThanOrEqual(compact?14:27-1e-9);expect(x).toBeLessThanOrEqual(width-(compact?14:27)+1e-9);expect(y).toBeGreaterThanOrEqual(compact?14:65-1e-9);expect(y).toBeLessThanOrEqual(height-(compact?14:110)+1e-9);}
     }
+  });
+  it('captures a centered fit that holds scale and pivot through rotation and explicit refits',()=>{
+    const center=cellCorners(triclinic)[7].map(v=>v/2) as Vec3;
+    const points=[...cellCorners(triclinic),[14,-8,22] as Vec3].map(v=>v.map((value,i)=>value-center[i]) as Vec3);
+    const initial=standardCrystalOrientation(triclinic),rotated=rotate(initial,.9,.7);
+    const extent=projectionExtent(points.map(v=>project(initial,v)));
+    const xy=centeredProjectionLayout(extent,640,440,1.2),origin=xy([0,0,0]);
+    const scale=xy([1,0,0])[0]-origin[0];
+    for(const camera of [initial,rotated,alongAxis(triclinic,0)])for(const point of points){
+      const projected=project(camera,point),screen=xy(projected);
+      expect(screen[0]-origin[0]).toBeCloseTo(projected[0]*scale,12);
+      expect(screen[1]-origin[1]).toBeCloseTo(-projected[1]*scale,12);
+    }
+    const refit=projectionExtent(points.map(v=>project(rotated,v)));
+    for(const [width,height] of [[298,340],[640,440]] as const){
+      const resized=centeredProjectionLayout(refit,width,height);
+      expect(resized([0,0,0])).toEqual([width/2,65+(height-175)/2]);
+      for(const point of points){
+        const [x,y]=resized(project(rotated,point));
+        expect(x).toBeGreaterThanOrEqual(27-1e-9);expect(x).toBeLessThanOrEqual(width-27+1e-9);
+        expect(y).toBeGreaterThanOrEqual(65-1e-9);expect(y).toBeLessThanOrEqual(height-110+1e-9);
+      }
+    }
+  });
+  it('normalizes and bounds wheel inputs while preserving small trackpad movements',()=>{
+    expect(wheelZoomFactor(32,0,440)).toBe(wheelZoomFactor(2,1,440));
+    expect(wheelZoomFactor(32,0,440)).toBe(wheelZoomFactor(32/440,2,440));
+    expect(wheelZoomFactor(Infinity,0,440)).toBe(1);expect(wheelZoomFactor(NaN,0,440)).toBe(1);
+    expect(wheelZoomFactor(1e200,0,440)).toBe(wheelZoomFactor(240,0,440));
+    expect(wheelZoomFactor(-1e200,0,440)).toBe(wheelZoomFactor(-240,0,440));
+    let zoom=1;for(let i=0;i<100;i++)zoom=zoomByFactor(zoom,wheelZoomFactor(-.1,0,440));
+    expect(zoom).toBeGreaterThan(1.01);
+    expect(zoomByFactor(zoom,Infinity)).toBe(zoom);expect(zoomByFactor(zoom,NaN)).toBe(zoom);expect(zoomByFactor(zoom,-1)).toBe(zoom);
+    expect(zoomByFactor(2,2)).toBe(2.5);expect(zoomByFactor(.7,.1)).toBe(.6);
   });
 });
