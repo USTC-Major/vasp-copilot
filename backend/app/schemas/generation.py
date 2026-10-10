@@ -121,6 +121,7 @@ class StructureContext(_StrictModel):
     atom_count: Optional[int] = None
     lattice: Optional[LatticeInfo] = None
     coordinate_mode: str = "direct"
+    selective_dynamics: bool = False
     poscar_text: Optional[str] = None
     source_sha256: Optional[str] = None
     source_material_id: Optional[str] = None

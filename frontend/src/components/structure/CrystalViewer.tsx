@@ -126,22 +126,24 @@ function LoadedViewer({data,cameras}: {data:StructureGeometry;cameras:Cameras}) 
   </div>;
 }
 
-export default function CrystalViewer({structureId}: {structureId:string}) {
-  const query=useStructureGeometry(structureId);
+export function CrystalGeometryViewer({data}: {data:StructureGeometry}) {
   // Valid generation inputs can be too ill-conditioned for a dependable camera.
   // Scope all standard/axis math failures to the optional viewer, not workflow.
   const cameras=useMemo<Cameras|null>(()=>{
-    const data=query.data;
-    if(!data)return null;
     try {
       if(!data.sites?.length||!data.sites.every(site=>site.fractional?.length===3&&site.cartesian_angstrom?.length===3&&[...site.fractional,...site.cartesian_angstrom].every(Number.isFinite))||
          data.basis_cartesian_angstrom?.length!==3||data.basis_cartesian_angstrom.some(v=>v.length!==3||!v.every(Number.isFinite)||norm(v)<1e-8))return null;
       return {standard:standardCrystalOrientation(data.basis_cartesian_angstrom),axes:[alongAxis(data.basis_cartesian_angstrom,0),alongAxis(data.basis_cartesian_angstrom,1),alongAxis(data.basis_cartesian_angstrom,2)]};
     } catch { return null; }
-  },[query.data]);
+  },[data]);
+  if(!cameras)return <Alert type="warning" showIcon title="当前晶格无法可靠显示" description="晶格方向或坐标无法可靠投影。"/>;
+  return <LoadedViewer key={data.structure_id} data={data} cameras={cameras}/>;
+}
+
+export default function CrystalViewer({structureId}: {structureId:string}) {
+  const query=useStructureGeometry(structureId);
   if(query.isPending)return <div className="cv-loading"><Spin size="small"/> 正在读取结构坐标</div>;
   if(query.isError)return <Alert type="warning" showIcon title="结构查看暂不可用" description={<><p>{query.error.message}</p><Button size="small" onClick={()=>query.refetch()}>重试结构查看</Button><p>原摘要和工作流操作仍可使用。</p></>}/>;
   if(!query.data)return null;
-  if(!cameras)return <Alert type="warning" showIcon title="当前晶格无法可靠显示" description="晶格方向或坐标无法可靠投影。原摘要和工作流操作仍可使用。"/>;
-  return <LoadedViewer key={structureId} data={query.data} cameras={cameras}/>;
+  return <CrystalGeometryViewer data={query.data}/>;
 }

@@ -22,6 +22,13 @@ const renderRoute = (path: string) => {
 };
 
 describe('路由懒加载', () => {
+  it('表面构建页可从工具箱独立进入', async () => {
+    server.use(http.get('/api/v1/toolbox/catalysis/drafts', () => HttpResponse.json({ mode: 'toolbox', drafts: [] })));
+    renderRoute('/toolbox/surface-builder');
+    expect(await screen.findByRole('heading', { name: '表面构建' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '使用合成 Pt 示例' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '表面构建' })).toHaveAttribute('aria-current', 'page');
+  });
   it('POTCAR独立拼接页可渲染（懒加载）', async () => {
     server.use(http.get('/api/v1/toolbox/potcar/libraries', () => HttpResponse.json({ mode: 'toolbox', libraries: [], default_library_id: null, revision: 0 })));
     renderRoute('/toolbox/potcar/assemble');

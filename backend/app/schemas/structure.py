@@ -128,6 +128,8 @@ def validated_structure_context(context: StructureContext) -> StructureContext:
         "formula": summary.formula, "lattice": summary.lattice,
         "source_sha256": summary.source_sha256,
         "transition_metals": list(summary.transition_metals),
+        "coordinate_mode": summary.coordinate_mode,
+        "selective_dynamics": summary.selective_dynamics,
     })
 
 
@@ -144,4 +146,6 @@ def to_structure_context(summary: StructureSummary) -> StructureContext:
         source_sha256=summary.source_sha256,
         source_material_id=summary.source_material_id,
         transition_metals=list(summary.transition_metals),
+        coordinate_mode=summary.coordinate_mode,
+        selective_dynamics=summary.selective_dynamics,
     )

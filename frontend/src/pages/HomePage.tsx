@@ -79,6 +79,7 @@ const HomePage: React.FC = () => {
   const toolboxEntries = [
     { key: '/toolbox/projects', icon: <ToolOutlined />, title: '计算任务', desc: '无需模型，直接准备输入、人工确认、提交、监控并查看报告' },
     { key: '/workflow', icon: <BuildOutlined />, title: '生成工作流', desc: '根据结构和计算需求，生成并下载 VASP 输入文件' },
+    { key: '/toolbox/surface-builder', icon: <BuildOutlined />, title: '表面构建', desc: '切出指定晶面，选择终止面和固定层，保存草稿并导出结构' },
     { key: '/diagnosis/upload', icon: <BugOutlined />, title: '诊断计算', desc: '分析计算输出，查看问题、收敛趋势与处理建议' },
     ...(fakeHpcEnabled
       ? [{ key: '/hpc/deploy', icon: <CloudUploadOutlined />, title: '远程部署（离线演示）', desc: 'Fake HPC 工具箱演示：不连接真实集群，不代表智能任务的运行环境' }]
