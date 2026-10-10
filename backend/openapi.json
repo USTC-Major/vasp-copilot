@@ -3377,6 +3377,404 @@
           }
         }
       }
+    },
+    "/api/v1/toolbox/catalysis/drafts": {
+      "get": {
+        "tags": [
+          "Toolbox execution",
+          "Catalysis preparation"
+        ],
+        "summary": "List Drafts",
+        "operationId": "list_drafts_api_v1_toolbox_catalysis_drafts_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DraftListResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Toolbox execution",
+          "Catalysis preparation"
+        ],
+        "summary": "Create Draft",
+        "operationId": "create_draft_api_v1_toolbox_catalysis_drafts_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateDraft"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DraftResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/catalysis/drafts/{draft_id}": {
+      "get": {
+        "tags": [
+          "Toolbox execution",
+          "Catalysis preparation"
+        ],
+        "summary": "Get Draft",
+        "operationId": "get_draft_api_v1_toolbox_catalysis_drafts__draft_id__get",
+        "parameters": [
+          {
+            "name": "draft_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Draft Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DraftResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Toolbox execution",
+          "Catalysis preparation"
+        ],
+        "summary": "Patch Draft",
+        "operationId": "patch_draft_api_v1_toolbox_catalysis_drafts__draft_id__patch",
+        "parameters": [
+          {
+            "name": "draft_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Draft Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchDraft"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DraftResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/catalysis/drafts/{draft_id}/surfaces": {
+      "post": {
+        "tags": [
+          "Toolbox execution",
+          "Catalysis preparation"
+        ],
+        "summary": "Build Surfaces",
+        "operationId": "build_surfaces_api_v1_toolbox_catalysis_drafts__draft_id__surfaces_post",
+        "parameters": [
+          {
+            "name": "draft_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Draft Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BuildSurfaces"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DraftResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/catalysis/drafts/{draft_id}/constraints": {
+      "post": {
+        "tags": [
+          "Toolbox execution",
+          "Catalysis preparation"
+        ],
+        "summary": "Set Constraints",
+        "operationId": "set_constraints_api_v1_toolbox_catalysis_drafts__draft_id__constraints_post",
+        "parameters": [
+          {
+            "name": "draft_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Draft Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetConstraints"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DraftResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/catalysis/drafts/{draft_id}/geometry": {
+      "get": {
+        "tags": [
+          "Toolbox execution",
+          "Catalysis preparation"
+        ],
+        "summary": "Get Geometry",
+        "operationId": "get_geometry_api_v1_toolbox_catalysis_drafts__draft_id__geometry_get",
+        "parameters": [
+          {
+            "name": "draft_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Draft Id"
+            }
+          },
+          {
+            "name": "revision",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "Revision"
+            }
+          },
+          {
+            "name": "surface_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 80
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Surface Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/toolbox/catalysis/drafts/{draft_id}/export": {
+      "get": {
+        "tags": [
+          "Toolbox execution",
+          "Catalysis preparation"
+        ],
+        "summary": "Export Draft",
+        "operationId": "export_draft_api_v1_toolbox_catalysis_drafts__draft_id__export_get",
+        "parameters": [
+          {
+            "name": "draft_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Draft Id"
+            }
+          },
+          {
+            "name": "revision",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "Revision"
+            }
+          },
+          {
+            "name": "surface_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 80
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Surface Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -3483,6 +3881,139 @@
         "title": "ApiEnvelope",
         "description": "带 request_id 的统一 API 响应（MVP 6）。"
       },
+      "AtomProvenance": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "import",
+              "surface_replica"
+            ],
+            "title": "Kind"
+          },
+          "source_atom_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Atom Id"
+          },
+          "source_index": {
+            "type": "integer",
+            "title": "Source Index"
+          },
+          "replica_ordinal": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replica Ordinal"
+          },
+          "mapping": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mapping"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "kind",
+          "source_index"
+        ],
+        "title": "AtomProvenance"
+      },
+      "AtomSnapshot": {
+        "properties": {
+          "atom_id": {
+            "type": "string",
+            "title": "Atom Id"
+          },
+          "element": {
+            "type": "string",
+            "title": "Element"
+          },
+          "fractional": {
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "type": "array",
+            "maxItems": 3,
+            "minItems": 3,
+            "title": "Fractional"
+          },
+          "cartesian": {
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "type": "array",
+            "maxItems": 3,
+            "minItems": 3,
+            "title": "Cartesian"
+          },
+          "selective_dynamics": {
+            "prefixItems": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "boolean"
+              }
+            ],
+            "type": "array",
+            "maxItems": 3,
+            "minItems": 3,
+            "title": "Selective Dynamics"
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/AtomProvenance"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "atom_id",
+          "element",
+          "fractional",
+          "cartesian",
+          "selective_dynamics",
+          "provenance"
+        ],
+        "title": "AtomSnapshot"
+      },
       "BandGapRange": {
         "properties": {
           "min": {
@@ -3542,6 +4073,82 @@
         ],
         "title": "Body_upload_api_v1_files_upload_post"
       },
+      "BuildSurfaces": {
+        "properties": {
+          "revision": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Revision"
+          },
+          "miller_index": {
+            "prefixItems": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "type": "array",
+            "maxItems": 3,
+            "minItems": 3,
+            "title": "Miller Index",
+            "default": [
+              1,
+              1,
+              1
+            ]
+          },
+          "min_slab_size": {
+            "type": "number",
+            "maximum": 100.0,
+            "minimum": 0.5,
+            "title": "Min Slab Size",
+            "default": 8
+          },
+          "min_vacuum_size": {
+            "type": "number",
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Min Vacuum Size",
+            "default": 15
+          },
+          "in_plane_supercell": {
+            "prefixItems": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "type": "array",
+            "maxItems": 2,
+            "minItems": 2,
+            "title": "In Plane Supercell",
+            "default": [
+              2,
+              2
+            ]
+          },
+          "layer_tolerance": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.001,
+            "title": "Layer Tolerance",
+            "default": 0.1
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "revision"
+        ],
+        "title": "BuildSurfaces"
+      },
       "ChatHistoryRequest": {
         "properties": {
           "messages": {
@@ -3594,6 +4201,26 @@
           "message"
         ],
         "title": "ChatRequest"
+      },
+      "CreateDraft": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Name",
+            "default": "表面建模草稿"
+          },
+          "source": {
+            "$ref": "#/components/schemas/SourceInput"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "source"
+        ],
+        "title": "CreateDraft"
       },
       "DftuEntry": {
         "properties": {
@@ -3711,6 +4338,193 @@
         "additionalProperties": false,
         "type": "object",
         "title": "DftuSettings"
+      },
+      "Draft": {
+        "properties": {
+          "draft_id": {
+            "type": "string",
+            "title": "Draft Id"
+          },
+          "schema_version": {
+            "type": "integer",
+            "const": 1,
+            "title": "Schema Version"
+          },
+          "revision": {
+            "type": "integer",
+            "title": "Revision"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At"
+          },
+          "source": {
+            "$ref": "#/components/schemas/SourceRecord"
+          },
+          "input_snapshot": {
+            "$ref": "#/components/schemas/StructureSnapshot"
+          },
+          "parameters": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SurfaceParams"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "surfaces": {
+            "items": {
+              "$ref": "#/components/schemas/SurfaceOption"
+            },
+            "type": "array",
+            "title": "Surfaces"
+          },
+          "active_surface_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Surface Id"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Warnings"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "draft_id",
+          "schema_version",
+          "revision",
+          "name",
+          "created_at",
+          "updated_at",
+          "source",
+          "input_snapshot",
+          "parameters",
+          "surfaces",
+          "active_surface_id",
+          "warnings"
+        ],
+        "title": "Draft"
+      },
+      "DraftListResponse": {
+        "properties": {
+          "mode": {
+            "type": "string",
+            "const": "toolbox",
+            "title": "Mode",
+            "default": "toolbox"
+          },
+          "drafts": {
+            "items": {
+              "$ref": "#/components/schemas/DraftSummary"
+            },
+            "type": "array",
+            "title": "Drafts"
+          }
+        },
+        "type": "object",
+        "required": [
+          "drafts"
+        ],
+        "title": "DraftListResponse"
+      },
+      "DraftResponse": {
+        "properties": {
+          "mode": {
+            "type": "string",
+            "const": "toolbox",
+            "title": "Mode",
+            "default": "toolbox"
+          },
+          "draft": {
+            "$ref": "#/components/schemas/Draft"
+          }
+        },
+        "type": "object",
+        "required": [
+          "draft"
+        ],
+        "title": "DraftResponse"
+      },
+      "DraftSummary": {
+        "properties": {
+          "draft_id": {
+            "type": "string",
+            "title": "Draft Id"
+          },
+          "revision": {
+            "type": "integer",
+            "title": "Revision"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At"
+          },
+          "source_role": {
+            "type": "string",
+            "enum": [
+              "bulk",
+              "slab"
+            ],
+            "title": "Source Role"
+          },
+          "atom_count": {
+            "type": "integer",
+            "title": "Atom Count"
+          },
+          "surface_count": {
+            "type": "integer",
+            "title": "Surface Count"
+          },
+          "active_surface_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Surface Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "draft_id",
+          "revision",
+          "name",
+          "updated_at",
+          "source_role",
+          "atom_count",
+          "surface_count",
+          "active_surface_id"
+        ],
+        "title": "DraftSummary"
       },
       "ElectronicType": {
         "type": "string",
@@ -3885,6 +4699,33 @@
         "additionalProperties": false,
         "type": "object",
         "title": "LatticeInfo"
+      },
+      "Layer": {
+        "properties": {
+          "layer_index": {
+            "type": "integer",
+            "title": "Layer Index"
+          },
+          "atom_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Atom Ids"
+          },
+          "projection_angstrom": {
+            "type": "number",
+            "title": "Projection Angstrom"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "layer_index",
+          "atom_ids",
+          "projection_angstrom"
+        ],
+        "title": "Layer"
       },
       "LlmConfigUpdate": {
         "properties": {
@@ -4184,6 +5025,56 @@
         "title": "ParameterPatch",
         "description": "typed patch（7.18 节）。operation 枚举固定为 add/replace/remove。"
       },
+      "PatchDraft": {
+        "properties": {
+          "revision": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Revision"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 120,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "active_surface_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 80
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Surface Id"
+          },
+          "parameters": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SurfaceParams"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "revision"
+        ],
+        "title": "PatchDraft"
+      },
       "PatchOperation": {
         "type": "string",
         "enum": [
@@ -4408,6 +5299,178 @@
         "type": "object",
         "title": "SearchRequest"
       },
+      "SetConstraints": {
+        "properties": {
+          "revision": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Revision"
+          },
+          "bottom_fixed_layers": {
+            "type": "integer",
+            "maximum": 2048.0,
+            "minimum": 0.0,
+            "title": "Bottom Fixed Layers"
+          },
+          "atom_overrides": {
+            "additionalProperties": {
+              "type": "string",
+              "enum": [
+                "fixed",
+                "free"
+              ]
+            },
+            "type": "object",
+            "maxProperties": 2048,
+            "title": "Atom Overrides"
+          },
+          "reset_existing": {
+            "type": "boolean",
+            "title": "Reset Existing",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "revision",
+          "bottom_fixed_layers"
+        ],
+        "title": "SetConstraints"
+      },
+      "SourceInput": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "example",
+              "poscar",
+              "cif",
+              "structure_id"
+            ],
+            "title": "Kind"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "bulk",
+              "slab"
+            ],
+            "title": "Role"
+          },
+          "content": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 2097152
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "structure_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 100
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Structure Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "kind",
+          "role"
+        ],
+        "title": "SourceInput"
+      },
+      "SourceRecord": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "example",
+              "poscar",
+              "cif",
+              "structure_id"
+            ],
+            "title": "Kind"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "bulk",
+              "slab"
+            ],
+            "title": "Role"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "sha256": {
+            "type": "string",
+            "title": "Sha256"
+          },
+          "format": {
+            "type": "string",
+            "title": "Format"
+          },
+          "structure_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Structure Id"
+          },
+          "cell_convention": {
+            "type": "string",
+            "const": "supplied_input_cell",
+            "title": "Cell Convention"
+          },
+          "standardized": {
+            "type": "boolean",
+            "const": false,
+            "title": "Standardized"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "kind",
+          "role",
+          "name",
+          "sha256",
+          "format",
+          "structure_id",
+          "cell_convention",
+          "standardized"
+        ],
+        "title": "SourceRecord"
+      },
       "StructureContext": {
         "properties": {
           "structure_id": {
@@ -4504,6 +5567,11 @@
             },
             "type": "array",
             "title": "Transition Metals"
+          },
+          "selective_dynamics": {
+            "type": "boolean",
+            "title": "Selective Dynamics",
+            "default": false
           }
         },
         "additionalProperties": false,
@@ -4515,6 +5583,337 @@
         ],
         "title": "StructureContext",
         "description": "BE-A 最小结构输入契约（R3 / IR-05）。\n\n由结构解析模块的 StructureSummary 映射而来，字段为其子集。"
+      },
+      "StructureSnapshot": {
+        "properties": {
+          "snapshot_id": {
+            "type": "string",
+            "title": "Snapshot Id"
+          },
+          "coordinate_mode": {
+            "type": "string",
+            "enum": [
+              "direct",
+              "cartesian"
+            ],
+            "title": "Coordinate Mode"
+          },
+          "lattice": {
+            "prefixItems": [
+              {
+                "prefixItems": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ],
+                "type": "array",
+                "maxItems": 3,
+                "minItems": 3
+              },
+              {
+                "prefixItems": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ],
+                "type": "array",
+                "maxItems": 3,
+                "minItems": 3
+              },
+              {
+                "prefixItems": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ],
+                "type": "array",
+                "maxItems": 3,
+                "minItems": 3
+              }
+            ],
+            "type": "array",
+            "maxItems": 3,
+            "minItems": 3,
+            "title": "Lattice"
+          },
+          "atoms": {
+            "items": {
+              "$ref": "#/components/schemas/AtomSnapshot"
+            },
+            "type": "array",
+            "title": "Atoms"
+          },
+          "sha256": {
+            "type": "string",
+            "title": "Sha256"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "snapshot_id",
+          "coordinate_mode",
+          "lattice",
+          "atoms",
+          "sha256"
+        ],
+        "title": "StructureSnapshot"
+      },
+      "SurfaceGeometry": {
+        "properties": {
+          "normal": {
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "type": "array",
+            "maxItems": 3,
+            "minItems": 3,
+            "title": "Normal"
+          },
+          "normal_period_angstrom": {
+            "type": "number",
+            "title": "Normal Period Angstrom"
+          },
+          "actual_nuclei_span_angstrom": {
+            "type": "number",
+            "title": "Actual Nuclei Span Angstrom"
+          },
+          "periodic_vacuum_gap_angstrom": {
+            "type": "number",
+            "title": "Periodic Vacuum Gap Angstrom"
+          },
+          "projection_origin_angstrom": {
+            "type": "number",
+            "title": "Projection Origin Angstrom"
+          },
+          "projection_method": {
+            "type": "string",
+            "const": "largest_periodic_nuclei_free_gap",
+            "title": "Projection Method"
+          },
+          "in_plane_lengths_angstrom": {
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "type": "array",
+            "maxItems": 2,
+            "minItems": 2,
+            "title": "In Plane Lengths Angstrom"
+          },
+          "layers": {
+            "items": {
+              "$ref": "#/components/schemas/Layer"
+            },
+            "type": "array",
+            "title": "Layers"
+          },
+          "layer_tolerance": {
+            "type": "number",
+            "title": "Layer Tolerance"
+          },
+          "bottom_fixed_layers": {
+            "type": "integer",
+            "title": "Bottom Fixed Layers"
+          },
+          "atom_overrides": {
+            "additionalProperties": {
+              "type": "string",
+              "enum": [
+                "fixed",
+                "free"
+              ]
+            },
+            "type": "object",
+            "title": "Atom Overrides"
+          },
+          "reset_existing": {
+            "type": "boolean",
+            "title": "Reset Existing"
+          },
+          "flag_basis": {
+            "type": "string",
+            "const": "direct_lattice_vectors",
+            "title": "Flag Basis"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "normal",
+          "normal_period_angstrom",
+          "actual_nuclei_span_angstrom",
+          "periodic_vacuum_gap_angstrom",
+          "projection_origin_angstrom",
+          "projection_method",
+          "in_plane_lengths_angstrom",
+          "layers",
+          "layer_tolerance",
+          "bottom_fixed_layers",
+          "atom_overrides",
+          "reset_existing",
+          "flag_basis"
+        ],
+        "title": "SurfaceGeometry"
+      },
+      "SurfaceOption": {
+        "properties": {
+          "surface_id": {
+            "type": "string",
+            "title": "Surface Id"
+          },
+          "termination_shift": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Termination Shift"
+          },
+          "snapshot": {
+            "$ref": "#/components/schemas/StructureSnapshot"
+          },
+          "baseline_flags": {
+            "items": {
+              "prefixItems": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "boolean"
+                }
+              ],
+              "type": "array",
+              "maxItems": 3,
+              "minItems": 3
+            },
+            "type": "array",
+            "title": "Baseline Flags"
+          },
+          "surface": {
+            "$ref": "#/components/schemas/SurfaceGeometry"
+          },
+          "transform": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Transform"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "surface_id",
+          "termination_shift",
+          "snapshot",
+          "baseline_flags",
+          "surface",
+          "transform"
+        ],
+        "title": "SurfaceOption"
+      },
+      "SurfaceParams": {
+        "properties": {
+          "miller_index": {
+            "prefixItems": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "type": "array",
+            "maxItems": 3,
+            "minItems": 3,
+            "title": "Miller Index",
+            "default": [
+              1,
+              1,
+              1
+            ]
+          },
+          "min_slab_size": {
+            "type": "number",
+            "maximum": 100.0,
+            "minimum": 0.5,
+            "title": "Min Slab Size",
+            "default": 8
+          },
+          "min_vacuum_size": {
+            "type": "number",
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Min Vacuum Size",
+            "default": 15
+          },
+          "in_plane_supercell": {
+            "prefixItems": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "type": "array",
+            "maxItems": 2,
+            "minItems": 2,
+            "title": "In Plane Supercell",
+            "default": [
+              2,
+              2
+            ]
+          },
+          "layer_tolerance": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.001,
+            "title": "Layer Tolerance",
+            "default": 0.1
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "SurfaceParams"
       },
       "TaskType": {
         "type": "string",

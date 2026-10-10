@@ -12,6 +12,7 @@ const links = [
   { to: '/ai', label: '智能模式', icon: <RobotOutlined /> },
   { to: '/toolbox/projects', label: '计算任务', icon: <ToolOutlined /> },
   { to: '/toolbox/postprocessing', label: '结果后处理', icon: <ToolOutlined /> },
+  { to: '/toolbox/surface-builder', label: '表面构建', icon: <BuildOutlined /> },
   { to: '/workflow', label: '生成工作流', icon: <BuildOutlined /> },
   { to: '/diagnosis/upload', label: '诊断计算', icon: <BugOutlined /> },
 ];

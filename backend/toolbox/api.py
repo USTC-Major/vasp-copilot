@@ -16,6 +16,8 @@ from .postprocessing.api import router as postprocessing_router
 router.include_router(postprocessing_router)
 from .postprocessing.preferences_api import router as postprocessing_preferences_router
 router.include_router(postprocessing_preferences_router)
+from .catalysis.api import router as catalysis_router
+router.include_router(catalysis_router)
 
 def service(request: Request) -> ExecutionService:
     return request.app.state.toolbox
