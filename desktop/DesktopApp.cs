@@ -15,9 +15,9 @@ using Microsoft.Web.WebView2.WinForms;
 using VaspCopilot.Launcher;
 
 [assembly: TargetFramework(".NETFramework,Version=v4.8", FrameworkDisplayName = ".NET Framework 4.8")]
-[assembly: System.Reflection.AssemblyVersion("0.4.1.0")]
-[assembly: System.Reflection.AssemblyFileVersion("0.4.1.0")]
-[assembly: System.Reflection.AssemblyInformationalVersion("0.4.1")]
+[assembly: System.Reflection.AssemblyVersion("0.5.0.0")]
+[assembly: System.Reflection.AssemblyFileVersion("0.5.0.0")]
+[assembly: System.Reflection.AssemblyInformationalVersion("0.5.0")]
 namespace VaspCopilot.DesktopV3
 {
     internal static class Program
@@ -223,7 +223,7 @@ namespace VaspCopilot.DesktopV3
             SuspendLayout(); AutoScaleMode = AutoScaleMode.Dpi; ShellTheme.Apply(this); Text = "关于 VASP-Copilot";
             ClientSize = new Size(590, 390); AutoSize = true; AutoSizeMode = AutoSizeMode.GrowAndShrink; MinimumSize = new Size(590, 390); FormBorderStyle = FormBorderStyle.FixedDialog; StartPosition = FormStartPosition.CenterParent; MaximizeBox = MinimizeBox = false;
             var layout = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(32), FlowDirection = FlowDirection.TopDown, WrapContents = false };
-            layout.Controls.Add(ShellTheme.Logo(64)); layout.Controls.Add(ShellTheme.Label("VASP-Copilot", 23F)); layout.Controls.Add(ShellTheme.Label("科研计算工作空间 · v0.4.1" + (isolated ? " · 隔离候选" : fullFeatures ? " · 完整功能" : ""), 10F, true));
+            layout.Controls.Add(ShellTheme.Logo(64)); layout.Controls.Add(ShellTheme.Label("VASP-Copilot", 23F)); layout.Controls.Add(ShellTheme.Label("科研计算工作空间 · v0.5.0" + (isolated ? " · 隔离候选" : fullFeatures ? " · 完整功能" : ""), 10F, true));
             layout.Controls.Add(ShellTheme.Label(ShellTheme.Institution, 12F)); layout.Controls.Add(ShellTheme.Label(ShellTheme.Group, 10F, true)); layout.Controls.Add(ShellTheme.Label(ShellTheme.Authors, 10F, true));
             var close = ShellTheme.Button("关闭"); close.DialogResult = DialogResult.OK; layout.Controls.Add(close); Controls.Add(layout); AcceptButton = CancelButton = close;
             AutoScaleDimensions = new SizeF(96, 96); ResumeLayout(true);

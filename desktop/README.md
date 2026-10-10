@@ -1,12 +1,12 @@
 # Windows 桌面源码构建与运行环境
 
-本目录承接已试用的 Desktop V3 原生壳和控制器。启动后准备本地服务并打开真实 `/workflow` 页面；其他业务页面的视觉主题保持当前实现。0.4.1提供配套包与源码构建说明；仍不包含安装器、签名、更新器或科学计算验证。整包本地验收见仓库根《0.4.0本地验收步骤》。
+本目录承接 Desktop V3 原生壳和控制器。v0.5.0 使用包根目录 `VASP-Copilot.exe` 单入口，并提供统一设置中心与旧启动偏好兼容；仍不包含安装器、签名或更新器。用户操作见[0.5.0 快速开始与升级](../0.5.0快速开始.md)，正式版本与附件证据见[发布范围与验收说明](../docs/release/v0.5.0/发布范围与验收说明.md)。
 
-v0.4.1 支持标准 Windows x64 CPython 3.11–3.14，改进注册信息、PATH、常见目录及 Conda 环境的自动发现。3.15 尚缺关键 Windows wheel，识别后明确提示原因。详见 [兼容计划与验收](../docs/development/v0.4.1/Python兼容与自动发现.md)。
+v0.5.0 沿用 v0.4.1 的标准 Windows x64 CPython 3.11–3.14 支持政策与锁定依赖，保留注册信息、PATH、常见目录及 Conda 环境自动发现。3.15 尚缺关键 Windows wheel，识别后明确提示原因。原兼容依据见 [兼容计划与验收](../docs/development/v0.4.1/Python兼容与自动发现.md)。
 
 ## 完整功能入口
 
-当前源码构建生成根目录 `VASP-Copilot.exe` 的完整包，不再提供 CMD 用户入口。不带参数默认具备完整功能：自动端口、Python 检测、专用依赖准备及真实功能入口；首次默认启用 AI，后续保留已保存的开关选择。`--full-features` 是同一正式模式的兼容参数，不能与隔离 `--test-profile` 混用。已发布 v0.4.1 附件未被替换，历史说明仍保留。用户步骤见[当前源码快速开始](../桌面单入口快速开始.md)。
+v0.5.0 构建生成根目录 `VASP-Copilot.exe` 的完整包，不再提供 CMD 用户入口。不带参数默认具备完整功能：自动端口、Python 检测、专用依赖准备及真实功能入口；首次默认启用 AI，后续保留已保存的开关选择。AI 可关闭，基础工作流、诊断、任务和后处理无需配置模型。`--full-features` 是同一正式模式的兼容参数，不能与隔离 `--test-profile` 混用。旧 v0.4.1 附件与其历史说明保留，用户步骤见[桌面单入口说明](../桌面单入口快速开始.md)。
 
 ## 前提
 
@@ -59,9 +59,9 @@ $package = (Get-Content desktop/dist/last-package.json -Raw | ConvertFrom-Json).
 
 须完整解压；发布 EXE 从自身目录定位 helper、前后端，不依赖工作目录。首次预填当前包目录；保存的目录指向另一包时提示核对并阻止混用。内部 desktop/dist 仅供源码构建调试，不作为额外用户入口。
 
-正式偏好固定为 `%LOCALAPPDATA%/VASP-Copilot/desktop/preferences.json`，同一用户的正式入口共用单实例。首次兼容 desktop-v040-full、desktop-v3、launcher；不同旧来源需明确选择，旧原件保留，已有新配置优先。旧 full 模式隐含 home/data 延续，normal 的空路径仍沿用后端配置优先级，不搬数据库、凭据、浏览器数据或缓存。旧 V3 正在运行时提示先退出，不杀进程或接管服务。
+正式偏好固定为 `%LOCALAPPDATA%/VASP-Copilot/desktop/preferences.json`，同一用户的正式入口共用单实例。首次兼容 desktop-v040-full、desktop-v3、launcher；不同旧来源需明确选择，旧原件保留，已有新配置优先。旧 full 模式隐含 home/data 延续；其他旧空路径依据原配置优先级解析为可确认的绝对路径，保留原数据根。动态路径或旧目录不可访问等无法可靠确认时停止迁移并提示处理，不搬数据库、凭据、浏览器数据或缓存。旧 V3 正在运行时提示先退出，不杀进程或接管服务。
 
-设置页显示来源/目标；保存先写盘并回读核验，再接受内存新值。读取损坏或访问失败不能当成首次使用。根 EXE 的 `--diagnose-startup` 不启动服务，输出 startup-diagnostics.json，含 EXE/版本/模式、配置位置及上次操作阶段，不含业务配置或密钥。原故障电脑仍需取证。
+设置页显示来源/目标；保存先写盘并回读核验，再接受内存新值。读取损坏或访问失败不能当成首次使用。根 EXE 的 `--diagnose-startup` 不启动服务，输出 startup-diagnostics.json，含 EXE/版本/模式、配置位置及上次操作阶段，不含业务配置或密钥。具体发布证据见对应版本的 `release-provenance.json`。
 
 隔离试用可显式指定绝对测试目录：
 
@@ -77,4 +77,4 @@ $package = (Get-Content desktop/dist/last-package.json -Raw | ConvertFrom-Json).
 
 新增 `desktop-windows` CI 从准确 PR head 干净构建，恢复既有后端声明依赖到独立测试环境，再运行控制层检查。CI 只上传小型清单/结果及 CI 专用环境的安装日志（安装进程不继承业务凭据或代理），不上传 profile、配置、科研数据、缓存或完整状态目录；已有前端/Linux/Docker CI 保持不变。
 
-这证明可构建和受控本地软件行为，不证明真实桌面目视、窗口前台激活、其他 DPI/跨屏、原生下载同名拒覆盖、全新机器兼容或科学正确性。测试不调用真实 MP、LLM、SSH、HPC 或 VASP；安装器、升级、发布及新科学能力另行处理。
+这些受控检查证明可构建与对应本地软件行为，不能推出其他 DPI/跨屏、全新机器或科学正确性。测试不调用真实 MP、LLM、SSH、HPC 或 VASP；本版已完成与复用的实际包检查、用户复测及正式发布记录分别见[发布范围与验收说明](../docs/release/v0.5.0/发布范围与验收说明.md)。
