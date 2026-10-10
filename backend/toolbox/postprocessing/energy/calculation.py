@@ -7,6 +7,8 @@ import math
 import re
 
 from ..store import fail
+from ...contracts import ToolboxError
+from .errors import EnergyError, located
 
 FIELDS = ('sigma_to_zero_ev', 'without_entropy_ev', 'free_energy_toten_ev')
 ROLES = {'clean_slab', 'adsorbate', 'adsorbed', 'material', 'element_reference'}
@@ -129,10 +131,10 @@ def warning_acceptance(sample):
     return fingerprint({'source': sample['source'], 'parsed': sample['parsed'], 'warnings': status_warnings(sample)})
 
 
-def validate_source(sample, basis, groups, expected_role, samples=None):
-    if not sample['included'] or not sample['confirmed'] or sample['role'] != expected_role:
+def validate_source(sample, basis, groups, expected_role, samples=None, *, card_review=False, accepted_warnings=False):
+    if not card_review and (not sample['included'] or not sample['confirmed'] or sample['role'] != expected_role):
         fail(sample['name'] + ' 尚未纳入并确认正确角色', 'ENERGY_CONFIRMATION_REQUIRED', 409)
-    if sample.get('confirmation_fingerprint') != confirmation(sample, groups, samples):
+    if not card_review and sample.get('confirmation_fingerprint') != confirmation(sample, groups, samples):
         fail(sample['name'] + ' 的来源或计算定义已改变，请重新确认', 'ENERGY_CONFIRMATION_STALE', 409)
     parsed = sample['parsed']
     eff = effective(sample)
@@ -154,9 +156,9 @@ def validate_source(sample, basis, groups, expected_role, samples=None):
     if eff['manual_energy_basis'] and eff['manual_energy_basis'] != basis:
         fail(sample['name'] + ' 的人工能量口径与组级字段不同', 'ENERGY_BASIS_CONFLICT')
     warnings = status_warnings(sample)
-    if warnings and not sample['accepted_warnings']:
+    if warnings and not (accepted_warnings if card_review else sample['accepted_warnings']):
         fail(sample['name'] + ' 的未完成或未确认状态需要明确纳入', 'ENERGY_WARNING_ACCEPTANCE_REQUIRED', 409)
-    if warnings and sample.get('warning_acceptance_fingerprint') != warning_acceptance(sample):
+    if warnings and not card_review and sample.get('warning_acceptance_fingerprint') != warning_acceptance(sample):
         fail(sample['name'] + ' 的来源或风险已改变，请重新接受当前风险', 'ENERGY_WARNING_ACCEPTANCE_STALE', 409)
     return eff, [sample['name'] + '：' + w for w in warnings]
 
@@ -215,17 +217,25 @@ def calculate(doc):
     by_id = {s['id']: s for s in doc['samples']}
     output = []
     for group in doc['groups']:
+        card_review = doc.get('workflow') == 'cards'
         if not group['targets']:
-            fail('比较组至少需要一个明确目标样本', 'ENERGY_TARGET_REQUIRED')
-        if not group['basis_confirmed']:
+            raise EnergyError('ENERGY_TARGET_REQUIRED', '计算卡至少需要一个明确目标样本', card_id=group['id'], field='targets')
+        if not group['basis_confirmed'] and not card_review:
             fail('请确认组级能量字段', 'ENERGY_BASIS_CONFIRMATION_REQUIRED', 409)
         basis, warnings, used = group['energy_basis'], [], {}
 
-        def get(ident, role):
+        def get(ident, role, field=None):
             if ident not in by_id:
-                fail('必需参考或目标样本不存在', 'ENERGY_REFERENCE_REQUIRED')
+                field = field or {'clean_slab': 'clean_sample_id', 'adsorbate': 'adsorbate_sample_id'}.get(role, 'targets' if role in {'adsorbed', 'material'} else 'element_references')
+                raise EnergyError('ENERGY_REFERENCE_REQUIRED', '必需参考或目标样本不存在', card_id=group['id'], sample_id=ident, field=field)
             sample = by_id[ident]
-            eff, risk = validate_source(sample, basis, doc['groups'], role, doc['samples'])
+            try:
+                eff, risk = validate_source(sample, basis, doc['groups'], role, doc['samples'],
+                                            card_review=card_review, accepted_warnings=group.get('risk_accepted', False))
+            except ToolboxError as exc:
+                field = ('accepted_warnings' if 'WARNING_ACCEPTANCE' in exc.code else
+                         'energy_basis' if exc.code in {'ENERGY_FIELD_REQUIRED', 'ENERGY_BASIS_CONFLICT'} else 'samples.' + ident)
+                raise located(exc, group['id'], ident, field) from exc
             used[ident] = sample
             warnings.extend(risk)
             return sample, eff['composition'], eff['energy_fields'][basis], eff
@@ -236,7 +246,7 @@ def calculate(doc):
             reference, ref_comp, ref_energy, _ = get(group.get('adsorbate_sample_id'), 'adsorbate')
             m = group['reference_units']
             if any(count % m for count in ref_comp.values()):
-                fail('吸附物参考组成不能整除已确认参考单元数', 'ENERGY_STOICHIOMETRY_CONFLICT')
+                raise EnergyError('ENERGY_STOICHIOMETRY_CONFLICT', '吸附物参考组成不能整除已确认参考单元数', card_id=group['id'], sample_id=reference['id'], field='reference_units')
             unit_comp = {element: count // m for element, count in ref_comp.items()}
             for target in group['targets']:
                 sample, comp, energy, eff = get(target['sample_id'], 'adsorbed')
@@ -245,7 +255,7 @@ def calculate(doc):
                 for element, count in unit_comp.items():
                     expected[element] = expected.get(element, 0) + n * count
                 if comp != expected:
-                    fail(sample['name'] + ' 与清洁表面和吸附物计量不守恒', 'ENERGY_STOICHIOMETRY_CONFLICT')
+                    raise EnergyError('ENERGY_STOICHIOMETRY_CONFLICT', sample['name'] + ' 与清洁表面和吸附物计量不守恒', card_id=group['id'], sample_id=sample['id'], field='targets.' + sample['id'] + '.adsorbate_count')
                 delta = energy - clean_energy - n * ref_energy / m
                 rows.append({'sample_id': sample['id'], 'name': sample['name'], 'delta_ev': delta,
                              'normalized_ev': delta / n, 'normalization': 'per_adsorbate', 'unit': 'eV/adsorbate',
@@ -262,11 +272,12 @@ def calculate(doc):
                 sample, comp, energy, eff = get(target['sample_id'], 'material')
                 terms, delta = [term(sample, energy, 1)], energy
                 if not set(comp) <= set(refs):
-                    fail('每个目标元素必须有且仅有一个显式元素参考', 'ENERGY_REFERENCE_REQUIRED')
+                    element = sorted(set(comp) - set(refs))[0]
+                    raise EnergyError('ENERGY_REFERENCE_REQUIRED', '每个目标元素必须有且仅有一个显式元素参考', card_id=group['id'], sample_id=sample['id'], field='element_references.' + element)
                 for element, count in comp.items():
-                    reference, ref_comp, ref_energy, _ = get(refs[element], 'element_reference')
+                    reference, ref_comp, ref_energy, _ = get(refs[element], 'element_reference', 'element_references.' + element)
                     if set(ref_comp) != {element}:
-                        fail('元素参考必须是对应单元素组成：' + element, 'ENERGY_STOICHIOMETRY_CONFLICT')
+                        raise EnergyError('ENERGY_STOICHIOMETRY_CONFLICT', '元素参考必须是对应单元素组成：' + element, card_id=group['id'], sample_id=reference['id'], field='element_references.' + element)
                     coefficient = -count / ref_comp[element]
                     delta += coefficient * ref_energy
                     terms.append({**term(reference, ref_energy, coefficient), 'element': element,

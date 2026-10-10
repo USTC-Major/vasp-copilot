@@ -1,53 +1,49 @@
-import { Checkbox, Input, InputNumber, Select, Typography } from 'antd';
-import type { EnergyCollection, EnergyGroup } from '../../api/energy';
+import { Input, InputNumber, Select } from 'antd';
+import type { ReactNode } from 'react';
+import type { EnergyCollection, EnergyFieldError, EnergyGroup } from '../../api/energy';
 import { basisOptions, effectiveComposition, type EnergyDraft } from './energyDraft';
+import { energyFieldKey } from './energyCards';
 
-type Props = { collection: EnergyCollection; draft: EnergyDraft; disabled: boolean; onGroup: (group: EnergyGroup, scientific?: boolean) => void };
-export default function EnergyGroups({ collection, draft, disabled, onGroup }: Props) {
-  const optionsFor = (role: string) => draft.rows.filter(row => row.role === role).map(row => ({ value: row.sample_id, label: `${row.name} · ${row.sample_id.slice(-8)}` }));
+type Props = { collection: EnergyCollection; draft: EnergyDraft; disabled: boolean; nameDisabled?: boolean; errors?: EnergyFieldError[]; onValidate?: (group: EnergyGroup, field: string) => void; onGroup: (group: EnergyGroup, scientific?: boolean) => void };
+export default function EnergyGroups({ collection, draft, disabled, nameDisabled = disabled, errors = [], onValidate, onGroup }: Props) {
+  const options = draft.rows.map(row => ({ value: row.sample_id, label: `${row.name} · ${row.sample_id.slice(-8)}` }));
   const manual = (group: EnergyGroup, key: string) => ({ ...group, reference_origins: { ...group.reference_origins, [key]: 'manual' as const } });
-  return <>
-    {!draft.groups.length && <p className="energy-note">此旧记录尚未配置参考；先选择类型创建新的分析。</p>}
-    {draft.groups.map(group => {
-      const elements = [...new Set(group.targets.flatMap(target => {
-        const sample = collection.samples.find(item => item.id === target.sample_id);
-        const row = draft.rows.find(item => item.sample_id === target.sample_id);
-        return sample && row ? Object.keys(effectiveComposition(sample, row) ?? {}) : [];
-      }))];
-      return <section className="energy-reference-box" key={group.id} style={{ marginTop: 14 }} aria-label={`比较组 ${group.name}`}>
-        <div className="energy-group-heading"><h4>{group.kind === 'adsorption' ? '吸附能 · 共用参考与目标构型' : '材料形成能 · 元素参考与目标材料'}</h4></div>
-        <div className="energy-group-grid">
-          <label className="energy-field">参考条件名称<Input aria-label={`组名称 ${group.id}`} value={group.name} disabled={disabled} onChange={event => onGroup({ ...group, name: event.target.value }, false)} /></label>
-          <label className="energy-field">统一能量字段<Select aria-label={`组能量字段 ${group.id}`} value={group.energy_basis} options={basisOptions} disabled={disabled} onChange={value => onGroup({ ...group, energy_basis: value })} /></label>
-          {group.kind === 'adsorption' && <>
-            <label className="energy-field">清洁表面参考<Select aria-label={`清洁表面参考 ${group.id}`} value={group.clean_sample_id || undefined} placeholder="选择已指定清洁表面角色的样本" allowClear options={optionsFor('clean_slab')} disabled={disabled} onSelect={value => onGroup(manual({ ...group, clean_sample_id: value }, 'clean_sample_id'))} onClear={() => onGroup(manual({ ...group, clean_sample_id: '' }, 'clean_sample_id'))} /></label>
-            <label className="energy-field">吸附物参考<Select aria-label={`吸附物参考 ${group.id}`} value={group.adsorbate_sample_id || undefined} placeholder="选择已指定吸附物参考角色的样本" allowClear options={optionsFor('adsorbate')} disabled={disabled} onSelect={value => onGroup(manual({ ...group, adsorbate_sample_id: value }, 'adsorbate_sample_id'))} onClear={() => onGroup(manual({ ...group, adsorbate_sample_id: '' }, 'adsorbate_sample_id'))} /></label>
-            <label className="energy-field">参考文件中的吸附物单元数 m<InputNumber aria-label={`参考单元数 ${group.id}`} value={group.reference_units} disabled={disabled} onChange={value => onGroup(manual({ ...group, reference_units: value ?? 0 }, 'reference_units'))} /></label>
-          </>}
-          {group.kind === 'formation' && elements.map(element => {
-            const references = draft.rows.filter(row => {
-              if (row.role !== 'element_reference') return false;
-              const sample = collection.samples.find(item => item.id === row.sample_id)!;
-              const composition = effectiveComposition(sample, row);
-              return composition && Object.keys(composition).length === 1 && !!composition[element];
-            }).map(row => ({ value: row.sample_id, label: row.name }));
-            return <label key={element} className="energy-field">{element} 元素参考<Select aria-label={`${element} 元素参考 ${group.id}`} value={group.element_references[element] || undefined} allowClear placeholder={`选择单元素 ${element} 来源`} options={references} disabled={disabled} onSelect={value => onGroup(manual({ ...group, element_references: { ...group.element_references, [element]: value } }, `element:${element}`))} onClear={() => {
-              const next = { ...group.element_references }; delete next[element]; onGroup(manual({ ...group, element_references: next }, `element:${element}`));
-            }} /></label>;
-          })}
-        </div>
-        <label className="energy-field">参考态／单元定义<Input.TextArea aria-label={`参考定义 ${group.id}`} rows={2} disabled={disabled} value={group.reference_note} placeholder={group.kind === 'adsorption' ? '例如每个 CO 分子；说明参考文件中 m 个相同分子的含义' : '注明用户选择的单质晶体／分子参考态及必要条件'} onChange={event => onGroup({ ...group, reference_note: event.target.value })} /></label>
-        {group.kind === 'adsorption' ? <>
-          {group.reference_origins?.reference_units === 'auto' && group.reference_units === 1 && <p className="energy-note">规则将整份吸附物参考视为 1 个单元（m=1）。n 表示目标组成差包含几份该参考组成，请按实际分子／片段含义核对或手动修改；组成比例不能独自证明分子个数。</p>}
-          <div className="energy-formula">ΔE<sub>ads,j</sub> = E<sub>构型 j</sub> − E<sub>清洁表面</sub> − n<sub>j</sub> × E<sub>参考文件</sub> / m<br /><span className="energy-muted">每吸附物能差 = ΔE<sub>ads,j</sub> / n<sub>j</sub>；m 与 n 均为正整数，分子个数不能以原子数代替。</span></div>
-          <div className="energy-group-grid">{group.targets.map(target => <label className="energy-field" key={target.sample_id}>{draft.rows.find(row => row.sample_id === target.sample_id)?.name ?? target.sample_id} · 吸附物数量 n<InputNumber aria-label={`吸附物数量 ${group.id} ${target.sample_id}`} value={target.adsorbate_count} disabled={disabled} onChange={value => onGroup(manual({ ...group, targets: group.targets.map(item => item.sample_id === target.sample_id ? { ...item, adsorbate_count: value ?? 0 } : item) }, `target:${target.sample_id}`))} /></label>)}</div>
-        </> : <>
-          <div className="energy-formula">μ<sub>i</sub> = E<sub>元素参考 i</sub> / N<sub>参考原子 i</sub>；ΔE<sub>f</sub> = E<sub>目标胞</sub> − Σ N<sub>i</sub> μ<sub>i</sub><br /><span className="energy-muted">按每计算胞与每原子输出。O₂ 参考除以两个氧原子；单元素组成不证明标准参考态正确。</span></div>
-          <Typography.Text type="secondary">已纳入 {group.targets.length} 个目标材料；所需元素：{elements.join('、') || '待目标组成明确后显示'}。目标的元素计数见上方核对表。</Typography.Text>
+  return <>{draft.groups.map(group => {
+    const elements = [...new Set(group.targets.flatMap(target => {
+      const sample = collection.samples.find(item => item.id === target.sample_id), row = draft.rows.find(item => item.sample_id === target.sample_id);
+      return sample && row ? Object.keys(effectiveComposition(sample, row) ?? {}) : [];
+    }))];
+    const fieldErrors = (field: string) => errors.filter(error => error.card_id === group.id && error.field === field);
+    const field = (path: string, label: string, control: ReactNode) => <label className="energy-field" data-energy-field={energyFieldKey(group.id, path)}>{label}{control}{fieldErrors(path).map((error, index) => <span key={`${error.code}-${index}`} className="energy-field-error" role="status">{error.message}</span>)}</label>;
+    const invalid = (path: string) => fieldErrors(path).length ? 'error' as const : undefined;
+    const select = (path: string, value: string, label: string, change: (value: string) => void) => field(path, label, <Select aria-label={`${label} ${group.id}`} aria-invalid={!!invalid(path)} status={invalid(path)} value={value || undefined} placeholder="从共享样本中选择" showSearch optionFilterProp="label" allowClear options={options} disabled={disabled} onChange={value => change(value ?? '')} />);
+    return <section className="energy-card-fields" key={group.id} aria-label={`计算卡 ${group.name}`}>
+      <div className="energy-group-grid">
+        {field('name', '计算卡名称', <Input aria-label={`卡名称 ${group.id}`} status={invalid('name')} value={group.name} disabled={nameDisabled} onChange={event => onGroup({ ...group, name: event.target.value }, false)} />)}
+        {field('energy_basis', '统一能量字段', <Select aria-label={`卡能量字段 ${group.id}`} aria-invalid={!!invalid('energy_basis')} status={invalid('energy_basis')} value={group.energy_basis} options={basisOptions} disabled={disabled} onChange={value => onGroup({ ...group, energy_basis: value })} />)}
+        {group.kind === 'adsorption' && <>
+          {select('clean_sample_id', group.clean_sample_id, '清洁表面参考', value => onGroup(manual({ ...group, clean_sample_id: value }, 'clean_sample_id')))}
+          {select('adsorbate_sample_id', group.adsorbate_sample_id, '吸附物参考', value => onGroup(manual({ ...group, adsorbate_sample_id: value }, 'adsorbate_sample_id')))}
+          {field('reference_units', '参考文件中的吸附物单元数 m', <InputNumber aria-label={`参考单元数 ${group.id}`} aria-invalid={!!invalid('reference_units')} status={invalid('reference_units')} value={group.reference_units || null} disabled={disabled} onBlur={() => onValidate?.(group, 'reference_units')} onChange={value => onGroup(manual({ ...group, reference_units: value ?? 0 }, 'reference_units'))} />)}
         </>}
-        <Checkbox disabled={disabled} checked={group.basis_confirmed} onChange={event => onGroup({ ...group, basis_confirmed: event.target.checked }, false)}>已核对统一能量口径与参考定义</Checkbox>
-        <p className="energy-note">默认 energy(sigma→0) 是零温比较的候选政策，原子／分子与固定占据等情况仍需核对。TOTEN 含电子展宽相关自由能项，未包含振动等完整 Gibbs 修正。</p>
-      </section>;
-    })}
-  </>;
+      </div>
+      {field('targets', group.kind === 'adsorption' ? '目标构型（可多选）' : '目标材料（可多选）', <Select mode="multiple" aria-label={`目标样本 ${group.id}`} aria-invalid={!!invalid('targets')} status={invalid('targets')} value={group.targets.map(target => target.sample_id)} placeholder="自由选择参与当前卡的样本" showSearch optionFilterProp="label" options={options} disabled={disabled} onChange={(ids: string[]) => {
+        const next: EnergyGroup = group.kind === 'adsorption' ? { ...group, targets: ids.map(sampleId => ({ sample_id: sampleId, adsorbate_count: group.targets.find(target => target.sample_id === sampleId)?.adsorbate_count ?? 1 })) } : { ...group, targets: ids.map(sampleId => ({ sample_id: sampleId })) };
+        onGroup(manual(next, 'targets'));
+      }} />)}
+      {group.kind === 'formation' && <div className="energy-group-grid">{elements.map(element => {
+        const path = `element_references.${element}`;
+        return select(path, group.element_references[element] ?? '', `${element} 元素参考`, value => { const references = { ...group.element_references }; if (value) references[element] = value; else delete references[element]; onGroup(manual({ ...group, element_references: references }, `element:${element}`)); });
+      })}</div>}
+      {field('reference_note', '参考态／单元定义', <Input.TextArea aria-label={`参考定义 ${group.id}`} status={invalid('reference_note')} rows={2} disabled={disabled} value={group.reference_note} placeholder={group.kind === 'adsorption' ? '例如每个 CO 分子；说明参考文件中 m 个相同分子的含义' : '注明用户选择的单质晶体／分子参考态及必要条件'} onChange={event => onGroup({ ...group, reference_note: event.target.value })} />)}
+      {group.kind === 'adsorption' ? <>
+        <div className="energy-formula">ΔE<sub>ads,j</sub> = E<sub>构型 j</sub> − E<sub>清洁表面</sub> − n<sub>j</sub> × E<sub>参考文件</sub> / m<br /><span className="energy-muted">每吸附物能差 = ΔE<sub>ads,j</sub> / n<sub>j</sub>。m、n 均为正整数；按实际分子／片段定义核对，组成比例不独自证明分子个数。</span></div>
+        <div className="energy-group-grid">{group.targets.map(target => {
+          const path = `targets.${target.sample_id}.adsorbate_count`;
+          return <div key={target.sample_id}>{field(path, `${draft.rows.find(row => row.sample_id === target.sample_id)?.name ?? target.sample_id} · 吸附物数量 n`, <InputNumber aria-label={`吸附物数量 ${group.id} ${target.sample_id}`} aria-invalid={!!invalid(path)} status={invalid(path)} value={target.adsorbate_count || null} disabled={disabled} onBlur={() => onValidate?.(group, path)} onChange={value => onGroup(manual({ ...group, targets: group.targets.map(item => item.sample_id === target.sample_id ? { ...item, adsorbate_count: value ?? 0 } : item) }, `target:${target.sample_id}`))} />)}</div>;
+        })}</div>
+      </> : <div className="energy-formula">μ<sub>i</sub> = E<sub>元素参考 i</sub> / N<sub>参考原子 i</sub>；ΔE<sub>f</sub> = E<sub>目标胞</sub> − Σ N<sub>i</sub> μ<sub>i</sub><br /><span className="energy-muted">按每计算胞和每原子输出。O₂ 参考除以两个氧原子；单元素组成不证明标准参考态正确。</span></div>}
+      <p className="energy-note">样本可被不同卡用于不同角色，规则仅提供可修改建议。{Object.entries(group.reference_origins ?? {}).some(([, origin]) => origin === 'manual') ? '当前配置含人工选择，追加导入或规则更新会保留。' : '请按实际参考条件核对并自由修改。'}统一口径与参考定义在当前卡确认时集中核对。TOTEN 包含电子展宽相关自由能项，未包含振动等完整 Gibbs 修正。</p>
+    </section>;
+  })}</>;
 }

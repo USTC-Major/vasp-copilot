@@ -21,8 +21,9 @@ it('renders long Chinese CSV notes as unverified plain text and preserves the de
   expect(within(details).getByText(`${basisLabel('sigma_to_zero_ev')}：-112 eV`)).toBeInTheDocument();
   expect(within(details).getByText('有效值（CSV 声明，可能包含人工修订）')).toBeInTheDocument();
   expect(within(details).getByText(/未经来源验证；不代表已核对或已接受风险/)).toBeInTheDocument();
-  expect(screen.getByRole('checkbox', { name: '人工确认 es_target' })).not.toBeChecked();
-  expect(screen.getByRole('checkbox', { name: '接受风险 es_target' })).not.toBeChecked();
+  expect(screen.queryByRole('checkbox', { name: '人工确认 es_target' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('checkbox', { name: '接受风险 es_target' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('checkbox', { name: '纳入 es_target' })).not.toBeInTheDocument();
   sample.source.csv_metadata!.value_source = 'original'; view.rerender(ui());
   expect(within(details).getByText('原始值（CSV 声明）')).toBeInTheDocument();
 });

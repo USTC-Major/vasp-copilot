@@ -4,14 +4,68 @@ import threading
 from typing import Literal
 
 from fastapi import APIRouter, Request, Query
-from fastapi.responses import Response
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import Response, JSONResponse
+from fastapi.routing import APIRoute
 from starlette.concurrency import run_in_threadpool
 
 from ..store import fail
 from . import schemas
 from .store import EnergyStore, MAX_FILE
+from ...contracts import ToolboxError
+from .errors import located
 
-router = APIRouter(prefix='/postprocessing/energy', tags=['Energy post-processing'])
+
+class EnergyRoute(APIRoute):
+    """Keep validation failures usable by the card's inline error UI."""
+    def get_route_handler(self):
+        handler = super().get_route_handler()
+
+        async def handle(request):
+            try:
+                return await handler(request)
+            except RequestValidationError as exc:
+                try:
+                    body = await request.json()
+                except (ValueError, TypeError):
+                    body = {}
+                if not isinstance(body, dict):
+                    body = {}
+                card_body = body.get('card')
+                if not isinstance(card_body, dict):
+                    card_body = {}
+                errors = []
+                card_id = request.path_params.get('card_id') or card_body.get('id')
+                if not isinstance(card_id, str):
+                    card_id = None
+                for issue in exc.errors():
+                    location = list(issue['loc'])
+                    if location and location[0] in {'body', 'query', 'path'}:
+                        location.pop(0)
+                    sample_id = None
+                    if location[:1] == ['card']:
+                        location.pop(0)
+                    if len(location) > 1 and location[0] in {'targets', 'samples'} and isinstance(location[1], int):
+                        rows = card_body.get('targets', []) if location[0] == 'targets' else body.get('samples', [])
+                        if isinstance(rows, list) and location[1] < len(rows) and isinstance(rows[location[1]], dict):
+                            sample_id = rows[location[1]].get('sample_id')
+                            if not isinstance(sample_id, str):
+                                sample_id = None
+                            if sample_id:
+                                location[1] = sample_id
+                    errors.append({'card_id': card_id, 'sample_id': sample_id,
+                                   'field': '.'.join(map(str, location)) or 'card',
+                                   'code': 'ENERGY_INVALID_REQUEST', 'message': issue['msg']})
+                return JSONResponse(status_code=422, content={'error': {
+                    'code': 'ENERGY_INVALID_REQUEST', 'message': '请求字段无效，请修正对应字段',
+                    'retryable': False, 'field_errors': errors}})
+            except ToolboxError as exc:
+                field = 'expected_revision' if exc.code == 'ENERGY_REVISION_CONFLICT' else 'card'
+                raise located(exc, request.path_params.get('card_id'), field=field) from exc
+        return handle
+
+
+router = APIRouter(prefix='/postprocessing/energy', tags=['Energy post-processing'], route_class=EnergyRoute)
 _creation_lock = threading.Lock()
 
 
@@ -57,7 +111,7 @@ def listing(request: Request):
 
 @router.post('/collections', status_code=201)
 def create(request: Request, body: schemas.Create):
-    return response(store(request).create(body.title, body.analysis_kind))
+    return response(store(request).create(body.title, body.analysis_kind, body.workflow))
 
 
 @router.get('/collections/{ident}')
@@ -150,7 +204,7 @@ def unlock(ident: str, request: Request, body: schemas.Revision):
 @router.post('/collections/{ident}/copy', status_code=201)
 def copy_analysis(ident: str, request: Request, body: schemas.CopyAnalysis):
     return response(store(request).copy_analysis(ident, body.expected_revision, body.analysis_kind,
-                                                body.title, body.group_id))
+                                                body.title, body.group_id, body.workflow))
 
 
 @router.post('/collections/{ident}/autofill')
@@ -160,14 +214,87 @@ def autofill(ident: str, request: Request, body: schemas.Revision):
 
 @router.post('/collections/{ident}/samples/removal-preview')
 def removal_preview(ident: str, request: Request, body: schemas.RemoveSamples):
-    return {'mode': 'toolbox', 'removal': store(request).removal_preview(
-        ident, body.expected_revision, body.sample_ids, body.clear_all)}
+    svc = store(request)
+    if body.workflow == 'cards' or svc.read(ident).get('workflow') == 'cards':
+        removal = svc.cards.removal_preview(ident, body.expected_revision, body.sample_ids, body.clear_all)
+    else:
+        removal = svc.removal_preview(ident, body.expected_revision, body.sample_ids, body.clear_all)
+    return {'mode': 'toolbox', 'removal': removal}
 
 
 @router.post('/collections/{ident}/samples/remove')
 def remove_samples(ident: str, request: Request, body: schemas.RemoveSamples):
-    doc, removal = store(request).remove_samples(ident, body.expected_revision, body.sample_ids, body.clear_all)
+    svc = store(request)
+    if body.workflow == 'cards' or svc.read(ident).get('workflow') == 'cards':
+        doc, removal = svc.cards.remove_samples(ident, body.expected_revision, body.sample_ids, body.clear_all,
+                                                body.preview_id, body.acknowledge_locked_cards)
+    else:
+        doc, removal = svc.remove_samples(ident, body.expected_revision, body.sample_ids, body.clear_all)
     return {**response(doc), 'removal': removal}
+
+
+@router.post('/collections/{ident}/cards', status_code=201)
+def create_card(ident: str, request: Request, body: schemas.CardConfiguration):
+    return response(store(request).cards.create(ident, body.expected_revision, body.card.model_dump()))
+
+
+@router.put('/collections/{ident}/cards/{card_id}')
+def configure_card(ident: str, card_id: str, request: Request, body: schemas.CardConfiguration):
+    return response(store(request).cards.configure(ident, body.expected_revision, card_id, body.card.model_dump()))
+
+
+@router.post('/collections/{ident}/cards/{card_id}/copy', status_code=201)
+def copy_card(ident: str, card_id: str, request: Request, body: schemas.CardCopy):
+    return response(store(request).cards.copy(ident, body.expected_revision, card_id, body.name))
+
+
+@router.delete('/collections/{ident}/cards/{card_id}')
+def delete_card(ident: str, card_id: str, request: Request, body: schemas.Revision):
+    return response(store(request).cards.delete(ident, body.expected_revision, card_id))
+
+
+@router.post('/collections/{ident}/cards/{card_id}/lock')
+def lock_card(ident: str, card_id: str, request: Request, body: schemas.CardLock):
+    return response(store(request).cards.lock(ident, body.expected_revision, card_id, body.accepted_warnings))
+
+
+@router.post('/collections/{ident}/cards/{card_id}/unlock')
+def unlock_card(ident: str, card_id: str, request: Request, body: schemas.Revision):
+    return response(store(request).cards.unlock(ident, body.expected_revision, card_id))
+
+
+@router.post('/collections/{ident}/cards/{card_id}/calculate')
+def calculate_card(ident: str, card_id: str, request: Request, body: schemas.Revision):
+    return response(store(request).cards.calculate(ident, body.expected_revision, card_id))
+
+
+@router.post('/collections/{ident}/cards/{card_id}/autofill')
+def autofill_card(ident: str, card_id: str, request: Request, body: schemas.Revision):
+    return response(store(request).cards.autofill(ident, body.expected_revision, card_id))
+
+
+@router.post('/collections/{ident}/samples/change-preview')
+def sample_change_preview(ident: str, request: Request, body: schemas.CardSamples):
+    patches = [patch.model_dump(exclude_unset=True) for patch in body.samples]
+    return {'mode': 'toolbox', 'impact': store(request).cards.change_preview(ident, body.expected_revision, patches, body.title)}
+
+
+@router.put('/collections/{ident}/samples/configuration')
+def configure_card_samples(ident: str, request: Request, body: schemas.CardSamples):
+    patches = [patch.model_dump(exclude_unset=True) for patch in body.samples]
+    return response(store(request).cards.configure_samples(ident, body.expected_revision, patches, body.title,
+                                                           body.preview_id, body.acknowledge_locked_cards))
+
+
+@router.get('/collections/{ident}/cards/{card_id}/export')
+def export_card(ident: str, card_id: str, request: Request, format: Literal['json', 'csv'] = 'json'):
+    svc = store(request).cards
+    if format == 'csv':
+        content, media = svc.csv(ident, card_id).encode('utf-8-sig'), 'text/csv'
+    else:
+        content = json.dumps({'mode': 'toolbox', 'collection': svc.export(ident, card_id)}, ensure_ascii=False, allow_nan=False).encode('utf-8')
+        media = 'application/json'
+    return Response(content, media_type=media, headers={'Content-Disposition': f'attachment; filename="{ident}-{card_id}.{format}"'})
 
 
 @router.get('/collections/{ident}/export')

@@ -75,5 +75,44 @@
 .energy-review-footer { display:flex; gap:12px; align-items:center; justify-content:space-between; flex-wrap:wrap; margin-top:18px; border-top:1px solid var(--wf-border); padding-top:16px; }
 .energy-save-status { min-height:20px; color:var(--wf-muted); font-size:12px; }
 .energy-hard-error { color:var(--wf-warning); font-size:12px; }
+.energy-analysis-heading { display:flex; justify-content:space-between; align-items:center; gap:16px; margin:0 0 18px; flex-wrap:wrap; }
+.energy-analysis-heading h4 { margin:0 0 8px; }
+.energy-card-workspace { display:grid; grid-template-columns:minmax(210px,260px) minmax(0,1fr); gap:20px; align-items:start; }
+.energy-card-workspace > * { min-width:0; }
+.energy-card-list { padding:16px; border:1px solid var(--wf-border); border-radius:8px; background:var(--wf-surface); position:sticky; top:12px; }
+.energy-card-list-heading { display:flex; justify-content:space-between; align-items:center; gap:8px; color:var(--wf-text); }
+.energy-card-list .energy-note { margin:10px 0 14px; }
+.energy-card-list .energy-history { max-height:calc(100vh - 250px); }
+.energy-card-editor { min-width:0; }
+.energy-card-editor > .ant-card { margin-top:16px; }
+.energy-card-actions { position:sticky; top:0; z-index:12; border:1px solid var(--wf-border); border-radius:8px; padding:14px 16px; background:var(--wf-surface); box-shadow:0 5px 18px rgba(0,0,0,.09); display:grid; gap:12px; max-height:46vh; overflow-y:auto; }
+.energy-card-action-title { display:grid; gap:7px; color:var(--wf-text); }
+.energy-card-action-title > strong { overflow-wrap:anywhere; }
+.energy-card-fields { display:grid; gap:16px; }
+.energy-card-fields .energy-formula { margin:0; }
+.energy-field-error,.energy-action-error { color:var(--wf-warning); font-size:12px; line-height:1.65; overflow-wrap:anywhere; }
+.energy-field-error::before { content:'提示：'; font-weight:600; }
+.energy-action-error { border-left:3px solid var(--wf-warning); padding-left:10px; }
+.energy-error-link { border:0; padding:0; background:transparent; color:var(--wf-blue); text-align:left; text-decoration:underline; cursor:pointer; font:inherit; }
+.energy-risk-list { padding-left:20px; margin:16px 0; display:grid; gap:14px; }
+.energy-risk-list p { margin:4px 0; color:var(--wf-muted); font-size:12px; }
+.energy-risk-list small { color:var(--wf-muted); }
+.energy-pool-drawer .ant-drawer-content-wrapper { width:min(1180px,96vw)!important; }
+.energy-pool-drawer .ant-drawer-body > .ant-card { margin-top:16px; }
+.energy-pool-actions { display:grid; gap:12px; padding-bottom:12px; border-bottom:1px solid var(--wf-border); }
+.energy-mobile-toggle { display:none; }
+@media(max-width:760px) {
+  .energy-card-workspace { display:block; }
+  .energy-card-list { display:none; position:static; }
+  .energy-card-list .energy-history { max-height:60vh; }
+  .energy-card-workspace.mobile-cards-open .energy-card-list { display:block; }
+  .energy-card-workspace.mobile-cards-open .energy-card-editor { display:none; }
+  .energy-mobile-toggle { display:inline-flex; }
+  .energy-card-actions { padding:12px; max-height:42vh; }
+  .energy-group-grid { grid-template-columns:minmax(0,1fr); }
+  .energy-pool-drawer .ant-drawer-header { align-items:flex-start; flex-wrap:wrap; gap:12px; }
+  .energy-pool-drawer .ant-drawer-header-title { width:100%; }
+  .energy-pool-drawer .ant-drawer-header-extra { margin-left:0; }
+}
 @media(max-width:1100px) { .energy-layout { grid-template-columns:minmax(0,1fr); } .energy-sidebar { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:16px; } .energy-sidebar .ant-card + .ant-card { margin-top:0; } .energy-history { max-height:240px; } }
 @media(max-width:650px) { .energy-toolbar-main,.energy-sidebar,.energy-manual-grid,.energy-task-grid { grid-template-columns:minmax(0,1fr); } .energy-toolbar { align-items:stretch; } .energy-wide { grid-column:auto; } .energy-page .ant-card-body { padding:14px; } .energy-result-values strong { font-size:19px; } .energy-review-footer { align-items:stretch; } .energy-review-footer .ant-space { width:100%; } }

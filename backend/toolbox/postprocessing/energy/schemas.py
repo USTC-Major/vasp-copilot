@@ -23,6 +23,7 @@ class Create(Model):
     title: str = Field(default='', max_length=120)
     # Omission is reserved for compatibility with clients using the old groups UI.
     analysis_kind: AnalysisKind | None = None
+    workflow: Literal['cards'] | None = None
 
 
 class Revision(Model):
@@ -33,6 +34,7 @@ class CopyAnalysis(Revision):
     analysis_kind: AnalysisKind
     title: str | None = Field(default=None, max_length=120)
     group_id: str | None = Field(default=None, max_length=80)
+    workflow: Literal['cards'] | None = None
 
 
 class Manual(Revision):
@@ -110,3 +112,31 @@ class Reuse(Revision):
 class RemoveSamples(Revision):
     sample_ids: list[str] = Field(default_factory=list, max_length=100)
     clear_all: bool = False
+    preview_id: str | None = None
+    acknowledge_locked_cards: bool = False
+    workflow: Literal['cards'] | None = None
+
+
+class CardConfiguration(Revision):
+    card: Group
+
+
+class CardCopy(Revision):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+
+
+class CardLock(Revision):
+    accepted_warnings: bool = False
+
+
+class CardSamplePatch(Model):
+    sample_id: str
+    name: str | None = Field(default=None, min_length=1, max_length=256)
+    override: Override | None = None
+
+
+class CardSamples(Revision):
+    title: str | None = Field(default=None, max_length=120)
+    samples: list[CardSamplePatch] = Field(default_factory=list, max_length=100)
+    preview_id: str | None = None
+    acknowledge_locked_cards: bool = False

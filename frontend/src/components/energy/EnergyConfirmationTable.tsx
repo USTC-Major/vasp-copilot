@@ -1,6 +1,7 @@
 import { Button, Checkbox, Input, Select, Tag } from 'antd';
-import type { EnergyCollection, EnergyGroup, EnergySample } from '../../api/energy';
-import { analysisKind, basisLabel, basisOptions, compositionLabel, effectiveComposition, effectiveEnergy, energyNumber, riskRequired, roleLabels, type EnergyDraft, type EnergyRowDraft } from './energyDraft';
+import type { EnergyCollection, EnergyFieldError, EnergyGroup, EnergySample } from '../../api/energy';
+import { basisLabel, basisOptions, compositionLabel, effectiveComposition, effectiveEnergy, energyNumber, riskRequired, roleLabels, type EnergyDraft, type EnergyRowDraft } from './energyDraft';
+import { cardUse, energyFieldKey } from './energyCards';
 
 const convergence = (value: boolean | null) => value === true ? '已收敛' : value === false ? '未收敛' : '未知';
 const completion = (value: string) => ({ completed: '已结束', incomplete: '未完成', truncated: '截断', unknown: '未知' }[value] ?? '未完成／未知');
@@ -9,8 +10,10 @@ type Props = {
   collection: EnergyCollection; draft: EnergyDraft; disabled: boolean;
   selectedIds: string[]; onSelection: (ids: string[]) => void; onDelete: () => void; onClear: () => void;
   onRow: (id: string, patch: Partial<EnergyRowDraft>, scientific?: boolean) => void;
-  onIncludeAll: (included: boolean) => void;
-  onAcceptRisks: (accepted: boolean) => void;
+  onIncludeAll?: (included: boolean) => void;
+  onAcceptRisks?: (accepted: boolean) => void;
+  errors?: EnergyFieldError[];
+  onValidate?: (sampleId: string, field: string) => void;
 };
 function sampleGroups(sampleId: string, groups: EnergyGroup[]) {
   return groups.filter(group => group.targets.some(target => target.sample_id === sampleId) || (group.kind === 'adsorption' ? group.clean_sample_id === sampleId || group.adsorbate_sample_id === sampleId : Object.values(group.element_references).includes(sampleId)));
@@ -33,66 +36,58 @@ function SourceDetails({ sample }: { sample: EnergySample }) {
     {sample.source.kind === 'task_result' && <><dt>项目／任务</dt><dd>{sample.source.project_id} / {sample.source.task_id}</dd><dt>作业／尝试</dt><dd>{sample.source.job_key} / {sample.source.attempt_id}</dd><dt>作业号</dt><dd>{sample.source.slurm_id ?? '未知'}</dd><dt>快照指纹</dt><dd>{sample.source.snapshot_sha256 ?? sample.source.sha256 ?? '未知'}</dd></>}
   </dl><details><summary>方法参数与取值源行</summary><pre>{JSON.stringify({ metadata: sample.parsed.metadata, provenance: sample.parsed.provenance }, null, 2)}</pre></details></details>;
 }
-export default function EnergyConfirmationTable({ collection, draft, disabled, selectedIds, onSelection, onDelete, onClear, onRow, onIncludeAll, onAcceptRisks }: Props) {
-  const kind = analysisKind(collection);
-  const availableRoles = Object.entries(roleLabels).filter(([value]) => !kind || (kind === 'adsorption' ? ['clean_slab', 'adsorbate', 'adsorbed'] : ['material', 'element_reference']).includes(value));
-  const included = draft.rows.filter(row => row.included);
-  const risky = included.filter(row => { const sample = collection.samples.find(item => item.id === row.sample_id); return !!sample && riskRequired(sample); });
-  const risksAccepted = risky.length > 0 && risky.every(row => row.accepted_warnings);
+export default function EnergyConfirmationTable({ collection, draft, disabled, selectedIds, onSelection, onDelete, onClear, onRow, errors = [], onValidate }: Props) {
+  const used = draft.rows.filter(row => sampleGroups(row.sample_id, draft.groups).length);
+  const risky = draft.rows.filter(row => { const sample = collection.samples.find(item => item.id === row.sample_id); return !!sample && riskRequired(sample); });
   return <>
-    <div className="energy-summary-strip"><span><strong>{draft.rows.length}</strong>来源样本</span><span><strong>{included.length}</strong>已纳入</span><span><strong>{included.filter(row => row.confirmed).length}</strong>已人工确认</span><span><strong>{risky.length}</strong>需接受风险状态</span></div>
+    <div className="energy-summary-strip"><span><strong>{draft.rows.length}</strong>共享样本</span><span><strong>{used.length}</strong>参与计算卡</span><span><strong>{draft.groups.length}</strong>计算卡</span><span><strong>{risky.length}</strong>含状态／警告提示</span></div>
     <div className="energy-table-actions">
       <Checkbox aria-label="管理全选" disabled={disabled} checked={selectedIds.length === draft.rows.length && !!draft.rows.length} indeterminate={!!selectedIds.length && selectedIds.length < draft.rows.length} onChange={event => onSelection(event.target.checked ? draft.rows.map(row => row.sample_id) : [])}>选择全部用于管理</Checkbox>
       <span aria-live="polite">已选 {selectedIds.length} 个样本</span>
       <Button danger disabled={disabled || !selectedIds.length} onClick={onDelete}>删除所选</Button>
       <Button danger disabled={disabled || !draft.rows.length} onClick={onClear}>清空当前分析样本</Button>
     </div>
-    <div className="energy-table-actions">
-      <Checkbox disabled={disabled} checked={included.length === draft.rows.length && included.length > 0} indeterminate={included.length > 0 && included.length < draft.rows.length} onChange={event => onIncludeAll(event.target.checked)}>纳入全部样本</Checkbox>
-      <Checkbox disabled={disabled || !risky.length} checked={risksAccepted} onChange={event => onAcceptRisks(event.target.checked)}>明确接受已纳入样本的未完成／未知状态及警告</Checkbox>
-    </div>
     <div className="energy-table-scroll" tabIndex={0} role="region" aria-label="能量样本集中确认表，可横向滚动">
-      <table className="energy-table"><thead><tr><th scope="col">管理选择</th><th scope="col">名称与来源</th><th scope="col">组成与所选能量</th><th scope="col">独立计算状态</th><th scope="col">角色与推荐依据</th><th scope="col">目标／参考用途</th><th scope="col">纳入与确认</th></tr></thead><tbody>
+      <table className="energy-table"><thead><tr><th scope="col">管理选择</th><th scope="col">名称与来源</th><th scope="col">组成与所选能量</th><th scope="col">来源计算状态</th><th scope="col">规则线索</th><th scope="col">参与的卡片与用途</th></tr></thead><tbody>
         {collection.samples.map(sample => {
           const row = draft.rows.find(item => item.sample_id === sample.id)!;
           const memberships = sampleGroups(sample.id, draft.groups);
           const bases = [...new Set(memberships.map(group => group.energy_basis))];
           const risk = riskRequired(sample);
+          const fieldErrors = (field: string) => errors.filter(error => error.sample_id === sample.id && error.field === `samples.${sample.id}.${field}`);
+          const invalid = (field: string) => fieldErrors(field).length ? 'error' as const : undefined;
+          const explanation = (field: string) => fieldErrors(field).map((error, index) => <span key={`${field}-${index}`} className="energy-field-error" role="status">{error.message}</span>);
           return <tr key={sample.id} data-sample-id={sample.id}>
             <td><Checkbox aria-label={`选择样本 ${sample.id}`} disabled={disabled} checked={selectedIds.includes(sample.id)} onChange={event => onSelection(event.target.checked ? [...selectedIds, sample.id] : selectedIds.filter(id => id !== sample.id))} /></td>
-            <td><div className="energy-cell"><Input aria-label={`样本名称 ${sample.id}`} value={row.name} disabled={disabled} onChange={event => onRow(sample.id, { name: event.target.value }, false)} /><small>{sourceLabels[sample.source.kind]} · {sample.id.slice(-8)}</small><small>{sample.source.relative_path || '目录未知／未提供'}</small><SourceDetails sample={sample} /></div></td>
+            <td><div className="energy-cell" data-energy-field={energyFieldKey(null, `samples.${sample.id}.name`)}><Input aria-label={`样本名称 ${sample.id}`} aria-invalid={!!invalid('name')} status={invalid('name')} value={row.name} disabled={disabled} onBlur={() => onValidate?.(sample.id, 'name')} onChange={event => onRow(sample.id, { name: event.target.value }, false)} />{explanation('name')}<small>{sourceLabels[sample.source.kind]} · {sample.id.slice(-8)}</small><small>{sample.source.relative_path || '目录未知／未提供'}</small><SourceDetails sample={sample} /></div></td>
             <td><div className="energy-cell"><p>{compositionLabel(effectiveComposition(sample, row)) || <span className="energy-hard-error">组成缺失／无效</span>}{row.override?.composition && <Tag>人工组成</Tag>}</p>
               {bases.length ? bases.map(basis => <div key={basis}><small>{basisLabel(basis)}</small><strong>{energyNumber(effectiveEnergy(sample, row, basis))} eV</strong>{row.override?.energy && row.override.energy_basis === basis && <Tag>人工能量</Tag>}</div>) : <small>指定角色与参考用途后显示所选字段；原始三字段见来源明细。</small>}
-              <details className="energy-details"><summary>人工补充／覆盖</summary>
+              <details className="energy-details energy-override-details"><summary>人工补充／覆盖</summary>
                 <Checkbox disabled={disabled} checked={!!row.override} onChange={event => onRow(sample.id, { override: event.target.checked ? { composition: '', energy: '', energy_basis: bases[0] ?? 'sigma_to_zero_ev', note: '' } : null })}>使用单独人工值</Checkbox>
                 {row.override && <div className="energy-cell">
-                  <Input aria-label={`人工组成 ${sample.id}`} disabled={disabled} value={row.override.composition} placeholder="留空保留原组成；例如 Pt:4 C:1 O:1" onChange={event => onRow(sample.id, { override: { ...row.override!, composition: event.target.value } })} />
+                  <label className="energy-field" data-energy-field={energyFieldKey(null, `samples.${sample.id}.override.composition`)}><Input aria-label={`人工组成 ${sample.id}`} aria-invalid={!!invalid('override.composition')} status={invalid('override.composition')} disabled={disabled} value={row.override.composition} placeholder="留空保留原组成；例如 Pt:4 C:1 O:1" onBlur={() => onValidate?.(sample.id, 'override.composition')} onChange={event => onRow(sample.id, { override: { ...row.override!, composition: event.target.value } })} />{explanation('override.composition')}</label>
                   <Select aria-label={`人工能量字段 ${sample.id}`} disabled={disabled} value={row.override.energy_basis} options={basisOptions} onChange={value => onRow(sample.id, { override: { ...row.override!, energy_basis: value } })} />
-                  <Input aria-label={`人工能量 ${sample.id}`} disabled={disabled} value={row.override.energy} placeholder="eV；留空保留原能量" onChange={event => onRow(sample.id, { override: { ...row.override!, energy: event.target.value } })} />
-                  <Input.TextArea aria-label={`人工值依据 ${sample.id}`} disabled={disabled} rows={2} value={row.override.note} placeholder="说明人工值来源／依据（必填）" onChange={event => onRow(sample.id, { override: { ...row.override!, note: event.target.value } })} />
+                  <label className="energy-field" data-energy-field={energyFieldKey(null, `samples.${sample.id}.override.energy`)}><Input aria-label={`人工能量 ${sample.id}`} aria-invalid={!!invalid('override.energy')} status={invalid('override.energy')} disabled={disabled} value={row.override.energy} placeholder="eV；留空保留原能量" onBlur={() => onValidate?.(sample.id, 'override.energy')} onChange={event => onRow(sample.id, { override: { ...row.override!, energy: event.target.value } })} />{explanation('override.energy')}</label>
+                  <label className="energy-field" data-energy-field={energyFieldKey(null, `samples.${sample.id}.override.note`)}><Input.TextArea aria-label={`人工值依据 ${sample.id}`} aria-invalid={!!invalid('override.note')} status={invalid('override.note')} disabled={disabled} rows={2} value={row.override.note} placeholder="说明人工值来源／依据（必填）" onBlur={() => onValidate?.(sample.id, 'override.note')} onChange={event => onRow(sample.id, { override: { ...row.override!, note: event.target.value } })} />{explanation('override.note')}</label>
                 </div>}
               </details>
+              {!row.override && errors.filter(error => error.sample_id === sample.id && error.field.includes('.override.')).map((error, index) => <span key={index} className="energy-field-error" role="status">{error.message} 可展开人工补充并启用人工值修正。</span>)}
             </div></td>
             <td><div className="energy-cell"><div className="energy-status-lines"><span>运行：<strong>{completion(sample.parsed.status.completion)}</strong></span><span>电子：<strong>{convergence(sample.parsed.status.electronic_converged)}</strong></span><span>离子：<strong>{sample.parsed.status.ionic_applicability === 'not_applicable' ? '静态，不适用' : convergence(sample.parsed.status.ionic_converged)}</strong></span></div>
               {risk && <Tag color="gold">状态／警告需确认</Tag>}
               {(sample.parsed.errors.length > 0 || sample.parsed.warnings.length > 0 || sample.parsed.metadata.support?.reasons?.length) && <details className="energy-details"><summary>解析与适用性提示</summary><ul>{[...sample.parsed.errors, ...sample.parsed.warnings, ...(sample.parsed.metadata.support?.reasons ?? [])].map((warning, index) => <li key={`${index}-${warning}`}>{warning}</li>)}</ul></details>}
             </div></td>
-            <td><div className="energy-cell"><Select aria-label={`确认角色 ${sample.id}`} value={row.role ?? undefined} placeholder="待人工指定" allowClear disabled={disabled} options={availableRoles.map(([value, label]) => ({ value, label }))} onSelect={value => onRow(sample.id, { role: value, role_origin: 'manual' })} onClear={() => onRow(sample.id, { role: null, role_origin: 'manual' })} />
-              <Tag>{row.role_origin === 'manual' ? '人工指定' : row.role_origin === 'auto' ? '规则填入 · 待核对' : row.role ? '已有角色 · 待核对' : '待处理'}</Tag>
+            <td><div className="energy-cell"><Tag>{sample.role_suggestion.role ? roleLabels[sample.role_suggestion.role] : '证据不足'}</Tag>
               {sample.assignment_reasons?.length ? <small>{sample.assignment_reasons[0]}</small> : <small>线索：{sample.role_suggestion.role ? roleLabels[sample.role_suggestion.role] : '证据不足'}</small>}
               <details className="energy-details"><summary>分配依据与线索</summary><ul>{(sample.assignment_reasons?.length ? sample.assignment_reasons : sample.role_suggestion.reasons).length ? (sample.assignment_reasons?.length ? sample.assignment_reasons : sample.role_suggestion.reasons).map((reason, index) => <li key={index}>{reason}</li>) : <li>证据不足，请依据组成及参考定义人工指定。</li>}</ul><small>文件名仅提供线索，不证明参考态正确。规则填入不会代替科学核对或风险接受。</small></details>
             </div></td>
-            <td><div className="energy-cell">{row.role === 'adsorbed' || row.role === 'material' ? <small>{row.included ? '已按目标角色纳入当前分析' : '纳入后自动加入目标列表'}</small> : <small>在下方参考配置中选择用途。</small>}
-              {memberships.map(group => <small key={group.id}>{group.name} · {group.targets.some(target => target.sample_id === sample.id) ? '目标' : '共用参考'}</small>)}
-            </div></td>
-            <td><div className="energy-cell"><Checkbox aria-label={`纳入 ${sample.id}`} disabled={disabled} checked={row.included} onChange={event => onRow(sample.id, { included: event.target.checked, included_origin: 'manual' })}>纳入计算</Checkbox>
-              <Checkbox aria-label={`人工确认 ${sample.id}`} disabled={disabled || !row.included || !row.role} checked={row.confirmed} onChange={event => onRow(sample.id, { confirmed: event.target.checked }, false)}>已核对本行</Checkbox>
-              {risk && <Checkbox aria-label={`接受风险 ${sample.id}`} disabled={disabled || !row.included} checked={row.accepted_warnings} onChange={event => onRow(sample.id, { accepted_warnings: event.target.checked }, false)}>接受本行状态</Checkbox>}
+            <td><div className="energy-cell">{!memberships.length && <small>暂未参与任何卡；在计算卡中自由选择用途。</small>}
+              {memberships.map(group => <small key={group.id}>{group.name} · {cardUse(group, sample.id).join('、')}</small>)}
             </div></td>
           </tr>;
         })}
       </tbody></table>
     </div>
-    <p className="energy-note">推荐不等于确认。缺能量、组成、必要参考或存在硬冲突时，风险接受不能放行；缺所选字段不会自动改用其他能量。科学输入修改只使受影响的核对失效，风险接受独立保留。统一确认不会替你接受风险。</p>
+    <p className="energy-note">用途由每张卡独立指定。同一样本可用于多卡；共享科学值修改会先显示受影响卡，经明确确认后统一保存。风险在当前卡确认时集中接受；硬错误不能放行。</p>
   </>;
 }
