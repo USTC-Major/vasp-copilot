@@ -15,6 +15,11 @@
 .energy-import-tabs { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:14px; }
 .energy-import-form { display:grid; gap:12px; }
 .energy-type-options { display:grid; gap:12px; }
+.energy-task-list { list-style:none; padding:0; margin:0; display:grid; gap:16px; }
+.energy-task-list > li { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:16px; padding:18px; border:1px solid var(--wf-border); border-radius:8px; background:var(--wf-field); }
+.energy-task-description { min-width:0; flex:1 1 250px; }
+.energy-task-description h4.ant-typography { margin:0 0 10px; }
+.energy-task-description small { display:block; margin-top:10px; color:var(--wf-muted); }
 .energy-legacy-copies { display:grid; gap:10px; margin-top:12px; }
 .energy-legacy-copies > div { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
 .energy-file-picker { display:flex; flex-direction:column; gap:9px; border:1px dashed var(--wf-border); background:var(--wf-field); border-radius:8px; padding:18px; color:var(--wf-blue); }

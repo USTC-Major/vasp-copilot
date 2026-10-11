@@ -5,6 +5,14 @@ import { energyFixture } from '../components/energy/energyTestFixtures';
 import { cardConfiguration } from '../components/energy/energyCards';
 
 afterEach(() => vi.restoreAllMocks());
+
+it('renames a task and deletes only its stable id with the expected saved revision', async () => {
+  const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response('{}', { status: 200 }));
+  await energyApi.rename(energyFixture(), '独立吸附能计算任务');
+  expect(fetch).toHaveBeenLastCalledWith('/api/v1/toolbox/postprocessing/energy/collections/ec_fixture/title', expect.objectContaining({ method: 'PUT', body: JSON.stringify({ expected_revision: 4, title: '独立吸附能计算任务' }) }));
+  await energyApi.remove('ec_fixture', 4);
+  expect(fetch).toHaveBeenLastCalledWith('/api/v1/toolbox/postprocessing/energy/collections/ec_fixture?expected_revision=4', expect.objectContaining({ method: 'DELETE' }));
+});
 it('uses independent collection/sample identities and encodes duplicate filename metadata', async () => {
   const collection = energyFixture();
   const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(JSON.stringify({ mode: 'toolbox', collection }), { status: 201 }));

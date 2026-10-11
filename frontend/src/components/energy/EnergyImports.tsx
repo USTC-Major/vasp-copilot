@@ -28,8 +28,8 @@ export default function EnergyImports({ collection, disabled, draftDirty, onFile
   const bytes = files.reduce((sum, item) => sum + item.file.size, 0);
   const usedBytes = collection.samples.reduce((sum, sample) => sum + (sample.source.size_bytes ?? 0), 0);
   const selectionError = files.some(item => !item.file.size || item.file.size > collection.limits.max_file_bytes) ? '所选文件为空或超过单文件 64 MiB 上限。'
-    : bytes + usedBytes > collection.limits.max_collection_bytes ? '所选文件与当前比较集缓存超过 128 MiB 上限。'
-    : files.length + collection.samples.length > collection.limits.max_samples ? `当前比较集最多 ${collection.limits.max_samples} 个样本。` : '';
+    : bytes + usedBytes > collection.limits.max_collection_bytes ? '所选文件与当前计算任务缓存超过 128 MiB 上限。'
+    : files.length + collection.samples.length > collection.limits.max_samples ? `当前计算任务最多 ${collection.limits.max_samples} 个样本。` : '';
   const previewCurrent = !!csvPreview && !csvPreview.invalidated && csvPreview.collectionId === collection.id && csvPreview.file === csv && csvPreview.basis === csvBasis && csvPreview.revision === collection.revision && !draftDirty;
   const canImportCsv = previewCurrent && csvPreview.data.can_import && !csvPreview.data.issues.length && csvPreview.data.rows.every(row => !row.issues.length);
   async function downloadTemplate() {
@@ -73,7 +73,7 @@ export default function EnergyImports({ collection, disabled, draftDirty, onFile
       <Typography.Text type="secondary">同名 OUTCAR 独立保存；相对目录仅作来源元数据。普通文件选择无法取得原目录时，可自行填写中文或空格标签。</Typography.Text>
       {selectionError && <Alert type="error" title={selectionError} />}
       <Button type="primary" disabled={disabled || !files.length || !!selectionError} onClick={() => void onFiles(files, id => setFiles(previous => previous.filter(item => item.id !== id)))}>批量读取并加入确认表</Button>
-      <p className="energy-note">64 MiB／文件 · 128 MiB／比较集 · 最多 {collection.limits.max_samples} 个样本。读取后逐项保留原始值、来源指纹和计算状态。</p>
+      <p className="energy-note">64 MiB／文件 · 128 MiB／计算任务 · 最多 {collection.limits.max_samples} 个样本。读取后逐项保留原始值、来源指纹和计算状态。</p>
     </div>}
     {mode === 'manual' && <div className="energy-import-form">
       <div className="energy-manual-grid">
@@ -94,10 +94,10 @@ export default function EnergyImports({ collection, disabled, draftDirty, onFile
       <Typography.Text type="secondary">按文件声明会逐行保留原口径。选择某个字段只补充未声明的行；文件已声明不同口径时会明确报冲突并阻止导入。旧 JSON 元素计数仍可读取。</Typography.Text>
       {csv && <Typography.Text>{csv.name}</Typography.Text>}
       <Button disabled={disabled || !csv || readingPreview || (draftDirty && (collection.workflow === 'cards' || !!collection.card_projection))} loading={readingPreview} onClick={() => void previewCsv()}>{draftDirty && (collection.workflow === 'cards' || !!collection.card_projection) ? '先保存共享修改再预览 CSV' : draftDirty ? '保存草稿并预览 CSV' : '预览 CSV'}</Button>
-      {csvPreview && !previewCurrent && <Alert type="warning" title="CSV 预览已失效，请重新预览。" description="文件、口径选择或当前分析修订发生变化后，旧预览不能用于导入。" />}
+      {csvPreview && !previewCurrent && <Alert type="warning" title="CSV 预览已失效，请重新预览。" description="文件、口径选择或当前计算任务修订发生变化后，旧预览不能用于导入。" />}
       {previewCurrent && csvPreview && <section aria-label="CSV 导入预览"><Typography.Text>预览 {csvPreview.data.row_count} 行，{csvPreview.data.valid_count} 行通过检查。尚未导入。</Typography.Text>{!!csvPreview.data.issues.length && <Alert type="error" title="CSV 文件存在错误，不能导入。" description={<ul>{csvPreview.data.issues.map((issue, index) => <li key={`${issue.code}-${index}`}>{issue.message}</li>)}</ul>} />}<div className="energy-table-scroll"><table className="energy-csv-preview"><thead><tr><th>行号</th><th>名称</th><th>元素计数</th><th>能量口径</th><th>能量（eV）</th><th>来源说明</th><th>检查结果</th></tr></thead><tbody>{csvPreview.data.rows.map(row => <tr key={row.row_number}><td>{row.row_number}</td><td>{row.name || '缺失'}</td><td>{compositionLabel(row.composition) || '缺失'}</td><td>{row.energy_basis ? basisLabel(row.energy_basis) : '缺失'}</td><td>{energyNumber(row.energy_ev)}</td><td>{row.relative_path && <div>{row.relative_path}</div>}{row.reference_note || '未提供'}</td><td>{row.issues.length ? <ul className="energy-hard-error">{row.issues.map((issue, index) => <li key={`${issue.code}-${index}`}>{issue.message}</li>)}</ul> : '通过'}</td></tr>)}</tbody></table></div></section>}
       <Button type="primary" disabled={disabled || !csv || !canImportCsv || readingPreview} onClick={() => { if (csv && csvPreview && canImportCsv) void onCsv(csv, csvBasis === 'file' ? undefined : csvBasis, csvPreview.revision).then(succeeded => { if (succeeded) { setCsv(undefined); setCsvPreview(undefined); } }); }}>确认导入预览中的 CSV</Button>
-      <p className="energy-note">CSV 回导仅建立新的表格来源，运行与收敛状态为未知；不会继承原分析的锁定、核对、风险接受或 OUTCAR 来源验证。</p>
+      <p className="energy-note">CSV 回导仅建立新的表格来源，运行与收敛状态为未知；不会继承原计算任务的锁定、核对、风险接受或 OUTCAR 来源验证。</p>
     </div>}
     {error && <Alert type="error" title={error} />}
   </div>;

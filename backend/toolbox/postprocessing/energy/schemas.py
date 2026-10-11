@@ -1,7 +1,7 @@
 """Strict request contracts for the energy confirmation table."""
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictInt
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator
 
 EnergyBasis = Literal['sigma_to_zero_ev', 'without_entropy_ev', 'free_energy_toten_ev']
 AnalysisKind = Literal['adsorption', 'formation']
@@ -28,6 +28,19 @@ class Create(Model):
 
 class Revision(Model):
     expected_revision: int = Field(ge=0, strict=True)
+
+
+class Rename(Revision):
+    title: str = Field(min_length=1, max_length=120, strict=True)
+
+    @field_validator('title', mode='before')
+    @classmethod
+    def clean_title(cls, value):
+        if isinstance(value, str):
+            if any(ord(char) < 32 or ord(char) == 127 for char in value):
+                raise ValueError('任务名称不能含控制字符')
+            return value.strip()
+        return value
 
 
 class CopyAnalysis(Revision):
