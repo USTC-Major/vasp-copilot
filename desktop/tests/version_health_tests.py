@@ -41,7 +41,7 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self,*args):pass
     def do_GET(self):
         if self.path=='/__launcher__/health':data=identity
-        elif self.path=='/ai/v1/ping':data={'mode':'ai','version':'0.5.0','enabled':True}
+        elif self.path=='/ai/v1/ping':data={'mode':'ai','version':'0.5.1','enabled':True}
         else:data={'status':'ok'}
         body=json.dumps(data).encode()
         self.send_response(200);self.send_header('Content-Length',str(len(body)));self.end_headers();self.wfile.write(body)
@@ -70,12 +70,12 @@ result = json.loads((OUT/'result.json').read_text(encoding='utf-8-sig'))
 assert process.returncode == 0 and result['ok'], result
 ready = json.loads((OUT/'ready.json').read_text(encoding='utf-8-sig'))
 assert ready['attempts'] == 1, ready
-assert ready['snapshot']['Version'].startswith('0.5.0 / '), ready
+assert ready['snapshot']['Version'].startswith('0.5.1 / '), ready
 assert len(ready['snapshot']['Services']) == 3, ready
 assert all(service['State'] == 'ready' for service in ready['snapshot']['Services']), ready
 assert not result['running'], result
 for service in result['snapshot']['Services']:
     with socket.socket() as probe:
         assert probe.connect_ex(('127.0.0.1', service['Port'])) != 0, service
-print('Release 0.5.0 AI health accepted; three private services stopped: passed', flush=True)
+print('Release 0.5.1 AI health accepted; three private services stopped: passed', flush=True)
 print('Evidence: ' + str(OUT), flush=True)
