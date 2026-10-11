@@ -9,7 +9,9 @@ class DraftSessions extends Map<string, EnergyEditor> {
     try { const entries: unknown = JSON.parse(sessionStorage.getItem(storageKey) ?? '[]'); if (Array.isArray(entries)) for (const entry of entries) if (Array.isArray(entry) && typeof entry[0] === 'string' && entry[1]?.collection?.id === entry[0] && Array.isArray(entry[1]?.draft?.groups)) super.set(entry[0], entry[1] as EnergyEditor); } catch { /* Unavailable/corrupt browser storage does not block editing. */ }
   }
   override get(id: string) { this.restore(); return super.get(id); }
-  override set(id: string, editor: EnergyEditor) { super.set(id, editor); try { sessionStorage.setItem(storageKey, JSON.stringify([...this])); } catch { /* In-memory draft remains available. */ } return this; }
+  private persist() { try { sessionStorage.setItem(storageKey, JSON.stringify([...this])); } catch { /* In-memory draft remains available. */ } }
+  override set(id: string, editor: EnergyEditor) { this.restore(); super.set(id, editor); this.persist(); return this; }
+  override delete(id: string) { this.restore(); const deleted = super.delete(id); this.persist(); return deleted; }
   override clear() { super.clear(); try { sessionStorage.removeItem(storageKey); } catch { /* Storage may be disabled. */ } }
 }
 export const energyDraftSessions = new DraftSessions();

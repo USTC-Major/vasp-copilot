@@ -1,7 +1,7 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ConfigProvider, theme } from 'antd';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useNavigate } from 'react-router-dom';
 import { beforeEach, afterEach, expect, it, vi } from 'vitest';
 import { ApiError, toolboxApi } from '../api/client';
 import { energyApi, type EnergyCollection, type EnergyGroup, type EnergyImpact, type EnergySamplePatch } from '../api/energy';
@@ -19,15 +19,26 @@ function fixture(result = false): EnergyCollection {
   collection.result = null; return collection;
 }
 function response() { return { mode: 'toolbox' as const, collection: structuredClone(record) }; }
-function mount(path = '/toolbox/postprocessing/energy?collection=ec_fixture') {
+function ExternalTaskNavigation() { const navigate = useNavigate(); return <><button onClick={() => navigate('/toolbox/postprocessing/energy')}>浏览器返回任务列表</button><button onClick={() => navigate('/toolbox/postprocessing/energy?collection=ec_other')}>浏览器打开任务 B</button></>; }
+function mount(path = '/toolbox/postprocessing/energy?collection=ec_fixture', navigation = false) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } }); clients.push(client);
-  return render(<ConfigProvider theme={{ algorithm: theme.darkAlgorithm, token: { motion: false } }}><QueryClientProvider client={client}><MemoryRouter initialEntries={[path]}><EnergyPage /></MemoryRouter></QueryClientProvider></ConfigProvider>);
+  return render(<ConfigProvider theme={{ algorithm: theme.darkAlgorithm, token: { motion: false } }}><QueryClientProvider client={client}><MemoryRouter initialEntries={[path]}>{navigation && <ExternalTaskNavigation />}<EnergyPage /></MemoryRouter></QueryClientProvider></ConfigProvider>);
 }
 function impact(patches: EnergySamplePatch[]): EnergyImpact { const scientificIds = patches.filter(patch => 'override' in patch).map(patch => patch.sample_id); return { preview_id: 'impact-token', expected_revision: record.revision, sample_ids: patches.map(patch => patch.sample_id), affected_cards: record.groups.filter(card => cardSampleIds(card).some(id => scientificIds.includes(id))).map(card => ({ card_id: card.id, name: card.name, locked: !!card.locked })), requires_acknowledgement: record.groups.some(card => card.locked && cardSampleIds(card).some(id => scientificIds.includes(id))) }; }
 function invalidate(card: EnergyGroup): EnergyGroup { return { ...card, locked: false, confirmed: false, risk_accepted: false, confirmation_fingerprint: null, risk_acceptance_fingerprint: null, result: null, status: 'stale' }; }
-async function pool() { fireEvent.click(screen.getByRole('button', { name: /共享样本与导入 ·/ })); await screen.findByRole('textbox', { name: '样本名称 es_clean' }); }
+async function pool() { fireEvent.click(screen.getByRole('button', { name: /本任务样本与导入 ·/ })); await screen.findByRole('textbox', { name: '样本名称 es_clean' }); }
 async function modal(title: string) { return (await screen.findByText(title)).closest('[role=dialog]') as HTMLElement; }
 async function second() { fireEvent.click(screen.getByRole('button', { name: '打开计算卡 第二张独立卡' })); await screen.findByRole('textbox', { name: '卡名称 g_B' }); }
+function independentTasks(resultA = false) {
+  const a = { ...fixture(resultA), title: '任务 A' };
+  const b = { ...fixture(), id: 'ec_other', title: '任务 B', samples: fixture().samples.map(sample => ({ ...sample, name: `B ${sample.name}` })), groups: fixture().groups.map(card => ({ ...card, reference_note: 'B saved reference' })) };
+  const tasks = new Map([[a.id, a], [b.id, b]]);
+  vi.mocked(energyApi.list).mockImplementation(async () => ({ mode: 'toolbox', collections: structuredClone([...tasks.values()]) }));
+  vi.mocked(energyApi.get).mockImplementation(async id => { const collection = tasks.get(id); if (!collection) throw new ApiError('ENERGY_COLLECTION_NOT_FOUND', '计算任务不存在', false, 404); return { mode: 'toolbox', collection: structuredClone(collection) }; });
+  return { a, b, tasks };
+}
+async function taskList() { fireEvent.click(screen.getByRole('button', { name: '返回计算任务列表' })); await screen.findByText('计算任务列表'); }
+async function openTask(title: string) { fireEvent.click(await screen.findByRole('button', { name: `打开计算任务 ${title}` })); await screen.findByRole('textbox', { name: '参考定义 g_ads' }); }
 beforeEach(() => {
   record = fixture();
   vi.spyOn(energyApi, 'list').mockImplementation(async () => ({ mode: 'toolbox', collections: [structuredClone(record)] }));
@@ -194,7 +205,7 @@ it('removes all retired per-row inclusion/confirmation/risk controls and shows s
 it('imports same-name OUTCAR files with independent paths/revisions without altering existing target choices', async () => {
   record.samples = []; record.groups = record.groups.map(card => card.kind === 'adsorption' ? { ...card, clean_sample_id: '', adsorbate_sample_id: '', targets: [] } : card);
   vi.spyOn(energyApi, 'upload').mockImplementation(async (collection, file, path) => { const sample = { ...structuredClone(energyFixture().samples[0]), id: `es_import_${collection.revision}`, name: file.name, source: { kind: 'local_upload' as const, relative_path: path } }; record = { ...collection, revision: collection.revision + 1, samples: [...collection.samples, sample] }; return response(); });
-  mount(); await screen.findByRole('textbox', { name: '卡名称 g_ads' }); fireEvent.click(screen.getByRole('button', { name: /共享样本与导入 ·/ }));
+  mount(); await screen.findByRole('textbox', { name: '卡名称 g_ads' }); fireEvent.click(screen.getByRole('button', { name: /本任务样本与导入 ·/ }));
   fireEvent.change(await screen.findByLabelText('选择能量 OUTCAR'), { target: { files: [new File(['one'], 'OUTCAR'), new File(['two'], 'OUTCAR')] } });
   const paths = screen.getAllByRole('textbox', { name: /相对目录 / }); fireEvent.change(paths[0], { target: { value: '中文 表面/位点 A/OUTCAR' } }); fireEvent.change(paths[1], { target: { value: '中文 表面/位点 B/OUTCAR' } });
   fireEvent.click(screen.getByRole('button', { name: '批量读取并加入确认表' }));
@@ -217,9 +228,14 @@ it('preserves CSV preview/import and keeps management deletion behind card impac
 it('requires an initial analysis type and creates a default independent card after the empty v2 collection', async () => {
   vi.spyOn(energyApi, 'create').mockImplementation(async (title, kind) => { record = { ...fixture(), id: 'ec_new', title, analysis_kind: kind, samples: [], groups: [] }; return response(); });
   mount('/toolbox/postprocessing/energy');
-  expect(await screen.findByRole('button', { name: '创建分析并导入数据' })).toBeDisabled(); fireEvent.click(screen.getByRole('radio', { name: '材料形成能' })); fireEvent.click(screen.getByRole('button', { name: '创建分析并导入数据' }));
-  await waitFor(() => expect(energyApi.create).toHaveBeenCalledWith('新的材料形成能分析', 'formation')); await waitFor(() => expect(energyApi.addCard).toHaveBeenCalledWith(expect.objectContaining({ id: 'ec_new', analysis_kind: 'formation' }), expect.objectContaining({ kind: 'formation' })));
+  expect(await screen.findByText('计算任务列表')).toBeInTheDocument(); expect(energyApi.get).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button', { name: '新建计算任务' }));
+  expect(await screen.findByRole('button', { name: '创建计算任务并导入数据' })).toBeDisabled(); fireEvent.click(screen.getByRole('radio', { name: '材料形成能' })); fireEvent.click(screen.getByRole('button', { name: '创建计算任务并导入数据' }));
+  await waitFor(() => expect(energyApi.create).toHaveBeenCalledWith('新的材料形成能计算任务', 'formation')); await waitFor(() => expect(energyApi.addCard).toHaveBeenCalledWith(expect.objectContaining({ id: 'ec_new', analysis_kind: 'formation' }), expect.objectContaining({ kind: 'formation' })));
   expect(await screen.findByLabelText('选择能量 OUTCAR')).toBeEnabled();
+  fireEvent.click(screen.getByRole('button', { name: '返回计算任务列表' }));
+  expect(await screen.findByRole('button', { name: '打开计算任务 新的材料形成能计算任务' })).toBeEnabled();
+  expect(screen.queryByRole('textbox', { name: /卡名称/ })).not.toBeInTheDocument();
 });
 
 it('calculates only the locked active card without requiring an unrelated incomplete card', async () => {
@@ -234,8 +250,8 @@ it('shows old mixed records completely and copies every card of the selected typ
   const old = energyFixture(true); old.analysis_kind = null; old.card_migration = { required: true, read_only: true, reason: 'mixed' };
   old.groups.push({ id: 'g_formation', name: '旧形成能卡', kind: 'formation', energy_basis: 'sigma_to_zero_ev', basis_confirmed: true, reference_note: 'old reference', element_references: {}, targets: [] }); record = old; const original = structuredClone(record);
   vi.spyOn(energyApi, 'copy').mockImplementation(async (_, kind) => ({ mode: 'toolbox', collection: { ...fixture(), id: 'ec_copy', analysis_kind: kind, groups: [structuredClone(old.groups[1])] } }));
-  mount(); expect(await screen.findByText('旧混合分析完整保留，以只读方式打开。')).toBeInTheDocument(); expect(screen.getByRole('button', { name: '打开计算卡 旧形成能卡' })).toBeEnabled(); expect(screen.getByRole('button', { name: '导出当前卡 CSV' })).toBeDisabled();
-  fireEvent.click(screen.getByRole('button', { name: '复制为材料形成能分析' })); await waitFor(() => expect(energyApi.copy).toHaveBeenCalledWith(expect.objectContaining({ id: 'ec_fixture' }), 'formation')); expect(record).toEqual(original); expect(energyApi.saveCard).not.toHaveBeenCalled();
+  mount(); expect(await screen.findByText('旧混合计算任务完整保留，以只读方式打开。')).toBeInTheDocument(); expect(screen.getByRole('button', { name: '打开计算卡 旧形成能卡' })).toBeEnabled(); expect(screen.getByRole('button', { name: '导出当前卡 CSV' })).toBeDisabled();
+  fireEvent.click(screen.getByRole('button', { name: '复制为材料形成能计算任务' })); await waitFor(() => expect(energyApi.copy).toHaveBeenCalledWith(expect.objectContaining({ id: 'ec_fixture' }), 'formation')); expect(record).toEqual(original); expect(energyApi.saveCard).not.toHaveBeenCalled();
 });
 it('keeps shared input errors beside the actual field, locates it and clears only corrected errors on blur', async () => {
   mount(); await screen.findByRole('textbox', { name: '卡名称 g_ads' }); await pool();
@@ -254,4 +270,124 @@ it('reuses immutable task-cache samples without changing existing card choices o
   const savedCards = structuredClone(record.groups); mount(); await screen.findByRole('textbox', { name: '卡名称 g_ads' }); await pool(); fireEvent.click(screen.getByRole('button', { name: '已有任务／缓存' }));
   const heading = await screen.findByText('复用已缓存任务样本（无需连接超算）'); fireEvent.click(heading);
   fireEvent.click(screen.getByRole('button', { name: /合成能量比较 · 合成表面 · es_clean/ })); await waitFor(() => expect(energyApi.reuse).toHaveBeenCalledOnce()); expect(record.groups).toEqual(savedCards); expect(record.samples.at(-1)?.source.snapshot_sha256).toBe('stable-snapshot');
+});
+
+it('isolates task samples, references, results and local drafts through list navigation and refresh', async () => {
+  const { a, b } = independentTasks(true); mount();
+  fireEvent.change(await screen.findByRole('textbox', { name: '卡名称 g_ads' }), { target: { value: 'A local card name' } });
+  await pool(); fireEvent.change(screen.getByRole('textbox', { name: '样本名称 es_clean' }), { target: { value: 'A local sample name' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+  await taskList(); await openTask('任务 B');
+  expect(screen.getByRole('textbox', { name: '参考定义 g_ads' })).toHaveValue('B saved reference');
+  expect(screen.getByRole('textbox', { name: '卡名称 g_ads' })).toHaveValue(b.groups[0].name);
+  expect(screen.queryByText('-2 eV', { selector: 'strong' })).not.toBeInTheDocument();
+  fireEvent.change(screen.getByRole('textbox', { name: '参考定义 g_ads' }), { target: { value: 'B local reference' } });
+  await pool(); expect(screen.getByRole('textbox', { name: '样本名称 es_clean' })).toHaveValue(b.samples[0].name);
+  fireEvent.change(screen.getByRole('textbox', { name: '样本名称 es_clean' }), { target: { value: 'B local sample name' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+  await taskList(); await openTask('任务 A');
+  expect(screen.getByRole('textbox', { name: '卡名称 g_ads' })).toHaveValue('A local card name');
+  expect(screen.getByRole('textbox', { name: '参考定义 g_ads' })).toHaveValue(a.groups[0].reference_note);
+  expect(screen.getByText('-2 eV', { selector: 'strong' })).toBeInTheDocument();
+  await pool(); expect(screen.getByRole('textbox', { name: '样本名称 es_clean' })).toHaveValue('A local sample name');
+  cleanup(); Map.prototype.clear.call(energyDraftSessions); mount('/toolbox/postprocessing/energy');
+  expect(await screen.findByText('计算任务列表')).toBeInTheDocument();
+  expect(screen.queryByRole('textbox', { name: '卡名称 g_ads' })).not.toBeInTheDocument();
+  await openTask('任务 B'); expect(screen.getByRole('textbox', { name: '参考定义 g_ads' })).toHaveValue('B local reference');
+  await pool(); expect(screen.getByRole('textbox', { name: '样本名称 es_clean' })).toHaveValue('B local sample name');
+  expect(energyApi.saveCard).not.toHaveBeenCalled(); expect(energyApi.saveSamples).not.toHaveBeenCalled();
+});
+
+it('renames only task metadata while retaining locked results and local card/sample drafts', async () => {
+  const { a, tasks } = independentTasks(true);
+  vi.spyOn(energyApi, 'rename').mockImplementation(async (collection, title) => { const updated = { ...tasks.get(collection.id)!, title, revision: collection.revision + 1 }; tasks.set(collection.id, updated); return { mode: 'toolbox', collection: structuredClone(updated) }; });
+  mount(); fireEvent.change(await screen.findByRole('textbox', { name: '卡名称 g_ads' }), { target: { value: 'A local card name' } });
+  await pool(); fireEvent.change(screen.getByRole('textbox', { name: '样本名称 es_clean' }), { target: { value: 'A local sample name' } }); fireEvent.click(screen.getByRole('button', { name: 'Close' })); await taskList();
+  fireEvent.click(screen.getByRole('button', { name: '重命名计算任务 任务 A' }));
+  fireEvent.change(await screen.findByRole('textbox', { name: '重命名计算任务名称' }), { target: { value: '重命名后的任务 A' } });
+  fireEvent.click(screen.getByRole('button', { name: '保存任务名称' }));
+  await waitFor(() => expect(energyApi.rename).toHaveBeenCalledWith(expect.objectContaining({ id: a.id, revision: a.revision }), '重命名后的任务 A'));
+  await openTask('重命名后的任务 A');
+  expect(screen.getByRole('heading', { name: '重命名后的任务 A' })).toBeInTheDocument();
+  expect(screen.getByRole('textbox', { name: '卡名称 g_ads' })).toHaveValue('A local card name');
+  expect(energyDraftSessions.get(a.id)?.collection.groups[0]).toEqual(a.groups[0]);
+  expect(screen.getByText('-2 eV', { selector: 'strong' })).toBeInTheDocument();
+  await pool(); expect(screen.getByRole('textbox', { name: '样本名称 es_clean' })).toHaveValue('A local sample name');
+  expect(energyApi.saveCard).not.toHaveBeenCalled(); expect(energyApi.saveSamples).not.toHaveBeenCalled();
+});
+
+it('confirms task sample/card counts and deletes only that task cache and persisted drafts', async () => {
+  const { a, b, tasks } = independentTasks();
+  vi.spyOn(energyApi, 'remove').mockImplementation(async id => { tasks.delete(id); return { mode: 'toolbox', deleted: true }; });
+  mount(); fireEvent.change(await screen.findByRole('textbox', { name: '参考定义 g_ads' }), { target: { value: 'A local reference' } }); await taskList(); await openTask('任务 B');
+  fireEvent.change(screen.getByRole('textbox', { name: '参考定义 g_ads' }), { target: { value: 'B local reference' } }); await taskList();
+  fireEvent.click(screen.getByRole('button', { name: '删除计算任务 任务 A' }));
+  let dialog = await modal('删除计算任务');
+  expect(within(dialog).getByText(/3 个样本、2 张计算卡/)).toBeInTheDocument();
+  expect(within(dialog).getByText(/原始文件、来源计算任务和其他计算任务保留/)).toBeInTheDocument();
+  fireEvent.click(within(dialog).getByRole('button', { name: /取\s*消/ })); expect(energyApi.remove).not.toHaveBeenCalled(); expect(energyDraftSessions.get(a.id)?.dirty).toBe(true);
+  fireEvent.click(screen.getByRole('button', { name: '删除计算任务 任务 A' })); dialog = await modal('删除计算任务'); fireEvent.click(within(dialog).getByRole('button', { name: '确认删除计算任务' }));
+  await waitFor(() => expect(energyApi.remove).toHaveBeenCalledWith(a.id, a.revision));
+  expect(screen.queryByRole('button', { name: '打开计算任务 任务 A' })).not.toBeInTheDocument();
+  expect(clients.at(-1)?.getQueryData(['energy-collection', a.id])).toBeUndefined();
+  expect(energyDraftSessions.get(a.id)).toBeUndefined();
+  expect(energyDraftSessions.get(b.id)?.draft.groups[0].reference_note).toBe('B local reference');
+  cleanup(); Map.prototype.clear.call(energyDraftSessions); mount('/toolbox/postprocessing/energy'); await openTask('任务 B');
+  expect(screen.getByRole('textbox', { name: '参考定义 g_ads' })).toHaveValue('B local reference');
+  expect(energyDraftSessions.get(a.id)).toBeUndefined();
+});
+
+it('keeps a late task A save response scoped to A after opening B', async () => {
+  const { a, tasks } = independentTasks();
+  let finish!: (value: { mode: 'toolbox'; collection: EnergyCollection }) => void;
+  vi.mocked(energyApi.saveCard).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  mount(); fireEvent.change(await screen.findByRole('textbox', { name: '参考定义 g_ads' }), { target: { value: 'A pending save' } }); fireEvent.click(screen.getByRole('button', { name: '保存当前卡草稿' }));
+  await waitFor(() => expect(energyApi.saveCard).toHaveBeenCalledOnce());
+  await taskList(); await openTask('任务 B');
+  const savedA = { ...a, revision: a.revision + 1, groups: a.groups.map(card => card.id === 'g_ads' ? { ...card, reference_note: 'A pending save' } : card) }; tasks.set(a.id, savedA);
+  await act(async () => { finish({ mode: 'toolbox', collection: savedA }); });
+  expect(screen.getByRole('heading', { name: '任务 B' })).toBeInTheDocument();
+  expect(screen.getByRole('textbox', { name: '参考定义 g_ads' })).toHaveValue('B saved reference');
+  expect(screen.queryByText('当前卡草稿已保存，未执行计算。')).not.toBeInTheDocument();
+  expect(energyDraftSessions.get(a.id)?.collection.groups[0].reference_note).toBe('A pending save');
+  await taskList(); await openTask('任务 A'); expect(screen.getByRole('textbox', { name: '参考定义 g_ads' })).toHaveValue('A pending save');
+});
+
+it('clears a restored draft when its old task link is reported missing by the server', async () => {
+  const { a, tasks } = independentTasks(); mount();
+  fireEvent.change(await screen.findByRole('textbox', { name: '参考定义 g_ads' }), { target: { value: 'old local draft' } });
+  cleanup(); Map.prototype.clear.call(energyDraftSessions); tasks.delete(a.id); mount();
+  expect(await screen.findByText('计算任务不存在')).toBeInTheDocument();
+  await waitFor(() => expect(screen.queryByRole('textbox', { name: '参考定义 g_ads' })).not.toBeInTheDocument());
+  expect(energyDraftSessions.get(a.id)).toBeUndefined();
+  expect(screen.getByRole('button', { name: '返回计算任务列表' })).toBeEnabled();
+});
+
+it('does not reopen task A shared-save error dialog in B after browser navigation', async () => {
+  const { a } = independentTasks();
+  let fail!: (reason: unknown) => void;
+  vi.mocked(energyApi.saveSamples).mockImplementationOnce(() => new Promise((_resolve, reject) => { fail = reject; }));
+  mount(undefined, true); await screen.findByRole('textbox', { name: '参考定义 g_ads' }); await pool();
+  fireEvent.change(screen.getByRole('textbox', { name: '样本名称 es_clean' }), { target: { value: 'A shared local draft' } });
+  fireEvent.click(screen.getByRole('button', { name: '预览影响并保存共享修改' }));
+  fireEvent.click(within(await modal('确认共享修改影响')).getByRole('button', { name: '确认保存并更新相关卡' }));
+  await waitFor(() => expect(energyApi.saveSamples).toHaveBeenCalledOnce());
+  fireEvent.click(screen.getByRole('button', { name: '浏览器返回任务列表' }));
+  fireEvent.click(screen.getByRole('button', { name: '浏览器打开任务 B' })); await screen.findByRole('textbox', { name: '参考定义 g_ads' });
+  await act(async () => { fail(new ApiError('ENERGY_SAVE_FAILED', 'A 异步保存失败', false, 500)); });
+  expect(screen.getByRole('heading', { name: '任务 B' })).toBeInTheDocument(); expect(screen.getByRole('textbox', { name: '参考定义 g_ads' })).toHaveValue('B saved reference');
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument(); expect(screen.queryByText(/A 异步保存失败|保存未完成，所有本地输入保留/)).not.toBeInTheDocument();
+  expect(energyDraftSessions.get(a.id)?.draft.rows[0].name).toBe('A shared local draft');
+});
+
+it('resets pending local imports and CSV previews when opening a different task', async () => {
+  independentTasks(); vi.spyOn(energyApi, 'previewCsv').mockResolvedValue({ mode: 'toolbox', preview: energyCsvFixture() });
+  mount(); await screen.findByRole('textbox', { name: '参考定义 g_ads' }); await pool();
+  fireEvent.change(screen.getByLabelText('选择能量 OUTCAR'), { target: { files: [new File(['synthetic A'], 'A pending OUTCAR')] } });
+  fireEvent.click(screen.getByRole('button', { name: 'CSV' })); fireEvent.change(screen.getByLabelText('选择能量 CSV'), { target: { files: [new File(['synthetic csv A'], 'A pending.csv')] } });
+  fireEvent.click(screen.getByRole('button', { name: '预览 CSV' })); await screen.findByText('预览 3 行，3 行通过检查。尚未导入。');
+  fireEvent.click(screen.getByRole('button', { name: 'Close' })); await taskList(); await openTask('任务 B'); await pool();
+  expect(screen.queryByText(/A pending/)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'CSV' })); expect(screen.queryByRole('region', { name: 'CSV 导入预览' })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: '确认导入预览中的 CSV' })).toBeDisabled();
 });

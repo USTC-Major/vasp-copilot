@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import stat
 import threading
 import uuid
 
@@ -80,9 +81,15 @@ class EnergyStore:
         if not re.fullmatch(r'ec_[a-f0-9]{32}', ident):
             fail('能量比较集不存在', 'ENERGY_NOT_FOUND', 404)
         path = self.root / ident
-        if not path.is_dir() or path.is_symlink():
+        if not path.is_dir() or self.linked(path):
             fail('能量比较集不存在', 'ENERGY_NOT_FOUND', 404)
         return path
+
+    @staticmethod
+    def linked(path):
+        info = path.lstat()
+        return (stat.S_ISLNK(info.st_mode) or
+                bool(getattr(info, 'st_file_attributes', 0) & getattr(stat, 'FILE_ATTRIBUTE_REPARSE_POINT', 0x400)))
 
     def read(self, ident):
         with self.guard:
@@ -134,7 +141,8 @@ class EnergyStore:
             docs = []
             for directory in self.root.glob('ec_*'):
                 try:
-                    docs.append(self.read(directory.name))
+                    doc = self.read(directory.name)
+                    docs.append({**doc, 'sample_count': len(doc['samples']), 'card_count': len(doc['groups'])})
                 except (OSError, ValueError):
                     continue
             return sorted(docs, key=lambda doc: doc['updated_at'], reverse=True)
@@ -815,10 +823,38 @@ class EnergyStore:
                                  dump({'group': group, 'row': row}), dump(row['warnings'])])
         return out.getvalue()
 
-    def delete(self, ident):
+    def rename(self, ident, revision, title):
+        with self.guard:
+            path = self.directory(ident) / 'metadata.json'
+            # Use the persisted record: compatibility projections must not become
+            # a scientific migration merely because the task's display name changes.
+            doc = json.loads(path.read_text(encoding='utf-8'))
+            self.expect(doc, revision)
+            doc.update(title=title, revision=doc['revision'] + 1, updated_at=now())
+            self.write_json(path, doc)
+            return self.read(ident)
+
+    def delete(self, ident, revision=None):
         with self.guard:
             path = self.directory(ident)
-            shutil.rmtree(path)
+            doc = self.read(ident)
+            if revision is not None:
+                self.expect(doc, revision)
+            if path.resolve().parent != self.root.resolve():
+                fail('任务缓存目录越界，无法删除', 'ENERGY_TASK_PATH_UNSAFE', 409)
+            # This software-owned directory is flat. Never follow source labels,
+            # remote paths, links or unfamiliar files when deleting a task.
+            entries = list(path.iterdir())
+            for entry in entries:
+                owned = re.fullmatch(r'metadata\.(?:json|tmp)|metadata\.pp\.energy\.v1\.backup\.json'
+                                     r'(?:\.[a-f0-9]{32}\.tmp)?|es_[a-f0-9]{32}\.bin', entry.name)
+                if not owned or self.linked(entry) or not stat.S_ISREG(entry.lstat().st_mode):
+                    fail('任务缓存含非软件拥有的文件或链接，无法安全删除', 'ENERGY_TASK_PATH_UNSAFE', 409)
+            for entry in entries:
+                entry.unlink()
+            path.rmdir()
+            self.cards.previews = {token: preview for token, preview in self.cards.previews.items()
+                                   if preview['collection_id'] != ident}
 
     def close(self):
         if self.task_sources:

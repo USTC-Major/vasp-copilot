@@ -55,6 +55,7 @@ export type EnergyResult = {
 };
 export type EnergyCollection = {
   id: string; schema_version: 'pp.energy.v1' | 'pp.energy.v2'; title: string; revision: number; created_at: string; updated_at: string;
+  sample_count?: number; card_count?: number;
   samples: EnergySample[]; groups: EnergyGroup[]; result: EnergyResult | null;
   analysis_kind?: EnergyAnalysisKind | null; legacy_mode?: boolean; locked?: boolean; lock_fingerprint?: string | null;
   workflow?: 'cards'; card_projection?: EnergyGroup[]; card_migration?: { required: boolean; read_only: boolean; reason: string | null };
@@ -90,7 +91,8 @@ export const energyApi = {
   list: (signal?: AbortSignal) => request<{ mode: 'toolbox'; collections: EnergyCollection[] }>(`${base}/collections`, { signal }),
   get: (id: string, signal?: AbortSignal) => request<CollectionResponse>(collectionPath(id), { signal }),
   create: (title: string, analysisKind: EnergyAnalysisKind) => request<CollectionResponse>(`${base}/collections`, { method: 'POST', body: { title, analysis_kind: analysisKind, workflow: 'cards' } }),
-  remove: (id: string) => request<{ deleted: true }>(collectionPath(id), { method: 'DELETE' }),
+  rename: (collection: EnergyCollection, title: string) => request<CollectionResponse>(`${collectionPath(collection.id)}/title`, { method: 'PUT', body: { expected_revision: collection.revision, title } }),
+  remove: (id: string, revision?: number) => request<{ mode: 'toolbox'; deleted: true }>(`${collectionPath(id)}${revision === undefined ? '' : `?expected_revision=${revision}`}`, { method: 'DELETE' }),
   upload: (collection: EnergyCollection, file: File, relativePath: string, signal?: AbortSignal) => {
     const query = new URLSearchParams({ name: file.name, expected_revision: String(collection.revision) });
     if (relativePath) query.set('relative_path', relativePath);

@@ -119,9 +119,14 @@ def detail(ident: str, request: Request):
     return response(store(request).read(ident))
 
 
+@router.put('/collections/{ident}/title')
+def rename(ident: str, request: Request, body: schemas.Rename):
+    return response(store(request).rename(ident, body.expected_revision, body.title))
+
+
 @router.delete('/collections/{ident}')
-def delete(ident: str, request: Request):
-    store(request).delete(ident)
+def delete(ident: str, request: Request, expected_revision: int | None = Query(default=None, ge=0)):
+    store(request).delete(ident, expected_revision)
     return {'mode': 'toolbox', 'deleted': True}
 
 

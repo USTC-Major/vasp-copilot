@@ -2,7 +2,7 @@
 // 路由懒加载冒烟测试（F10）：6 条路由均可渲染
 // ============================================================
 
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { routes } from './router';
@@ -27,10 +27,20 @@ describe('路由懒加载', () => {
     renderRoute('/toolbox/postprocessing/energy');
     expect(await screen.findByRole('heading', { name: '基础能量' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: '基础能量' })).toHaveAttribute('aria-current', 'page');
-    expect(await screen.findByText('尚无能量分析')).toBeInTheDocument();
-    expect(screen.getByRole('radio', { name: '吸附能' })).toBeInTheDocument();
-    expect(screen.getByRole('radio', { name: '材料形成能' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '创建分析并导入数据' })).toBeDisabled();
+    expect(screen.getByRole('link', { name: '基础能量' })).toHaveAttribute('href', '/toolbox/postprocessing/energy');
+    expect(screen.getByRole('link', { name: 'DOS／能带后处理' })).toHaveAttribute('href', '/toolbox/postprocessing');
+    expect(await screen.findByText('计算任务列表')).toBeInTheDocument();
+    expect(await screen.findByText('尚无计算任务。新建任务时选择固定类型，再导入来源并配置计算卡。')).toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.queryByRole('radio', { name: '吸附能' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '新建计算任务' }));
+    const dialog = within(await screen.findByRole('dialog'));
+    expect(dialog.getByText('新建计算任务 · 先选类型')).toBeInTheDocument();
+    expect(dialog.getByRole('radio', { name: '吸附能' })).toBeEnabled();
+    expect(dialog.getByRole('radio', { name: '材料形成能' })).toBeEnabled();
+    expect(dialog.getByRole('button', { name: '创建计算任务并导入数据' })).toBeDisabled();
+    fireEvent.click(dialog.getByRole('radio', { name: '材料形成能' }));
+    expect(dialog.getByRole('button', { name: '创建计算任务并导入数据' })).toBeEnabled();
   });
   it('表面构建页可从工具箱独立进入', async () => {
     server.use(http.get('/api/v1/toolbox/catalysis/drafts', () => HttpResponse.json({ mode: 'toolbox', drafts: [] })));
